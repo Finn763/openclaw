@@ -2054,6 +2054,7 @@ describe("qa suite runtime launcher", () => {
 
   it("runs script scenarios after flow Gateways stop without serializing Playwright", async () => {
     const repoRoot = await makeTempRepo("qa-suite-script-isolation-");
+    vi.stubEnv("OPENCLAW_QA_SUITE_PROGRESS", "1");
     let releaseFlow!: () => void;
     let markFlowStarted!: () => void;
     const flowStarted = new Promise<void>((resolve) => {
@@ -2117,6 +2118,8 @@ describe("qa suite runtime launcher", () => {
     expect(runQaTestFileScenarios).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
+        onCommandOutput: expect.any(Function),
+        progress: expect.any(Function),
         scenarios: [
           expect.objectContaining({ execution: expect.objectContaining({ kind: "script" }) }),
         ],
