@@ -15,10 +15,12 @@ import {
   readStringValue,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createQaBusState, type QaBusState } from "./bus-state.js";
+import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
 import {
   createCrablineProviderDelivery,
   createCrablineProviderInboundInput,
   resolveCrablineStateConversation,
+  resolveDiscordQaId,
   resolveTelegramQaSenderId,
 } from "./crabline-provider-targets.js";
 import { discardIgnoredResponseBody } from "./ignored-response-body.js";
@@ -86,6 +88,11 @@ function normalizeCrablineSignalGatewayConfig(config: OpenClawConfig): OpenClawC
 function formatLogicalQaTarget({ conversation, threadId }: QaBusInboundMessageInput) {
   const prefix = conversation.kind === "direct" ? "dm" : conversation.kind;
   return threadId ? `thread:${conversation.id}/${threadId}` : `${prefix}:${conversation.id}`;
+}
+
+function formatLogicalQaConversationTarget({ conversation }: QaBusInboundMessageInput) {
+  const prefix = conversation.kind === "direct" ? "dm" : conversation.kind;
+  return `${prefix}:${conversation.id}`;
 }
 
 const TELEGRAM_LIFECYCLE_METHOD_RE = /\/(sendMessage|editMessageText|deleteMessage)$/u;
@@ -212,6 +219,7 @@ function createCrablineState(params: {
 }): QaCrablineTransportState {
   const baseState = params.state;
   const targetByProviderTarget = new Map<string, string>();
+  const logicalRouteByTarget = new Map<string, { target: string; threadId?: string }>();
   const telegramMessageByProviderId = new Map<string, QaBusMessage>();
   const pendingTelegramMessagesByChat = new Map<string, QaBusMessage[]>();
   const outboundEvents: QaTransportOutboundEvent[] = [];
@@ -220,6 +228,7 @@ function createCrablineState(params: {
     reset() {
       baseState.reset();
       targetByProviderTarget.clear();
+      logicalRouteByTarget.clear();
       telegramMessageByProviderId.clear();
       pendingTelegramMessagesByChat.clear();
       outboundEvents.length = 0;
@@ -258,7 +267,16 @@ function createCrablineState(params: {
         targetByProviderTarget,
       }) as QaBusOutboundMessageInput | null;
       if (outbound) {
-        baseState.addOutboundMessage(outbound);
+        const logicalRoute = logicalRouteByTarget.get(outbound.to);
+        baseState.addOutboundMessage(
+          logicalRoute
+            ? {
+                ...outbound,
+                to: logicalRoute.target,
+                ...(logicalRoute.threadId ? { threadId: logicalRoute.threadId } : {}),
+              }
+            : outbound,
+        );
       }
     },
     async addInboundMessage(input: QaBusInboundMessageInput) {
@@ -284,7 +302,12 @@ function createCrablineState(params: {
       }
       // Providers may coerce channel conversations to groups; preserve the scenario's logical
       // target so outbound waits and assertions still match the original input.
-      targetByProviderTarget.set(providerInbound.providerTargetKey, formatLogicalQaTarget(input));
+      const logicalTarget = formatLogicalQaTarget(input);
+      targetByProviderTarget.set(providerInbound.providerTargetKey, logicalTarget);
+      logicalRouteByTarget.set(logicalTarget, {
+        target: formatLogicalQaConversationTarget(input),
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+      });
       const providerMessageId = await postCrablineInbound({
         adapter: params.adapter,
         providerInbound,
@@ -297,7 +320,11 @@ function createCrablineState(params: {
             input,
             providerInbound,
           }),
-          ...(providerInbound.threadId ? { threadId: providerInbound.threadId } : {}),
+          ...(input.threadId
+            ? { threadId: input.threadId }
+            : providerInbound.threadId
+              ? { threadId: providerInbound.threadId }
+              : {}),
         },
         providerMessageId,
       );
@@ -320,6 +347,7 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
   readonly #selection: OpenClawCrablineChannelDriverSelection;
   readonly #transportPolicy?: QaTransportPolicy;
   readonly #state: QaCrablineTransportState;
+  #cleanupPromise?: Promise<void>;
   readonly sendNativeCommand?: (input: QaTransportNativeCommandInput) => Promise<void>;
   readonly waitForOutboundSequence?: (input: QaTransportOutboundSequenceMatch) => Promise<{
     events: QaTransportOutboundEvent[];
@@ -336,7 +364,10 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
       id: CRABLINE_TRANSPORT_ID,
       label: `crabline local ${params.selection.channel}`,
       accountId: params.adapter.accountId,
-      requiredPluginIds: params.adapter.requiredPluginIds,
+      requiredPluginIds:
+        params.selection.channel === "discord"
+          ? ["qa-lab", ...params.adapter.requiredPluginIds]
+          : params.adapter.requiredPluginIds,
       state: params.state,
     });
     this.#adapter = params.adapter;
@@ -367,6 +398,50 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
       this.#selection.channel === "signal"
         ? normalizeCrablineSignalGatewayConfig(rawConfig)
         : rawConfig;
+    if (this.#selection.channel === "discord") {
+      const discord = config.channels?.discord;
+      const senderAllowlist = this.#transportPolicy?.senderAllowlist?.map(resolveDiscordQaId);
+      // Crabline's local binding opens DMs, so the real Discord plugin also requires the matching
+      // allowlist. Keep an explicit sender restriction; otherwise its open policy uses a wildcard.
+      const dmAllowlist = senderAllowlist ?? discord?.allowFrom ?? ["*"];
+      const discordWithOpenDms = {
+        ...discord,
+        allowFrom: [...dmAllowlist],
+        ...(dmAllowlist.includes("*") ? {} : { dmPolicy: "allowlist" as const }),
+      };
+      const wildcardGuild = discord?.guilds?.["*"];
+      const wildcardChannel = wildcardGuild?.channels?.["*"];
+      if (!this.#transportPolicy?.requireGroupMention && !senderAllowlist) {
+        return {
+          ...config,
+          channels: { ...config.channels, discord: discordWithOpenDms },
+        } as QaTransportGatewayConfig;
+      }
+      return {
+        ...config,
+        channels: {
+          ...config.channels,
+          discord: {
+            ...discordWithOpenDms,
+            ...(senderAllowlist ? { groupPolicy: "allowlist" as const } : {}),
+            guilds: {
+              ...discord?.guilds,
+              "*": {
+                ...wildcardGuild,
+                ...(senderAllowlist ? { users: [...senderAllowlist] } : {}),
+                channels: {
+                  ...wildcardGuild?.channels,
+                  "*": {
+                    ...wildcardChannel,
+                    ...(this.#transportPolicy?.requireGroupMention ? { requireMention: true } : {}),
+                  },
+                },
+              },
+            },
+          },
+        },
+      } as QaTransportGatewayConfig;
+    }
     if (this.#selection.channel !== "telegram") {
       return config as QaTransportGatewayConfig;
     }
@@ -414,6 +489,26 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
 
   createRuntimeEnvPatch = () => this.#adapter.createProviderReadinessEnv({});
 
+  stageGatewayRuntime = async ({ tempRoot }: { tempRoot: string }) => {
+    if (this.#adapter.manifest.provider !== "discord") {
+      return;
+    }
+    const gatewayUrl = new URL(this.#adapter.manifest.endpoints.gatewayUrl);
+    await fs.writeFile(
+      path.join(tempRoot, CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT),
+      `${JSON.stringify(
+        {
+          restApiBaseUrl: `${this.#adapter.manifest.endpoints.apiRoot}/v10`,
+          gatewayBotUrl: this.#adapter.manifest.endpoints.gatewayBotUrl,
+          gatewayOrigin: gatewayUrl.origin,
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+  };
+
   handleAction = async (_params: {
     action: QaTransportActionName;
     args: Record<string, unknown>;
@@ -428,8 +523,24 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     "No live channel service or external credential lease is required.",
   ];
 
+  #cleanupTransport() {
+    this.#cleanupPromise ??= this.#state.cleanup();
+    void this.#cleanupPromise.catch(() => {
+      this.#cleanupPromise = undefined;
+    });
+    return this.#cleanupPromise;
+  }
+
   async cleanup() {
-    await this.#state.cleanup();
+    if (this.#selection.channel !== "discord") {
+      await this.#cleanupTransport();
+    }
+  }
+
+  async cleanupAfterGatewayStop() {
+    if (this.#selection.channel === "discord") {
+      await this.#cleanupTransport();
+    }
   }
 }
 
@@ -439,12 +550,16 @@ export async function createQaCrablineTransportAdapter(params: {
   selection: OpenClawCrablineChannelDriverSelection;
   state?: QaBusState;
 }) {
-  const requiresTelegramPolicy =
+  const requiresGroupPolicy =
     params.transportPolicy?.requireGroupMention === true ||
     params.transportPolicy?.senderAllowlist !== undefined;
-  if (params.selection.channel !== "telegram" && requiresTelegramPolicy) {
+  if (
+    params.selection.channel !== "telegram" &&
+    params.selection.channel !== "discord" &&
+    requiresGroupPolicy
+  ) {
     throw new Error(
-      `Crabline ${params.selection.channel} does not support the requested group transport policy; use the Crabline Telegram bridge or a live channel adapter`,
+      `Crabline ${params.selection.channel} does not support the requested group transport policy; use the Crabline Telegram or Discord bridge, or a live channel adapter`,
     );
   }
   const recorderPath = path.join(

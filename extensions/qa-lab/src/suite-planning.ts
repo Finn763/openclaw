@@ -7,6 +7,7 @@ import { createQaArtifactRunId } from "./artifact-run-id.js";
 import { ensureRepoBoundDirectory, resolveRepoRelativeOutputDir } from "./cli-paths.js";
 import type { QaCliBackendAuthMode } from "./gateway-child.js";
 import { splitQaModelRef as splitModelRef, type QaProviderMode } from "./model-selection.js";
+import { scenarioDeclaresQaChannel } from "./profile-planning.js";
 import { readQaBootstrapScenarioCatalog } from "./scenario-catalog.js";
 import {
   describeQaProviderLaneMismatches,

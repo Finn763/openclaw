@@ -315,6 +315,7 @@ export type QaTransportAdapter = Omit<
     timeoutMs?: number,
     intervalMs?: number,
   ) => Promise<T>;
+  stageGatewayRuntime?: (params: { tempRoot: string }) => Promise<void>;
 };
 
 export abstract class QaStateBackedTransportAdapter implements QaTransportAdapter {
