@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
@@ -18,6 +19,104 @@ const VARIANTS = Object.freeze([
   { aliasKey: "slim", suffix: "-slim" },
   { aliasKey: "browser", suffix: "-browser" },
 ]);
+const DOCKER_PUBLICATION_STATUS_DESCRIPTION =
+  "Verified GHCR + Docker Hub images, attestations, platforms, and channel aliases.";
+const DOCKER_PUBLICATION_STATUS_PREFIX = "openclaw/docker-release";
+
+/** @typedef {{ repository: string; sourceSha: string; version: string }} DockerPublicationIdentity */
+/** @typedef {DockerPublicationIdentity & { runId: number | string }} DockerPublicationStatusParams */
+/** @typedef {{ context: string; description: string; state: "success"; target_url: string }} DockerPublicationStatus */
+/**
+ * @typedef {object} GitHubCommitStatus
+ * @property {unknown} [context]
+ * @property {{ login?: unknown }} [creator]
+ * @property {unknown} [description]
+ * @property {unknown} [state]
+ * @property {unknown} [target_url]
+ */
+/** @typedef {{ sha?: unknown; statuses?: GitHubCommitStatus[] }} GitHubCombinedStatus */
+
+/** @param {DockerPublicationIdentity} params */
+function requireExtendedStableStatusIdentity({ version, repository, sourceSha }) {
+  const policy = resolveDockerReleasePolicy(version);
+  if (policy.channel !== "extended-stable") {
+    throw new Error(`Docker completion status is only valid for extended-stable; got ${version}.`);
+  }
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
+    throw new Error(`Invalid GitHub repository identity ${JSON.stringify(repository)}.`);
+  }
+  if (!/^[a-f0-9]{40}$/u.test(sourceSha)) {
+    throw new Error("Docker completion status requires a full lowercase source SHA.");
+  }
+  return policy;
+}
+
+/**
+ * Build the durable commit status written only after Docker verification completes.
+ *
+ * @param {DockerPublicationStatusParams} params
+ * @returns {DockerPublicationStatus}
+ */
+export function createDockerPublicationStatus({ version, repository, sourceSha, runId }) {
+  const policy = requireExtendedStableStatusIdentity({ version, repository, sourceSha });
+  if (!/^[1-9][0-9]*$/u.test(String(runId))) {
+    throw new Error("Docker completion status requires a positive workflow run ID.");
+  }
+  return {
+    context: `${DOCKER_PUBLICATION_STATUS_PREFIX}/${policy.version}`,
+    description: DOCKER_PUBLICATION_STATUS_DESCRIPTION,
+    state: "success",
+    target_url: `https://github.com/${repository}/actions/runs/${runId}`,
+  };
+}
+
+/**
+ * Resolve a canonical Docker completion status from GitHub's combined-status response.
+ *
+ * @param {DockerPublicationIdentity & { combinedStatus: unknown }} params
+ * @returns {{ runId: string; targetUrl: string } | null}
+ */
+export function findDockerPublicationStatus({ combinedStatus, version, repository, sourceSha }) {
+  const expected = createDockerPublicationStatus({
+    version,
+    repository,
+    sourceSha,
+    runId: 1,
+  });
+  const response = /** @type {GitHubCombinedStatus} */ (combinedStatus);
+  if (response?.sha !== sourceSha || !Array.isArray(response?.statuses)) {
+    throw new Error("GitHub combined status is not bound to the expected release SHA.");
+  }
+  const matches = response.statuses.filter(
+    (status) => String(status?.context ?? "").toLowerCase() === expected.context.toLowerCase(),
+  );
+  if (matches.length === 0) {
+    return null;
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      `GitHub returned duplicate Docker completion statuses for ${expected.context}.`,
+    );
+  }
+  const status = matches[0];
+  const targetMatch = new RegExp(
+    `^https://github\\.com/${repository.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/actions/runs/([1-9][0-9]*)$`,
+    "u",
+  ).exec(String(status.target_url ?? ""));
+  if (
+    status.state !== expected.state ||
+    status.context !== expected.context ||
+    status.description !== expected.description ||
+    status.creator?.login !== "github-actions[bot]" ||
+    !targetMatch
+  ) {
+    throw new Error(`Docker completion status ${expected.context} is not canonical.`);
+  }
+  return {
+    runId: targetMatch[1],
+    targetUrl: String(status.target_url),
+  };
+}
 
 /** @typedef {{ imageTagSuffix?: string; images: string[]; version: string }} DockerPromotionParams */
 /**
@@ -284,6 +383,8 @@ export function promoteDockerChannel({ version, imageTagSuffix = "", images }, o
 function printHelp() {
   console.log(
     "Usage: node scripts/docker-channel-promote.mjs --version YYYY.M.P --image REGISTRY/IMAGE [--image REGISTRY/IMAGE] [--image-tag-suffix -rYYYYMMDD] [--allow-rollback]",
+    "       node scripts/docker-channel-promote.mjs --status-payload --version YYYY.M.P --repository OWNER/REPO --source-sha SHA --run-id ID",
+    "       node scripts/docker-channel-promote.mjs --find-status-file FILE --version YYYY.M.P --repository OWNER/REPO --source-sha SHA",
   );
 }
 
@@ -292,9 +393,14 @@ function main() {
     args: process.argv.slice(2),
     options: {
       "allow-rollback": { type: "boolean" },
+      "find-status-file": { type: "string" },
       help: { type: "boolean", short: "h" },
       image: { type: "string", multiple: true },
       "image-tag-suffix": { type: "string", default: "" },
+      repository: { type: "string" },
+      "run-id": { type: "string" },
+      "source-sha": { type: "string" },
+      "status-payload": { type: "boolean" },
       version: { type: "string" },
     },
     strict: true,
@@ -306,6 +412,28 @@ function main() {
   const version = values.version?.trim();
   if (!version) {
     throw new Error("--version is required.");
+  }
+  if (values["status-payload"]) {
+    const payload = createDockerPublicationStatus({
+      version,
+      repository: values.repository ?? "",
+      sourceSha: values["source-sha"] ?? "",
+      runId: values["run-id"] ?? "",
+    });
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    return;
+  }
+  if (values["find-status-file"]) {
+    const match = findDockerPublicationStatus({
+      combinedStatus: JSON.parse(readFileSync(values["find-status-file"], "utf8")),
+      version,
+      repository: values.repository ?? "",
+      sourceSha: values["source-sha"] ?? "",
+    });
+    if (match) {
+      process.stdout.write(`${match.runId}\n`);
+    }
+    return;
   }
   const images = (values.image ?? []).map((image) => image.trim());
   if (images.length === 0 || images.some((image) => image.length === 0)) {
