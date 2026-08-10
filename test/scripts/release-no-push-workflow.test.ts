@@ -47,6 +47,7 @@ type WorkflowStep = {
 };
 
 type WorkflowJob = {
+  environment?: string;
   env?: Record<string, string>;
   if?: string;
   needs?: string | string[];
@@ -1583,6 +1584,7 @@ describe("release validation no-push transport", () => {
     );
     const finalizeRelease = job(releasePublish, "finalize_extended_stable_github_release");
     const publishDraft = step(finalizeRelease, "Publish the verified extended-stable draft");
+    const publishDraftRun = publishDraft.run ?? "";
 
     expect(prepareRelease.needs).toEqual(["resolve_release_target"]);
     expect(prepareRelease.if).toBe("${{ inputs.publish_docker_only }}");
@@ -1673,23 +1675,23 @@ describe("release validation no-push transport", () => {
         "${{ needs.prepare_extended_stable_release.outputs.release_body_sha256 }}",
       RELEASE_ID: "${{ needs.prepare_extended_stable_release.outputs.release_id }}",
     });
-    expect(publishDraft.run).toContain("repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}");
-    expect(publishDraft.run).toContain("-F draft=false");
-    expect(publishDraft.run).toContain("-F prerelease=false");
-    expect(publishDraft.run).toContain("-f make_latest=false");
-    expect(publishDraft.run).toContain("EXPECTED_BODY_SHA256");
-    expect(publishDraft.run).toContain("release.assets.length !== 0");
-    expect(publishDraft.run).toContain("releases/latest");
-    expect(publishDraft.run).toContain("must not become GitHub Latest");
-    expect(publishDraft.run).toContain("for attempt in $(seq 1 12)");
-    expect(publishDraft.run).toContain(
+    expect(publishDraftRun).toContain("repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}");
+    expect(publishDraftRun).toContain("-F draft=false");
+    expect(publishDraftRun).toContain("-F prerelease=false");
+    expect(publishDraftRun).toContain("-f make_latest=false");
+    expect(publishDraftRun).toContain("EXPECTED_BODY_SHA256");
+    expect(publishDraftRun).toContain("release.assets.length !== 0");
+    expect(publishDraftRun).toContain("releases/latest");
+    expect(publishDraftRun).toContain("must not become GitHub Latest");
+    expect(publishDraftRun).toContain("for attempt in $(seq 1 12)");
+    expect(publishDraftRun).toContain(
       "GITHUB_TOKEN publication intentionally does not fan out release.published",
     );
-    expect(publishDraft.run).toContain(
+    expect(publishDraftRun).toContain(
       'git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git"',
     );
-    expect(publishDraft.run.indexOf("verify_release_tag_target\n")).toBeLessThan(
-      publishDraft.run.indexOf('current_draft="$(gh api'),
+    expect(publishDraftRun.indexOf("verify_release_tag_target\n")).toBeLessThan(
+      publishDraftRun.indexOf('current_draft="$(gh api'),
     );
 
     const identity = step(

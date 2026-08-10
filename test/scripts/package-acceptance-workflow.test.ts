@@ -6851,6 +6851,7 @@ describe("package artifact reuse", () => {
       extendedFinalizeJob,
       "Publish the verified extended-stable draft",
     );
+    const extendedFinalizeRun = extendedFinalize.run ?? "";
     expect(extendedPrepareJob.needs).toEqual(["resolve_release_target"]);
     expect(extendedSetupIndex).toBeGreaterThan(extendedHarnessCheckoutIndex);
     expect(extendedInstallIndex).toBeGreaterThan(extendedSetupIndex);
@@ -6891,15 +6892,15 @@ describe("package artifact reuse", () => {
     expect(extendedFinalizeJob.if).toContain(
       "needs.verify_extended_stable_docker_completion.result == 'success'",
     );
-    expect(extendedFinalize.run).toContain("-f make_latest=false");
-    expect(extendedFinalize.run).toContain("EXPECTED_BODY_SHA256");
-    expect(extendedFinalize.run).toContain("release.assets.length !== 0");
-    expect(extendedFinalize.run).toContain("for attempt in $(seq 1 12)");
-    expect(extendedFinalize.run).toContain(
+    expect(extendedFinalizeRun).toContain("-f make_latest=false");
+    expect(extendedFinalizeRun).toContain("EXPECTED_BODY_SHA256");
+    expect(extendedFinalizeRun).toContain("release.assets.length !== 0");
+    expect(extendedFinalizeRun).toContain("for attempt in $(seq 1 12)");
+    expect(extendedFinalizeRun).toContain(
       'git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git"',
     );
-    expect(extendedFinalize.run.indexOf("verify_release_tag_target\n")).toBeLessThan(
-      extendedFinalize.run.indexOf('current_draft="$(gh api'),
+    expect(extendedFinalizeRun.indexOf("verify_release_tag_target\n")).toBeLessThan(
+      extendedFinalizeRun.indexOf('current_draft="$(gh api'),
     );
   });
 
