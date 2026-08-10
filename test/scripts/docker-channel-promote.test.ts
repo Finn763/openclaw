@@ -106,7 +106,7 @@ const bashRunsWorkflowSteps =
   spawnSync("bash", ["-c", "type mapfile"], { encoding: "utf8" }).status === 0;
 
 describe("Docker channel promotion", () => {
-  it("binds durable extended-stable completion to the release SHA and workflow run", () => {
+  it("accepts the newest canonical status from reverse-chronological history", () => {
     const sourceSha = "a".repeat(40);
     const payload = createDockerPublicationStatus({
       version: "2026.6.35",
@@ -124,10 +124,20 @@ describe("Docker channel promotion", () => {
     });
     expect(
       findDockerPublicationStatus({
-        combinedStatus: {
-          sha: sourceSha,
-          statuses: [{ ...payload, creator: { login: "github-actions[bot]" } }],
-        },
+        statuses: [
+          { context: "unrelated/status", state: "success" },
+          {
+            ...payload,
+            creator: { login: "github-actions[bot]" },
+            url: `https://api.github.com/repos/openclaw/openclaw/statuses/${sourceSha}`,
+          },
+          {
+            ...payload,
+            creator: { login: "github-actions[bot]" },
+            target_url: "https://github.com/openclaw/openclaw/actions/runs/11111",
+            url: `https://api.github.com/repos/openclaw/openclaw/statuses/${sourceSha}`,
+          },
+        ],
         version: "2026.6.35",
         repository: "openclaw/openclaw",
         sourceSha,
@@ -135,11 +145,11 @@ describe("Docker channel promotion", () => {
     ).toEqual({ runId: "12345", targetUrl: payload.target_url });
   });
 
-  it("does not accept release visibility or malformed status as Docker completion", () => {
+  it("does not accept absent, malformed, or combined-response status evidence", () => {
     const sourceSha = "a".repeat(40);
     expect(
       findDockerPublicationStatus({
-        combinedStatus: { sha: sourceSha, statuses: [] },
+        statuses: [],
         version: "2026.6.35",
         repository: "openclaw/openclaw",
         sourceSha,
@@ -152,24 +162,74 @@ describe("Docker channel promotion", () => {
       sourceSha,
       runId: "12345",
     });
+    const canonical = {
+      ...payload,
+      creator: { login: "github-actions[bot]" },
+      url: `https://api.github.com/repos/openclaw/openclaw/statuses/${sourceSha}`,
+    };
     for (const status of [
-      { ...payload, state: "pending", creator: { login: "github-actions[bot]" } },
-      { ...payload, creator: { login: "someone-else" } },
+      { ...canonical, state: "pending" },
+      { ...canonical, creator: { login: "someone-else" } },
       {
-        ...payload,
+        ...canonical,
         description: "images probably published",
-        creator: { login: "github-actions[bot]" },
+      },
+      {
+        ...canonical,
+        url: `https://api.github.com/repos/openclaw/openclaw/statuses/${"b".repeat(40)}`,
       },
     ]) {
       expect(() =>
         findDockerPublicationStatus({
-          combinedStatus: { sha: sourceSha, statuses: [status] },
+          statuses: [status],
           version: "2026.6.35",
           repository: "openclaw/openclaw",
           sourceSha,
         }),
       ).toThrow("is not canonical");
     }
+
+    expect(() =>
+      findDockerPublicationStatus({
+        statuses: { sha: sourceSha, statuses: [] },
+        version: "2026.6.35",
+        repository: "openclaw/openclaw",
+        sourceSha,
+      }),
+    ).toThrow("status history must be an array");
+  });
+
+  it("fails closed on a malformed newest matching status", () => {
+    const sourceSha = "a".repeat(40);
+    const payload = createDockerPublicationStatus({
+      version: "2026.6.35",
+      repository: "openclaw/openclaw",
+      sourceSha,
+      runId: "12345",
+    });
+    const canonical = {
+      ...payload,
+      creator: { login: "github-actions[bot]" },
+      url: `https://api.github.com/repos/openclaw/openclaw/statuses/${sourceSha}`,
+    };
+
+    expect(() =>
+      findDockerPublicationStatus({
+        statuses: [{ ...canonical, description: "unverified images" }, canonical],
+        version: "2026.6.35",
+        repository: "openclaw/openclaw",
+        sourceSha,
+      }),
+    ).toThrow("is not canonical");
+
+    expect(() =>
+      findDockerPublicationStatus({
+        statuses: [{ ...canonical, context: canonical.context.toUpperCase() }, canonical],
+        version: "2026.6.35",
+        repository: "openclaw/openclaw",
+        sourceSha,
+      }),
+    ).toThrow("is not canonical");
   });
 
   it("plans every extended-stable image variant in both registries", () => {
