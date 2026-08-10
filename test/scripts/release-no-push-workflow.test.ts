@@ -1571,6 +1571,16 @@ describe("release validation no-push transport", () => {
       "Verify exact npm and selector readback matches preflight bytes",
     );
     const createDraft = step(prepareRelease, "Create or resume the canonical draft release");
+    const prepareSteps = prepareRelease.steps ?? [];
+    const prepareStepNames = prepareSteps.map((workflowStep) => workflowStep.name);
+    const checkoutHarnessIndex = prepareStepNames.indexOf("Checkout trusted release tooling");
+    const setupNodeIndex = prepareStepNames.indexOf("Setup Node environment");
+    const installHarnessIndex = prepareStepNames.indexOf(
+      "Install trusted release tooling dependencies",
+    );
+    const createDraftIndex = prepareStepNames.indexOf(
+      "Create or resume the canonical draft release",
+    );
     const finalizeRelease = job(releasePublish, "finalize_extended_stable_github_release");
     const publishDraft = step(finalizeRelease, "Publish the verified extended-stable draft");
 
@@ -1588,10 +1598,30 @@ describe("release validation no-push transport", () => {
       release_id: "${{ steps.release.outputs.release_id }}",
       release_body_sha256: "${{ steps.release.outputs.release_body_sha256 }}",
     });
+    expect(setupNodeIndex).toBeGreaterThan(checkoutHarnessIndex);
+    expect(installHarnessIndex).toBeGreaterThan(setupNodeIndex);
+    expect(createDraftIndex).toBeGreaterThan(installHarnessIndex);
+    expect(step(prepareRelease, "Setup Node environment")).toMatchObject({
+      uses: "./.github/actions/setup-node-env",
+      with: {
+        "install-bun": "false",
+        "install-deps": "false",
+      },
+    });
+    expect(step(prepareRelease, "Install trusted release tooling dependencies").run).toContain(
+      "--dir .release-harness",
+    );
+    expect(step(prepareRelease, "Install trusted release tooling dependencies").run).toContain(
+      "ln -s .release-harness/node_modules node_modules",
+    );
     expect(verifyNpm.run).toContain('npm view "openclaw@${version}" version');
     expect(verifyNpm.run).toContain("Published npm tarball does not match");
     expect(createDraft.run).toContain("verify_release_tag_target");
-    expect(createDraft.run).toContain(".release-harness/scripts/render-github-release-notes.mjs");
+    expect(createDraft.run).toContain(
+      "node --import tsx .release-harness/scripts/render-github-release-notes.mts",
+    );
+    expect(createDraft.run).toContain("node --import tsx --input-type=module");
+    expect(createDraft.run).not.toContain("render-github-release-notes.mjs");
     expect(createDraft.run).toContain('gh release create "${RELEASE_TAG}"');
     expect(createDraft.run).toContain("--verify-tag");
     expect(createDraft.run).toContain("--draft");

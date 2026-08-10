@@ -2586,6 +2586,31 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: "false"
+          install-bun: "false"
+
+      - name: Install trusted release tooling dependencies
+        env:
+          CI: "true"
+        run: |
+          set -euo pipefail
+          install_args=(
+            --dir .release-harness
+            install
+            --frozen-lockfile
+            --prefer-offline
+            --config.engine-strict=false
+            --config.enable-pre-post-scripts=true
+            --config.side-effects-cache=true
+          )
+          pnpm "${install_args[@]}" || pnpm "${install_args[@]}"
+          # Node resolves --import tsx from the process cwd. Point that root at
+          # the trusted harness install instead of the frozen target checkout.
+          ln -s .release-harness/node_modules node_modules
+
       - name: Create or resume the canonical draft release
         id: release
         env:
@@ -2649,12 +2674,12 @@ jobs:
               RELEASE_RESOURCE_FILE="${resource_file}" \
               EXPECTED_DRAFT="${expected_draft}" \
               REQUIRE_EXACT_BODY="${require_exact_body}" \
-              node --input-type=module <<'NODE'
+              node --import tsx --input-type=module <<'NODE'
           import { readFileSync } from "node:fs";
           import {
             releaseNotesVersionForTag,
             verifyGithubReleaseNotes,
-          } from "./.release-harness/scripts/render-github-release-notes.mjs";
+          } from "./.release-harness/scripts/render-github-release-notes.mts";
 
           const release = JSON.parse(readFileSync(process.env.RELEASE_RESOURCE_FILE, "utf8"));
           const body = release.body ?? "";
@@ -2710,7 +2735,7 @@ jobs:
           - Container publication: this closeout requires durable Docker completion on the immutable release SHA.
           - Excluded: ClawHub, macOS, Windows, mobile, website, and private dist-tags.
           EOF
-          node .release-harness/scripts/render-github-release-notes.mjs \
+          node --import tsx .release-harness/scripts/render-github-release-notes.mts \
             --changelog CHANGELOG.md \
             --tag "${RELEASE_TAG}" \
             --repository "${GITHUB_REPOSITORY}" \

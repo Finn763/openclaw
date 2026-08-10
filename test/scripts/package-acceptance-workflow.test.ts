@@ -6823,6 +6823,18 @@ describe("package artifact reuse", () => {
       extendedPrepareJob,
       "Create or resume the canonical draft release",
     );
+    const extendedPrepareSteps = extendedPrepareJob.steps ?? [];
+    const extendedPrepareStepNames = extendedPrepareSteps.map((step) => step.name);
+    const extendedHarnessCheckoutIndex = extendedPrepareStepNames.indexOf(
+      "Checkout trusted release tooling",
+    );
+    const extendedSetupIndex = extendedPrepareStepNames.indexOf("Setup Node environment");
+    const extendedInstallIndex = extendedPrepareStepNames.indexOf(
+      "Install trusted release tooling dependencies",
+    );
+    const extendedDraftIndex = extendedPrepareStepNames.indexOf(
+      "Create or resume the canonical draft release",
+    );
     const extendedDockerCompletionJob = workflowJob(
       RELEASE_PUBLISH_WORKFLOW,
       "verify_extended_stable_docker_completion",
@@ -6840,8 +6852,23 @@ describe("package artifact reuse", () => {
       "Publish the verified extended-stable draft",
     );
     expect(extendedPrepareJob.needs).toEqual(["resolve_release_target"]);
+    expect(extendedSetupIndex).toBeGreaterThan(extendedHarnessCheckoutIndex);
+    expect(extendedInstallIndex).toBeGreaterThan(extendedSetupIndex);
+    expect(extendedDraftIndex).toBeGreaterThan(extendedInstallIndex);
+    expect(workflowStep(extendedPrepareJob, "Setup Node environment").with).toMatchObject({
+      "install-bun": "false",
+      "install-deps": "false",
+    });
+    expect(
+      workflowStep(extendedPrepareJob, "Install trusted release tooling dependencies").run,
+    ).toContain("ln -s .release-harness/node_modules node_modules");
     expect(extendedPrepare.run).toContain("verify_release_tag_target");
     expect(extendedPrepare.run).toContain("verifyGithubReleaseNotes");
+    expect(extendedPrepare.run).toContain(
+      "node --import tsx .release-harness/scripts/render-github-release-notes.mts",
+    );
+    expect(extendedPrepare.run).toContain("node --import tsx --input-type=module");
+    expect(extendedPrepare.run).not.toContain("render-github-release-notes.mjs");
     expect(extendedPrepare.run).toContain("body !== expectedBody");
     expect(extendedPrepare.run).toContain("release.assets.length !== 0");
     expect(extendedPrepare.run).toContain("--find-status-file");
