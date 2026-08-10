@@ -6872,7 +6872,9 @@ describe("package artifact reuse", () => {
     expect(extendedPrepare.run).not.toContain("render-github-release-notes.mjs");
     expect(extendedPrepare.run).toContain("body !== expectedBody");
     expect(extendedPrepare.run).toContain("release.assets.length !== 0");
-    expect(extendedPrepare.run).toContain("--find-status-file");
+    expect(extendedPrepare.run).toContain("commits/${TARGET_SHA}/statuses?per_page=100");
+    expect(extendedPrepare.run).toContain("--find-statuses-file");
+    expect(extendedPrepare.run).not.toContain("commits/${TARGET_SHA}/status?per_page=100");
     expect(extendedPrepare.run).toContain("docker_already_published=true");
     expect(extendedPrepare.run).toContain("public without Docker completion");
     expect(extendedPrepare.run).toContain("--draft");
@@ -6882,7 +6884,9 @@ describe("package artifact reuse", () => {
       "prepare_extended_stable_release",
       "publish_docker",
     ]);
-    expect(extendedDockerCompletion.run).toContain("--find-status-file");
+    expect(extendedDockerCompletion.run).toContain("commits/${TARGET_SHA}/statuses?per_page=100");
+    expect(extendedDockerCompletion.run).toContain("--find-statuses-file");
+    expect(extendedDockerCompletion.run).not.toContain("commits/${TARGET_SHA}/status?per_page=100");
     expect(extendedDockerCompletion.run).toContain("Docker publication completed without");
     expect(extendedFinalizeJob.needs).toEqual([
       "resolve_release_target",
