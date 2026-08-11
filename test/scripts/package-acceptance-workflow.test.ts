@@ -895,6 +895,78 @@ esac
   });
 }
 
+function windowsNodeRelease(params: {
+  assetName?: string;
+  digest?: string;
+  draft?: boolean;
+  prerelease: boolean;
+  publishedAt: string;
+  state?: string;
+  tag: string;
+}) {
+  return {
+    assets: [
+      {
+        digest: params.digest ?? `sha256:${"c".repeat(64)}`,
+        name: params.assetName ?? `OpenClawTray-${params.tag.replace(/^v/u, "")}-win-x64.zip`,
+        state: params.state ?? "uploaded",
+      },
+    ],
+    draft: params.draft ?? false,
+    prerelease: params.prerelease,
+    published_at: params.publishedAt,
+    tag_name: params.tag,
+  };
+}
+
+function runWindowsNodeReleaseResolver(releases: ReturnType<typeof windowsNodeRelease>[]) {
+  const job = workflowJob(RELEASE_CHECKS_WORKFLOW, "resolve_windows_node_release_artifacts");
+  const script = workflowStep(job, "Select immutable stable and prerelease assets").run;
+  if (!script) {
+    throw new Error("Expected Windows-node release resolver script");
+  }
+  const workdir = tempDirs.make("windows-node-release-resolver-");
+  const releasesPath = resolve(workdir, "releases.json");
+  writeFileSync(releasesPath, JSON.stringify(releases));
+  const ghPath = resolve(workdir, "gh");
+  writeFileSync(
+    ghPath,
+    `#!/bin/sh
+case "$2" in
+  repos/openclaw/openclaw-windows-node/releases*) cat "$MOCK_RELEASES_FILE" ;;
+  repos/openclaw/openclaw-windows-node/git/ref/tags/*)
+    printf '{"object":{"type":"commit","sha":"%s"}}\\n' "$MOCK_TAG_SHA" ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  chmodSync(ghPath, 0o755);
+  const outputPath = resolve(workdir, "github-output.txt");
+  const summaryPath = resolve(workdir, "github-summary.md");
+  writeFileSync(outputPath, "");
+  writeFileSync(summaryPath, "");
+  const result = spawnSync("bash", ["-c", script], {
+    cwd: workdir,
+    encoding: "utf8",
+    env: {
+      GH_TOKEN: "test-token",
+      GITHUB_OUTPUT: outputPath,
+      GITHUB_STEP_SUMMARY: summaryPath,
+      MOCK_RELEASES_FILE: releasesPath,
+      MOCK_TAG_SHA: "b".repeat(40),
+      PATH: `${workdir}:${process.env.PATH}`,
+    },
+  });
+  const outputs: Record<string, string> = {};
+  for (const line of readFileSync(outputPath, "utf8").split("\n")) {
+    const separator = line.indexOf("=");
+    if (separator > 0) {
+      outputs[line.slice(0, separator)] = line.slice(separator + 1);
+    }
+  }
+  return { outputs, result, summary: readFileSync(summaryPath, "utf8") };
+}
+
 function runReleasePublishInputValidation(overrides: Record<string, string>) {
   const job = workflowJob(RELEASE_PUBLISH_WORKFLOW, "resolve_release_target");
   const script = workflowStep(job, "Validate inputs").run;
@@ -1320,6 +1392,10 @@ function runReleaseChecksSummary(params: {
   discordResult?: "failure" | "skipped" | "success";
   resolveResult?: "failure" | "success";
   telegramSelected?: boolean;
+  windowsSelected?: boolean;
+  windowsPrereleaseResult?: "cancelled" | "failure" | "skipped" | "success";
+  windowsMainResult?: "cancelled" | "failure" | "skipped" | "success";
+  windowsStableResult?: "cancelled" | "failure" | "skipped" | "success";
   validatedStatuses?: Array<{ job: string; status: string; variant: string }>;
   workflowRef?: string;
 }) {
@@ -1368,6 +1444,10 @@ function runReleaseChecksSummary(params: {
       RESOLVE_TARGET_RESULT: params.resolveResult ?? "success",
       RUNTIME_TOOL_COVERAGE_RELEASE_CHECKS_RESULT: "skipped",
       VALIDATE_ADVISORY_STATUSES_OUTCOME: "success",
+      WINDOWS_NODE_PRERELEASE_E2E_RESULT: params.windowsPrereleaseResult ?? "skipped",
+      WINDOWS_NODE_MAIN_E2E_RESULT: params.windowsMainResult ?? "skipped",
+      WINDOWS_NODE_SELECTED: String(params.windowsSelected ?? false),
+      WINDOWS_NODE_STABLE_E2E_RESULT: params.windowsStableResult ?? "skipped",
       WORKFLOW_REF: params.workflowRef ?? "refs/heads/release/2026.7.1",
     },
   });
@@ -3595,6 +3675,24 @@ describe("package artifact reuse", () => {
       if: "(steps.plan.outputs.needs_package == '1' && inputs.package_artifact_name == '' && inputs.package_artifact_run_id == '') || (inputs.enable_prepublish_plugin_registry && steps.plan.outputs.needs_prepublish_plugin_registry == '1' && inputs.prepublish_plugin_registry_artifact_id == '')",
       uses: "./.github/actions/setup-node-env",
     });
+    const validatePackage = workflowStep(
+      prepareDockerImage,
+      "Validate OpenClaw Docker E2E package",
+    );
+    expectTextToIncludeAll(validatePackage.run, [
+      'metadata=".artifacts/docker-e2e-package/package-candidate.json"',
+      '--arg packageSourceSha "$package_source_sha"',
+      '--arg sha256 "$digest"',
+      '--arg version "$version"',
+      '[[ -s "$metadata" ]]',
+    ]);
+    const uploadPackage = workflowStep(prepareDockerImage, "Upload OpenClaw Docker E2E package");
+    expect(uploadPackage.with?.path).toContain(
+      ".artifacts/docker-e2e-package/openclaw-current.tgz",
+    );
+    expect(uploadPackage.with?.path).toContain(
+      ".artifacts/docker-e2e-package/package-candidate.json",
+    );
     expect(workflowStep(prepareDockerImage, planStepName).env).toEqual({
       INCLUDE_OPENWEBUI: "${{ inputs.include_openwebui }}",
       INCLUDE_RELEASE_PATH_SUITES: "${{ inputs.include_release_path_suites }}",
@@ -4869,6 +4967,220 @@ describe("package artifact reuse", () => {
     }
   });
 
+  it("binds Windows-node release and main E2E calls to immutable source tuples", () => {
+    const workflow = readFileSync(RELEASE_CHECKS_WORKFLOW, "utf8");
+    const resolver = workflowJob(RELEASE_CHECKS_WORKFLOW, "resolve_windows_node_release_artifacts");
+    const mainResolver = workflowJob(RELEASE_CHECKS_WORKFLOW, "resolve_windows_node_main_source");
+    const prerelease = workflowJob(RELEASE_CHECKS_WORKFLOW, "windows_node_prerelease_e2e");
+    const stable = workflowJob(RELEASE_CHECKS_WORKFLOW, "windows_node_stable_e2e");
+    const main = workflowJob(RELEASE_CHECKS_WORKFLOW, "windows_node_main_e2e");
+    const resolverScript = resolver.steps?.find((step) => step.id === "resolve")?.run ?? "";
+    const mainResolverScript = mainResolver.steps?.find((step) => step.id === "resolve")?.run ?? "";
+    const reusableWorkflow =
+      "openclaw/openclaw-windows-node/.github/workflows/release-candidate-e2e.yml@c92fa583dcdb0ce9d63ba2965a7579a95992d7a4";
+
+    expect(resolver.outputs).toMatchObject({
+      stable_asset_name: "${{ steps.resolve.outputs.stable_asset_name }}",
+      stable_asset_sha256: "${{ steps.resolve.outputs.stable_asset_sha256 }}",
+      prerelease_asset_name: "${{ steps.resolve.outputs.prerelease_asset_name }}",
+      prerelease_asset_sha256: "${{ steps.resolve.outputs.prerelease_asset_sha256 }}",
+    });
+    expect(mainResolver.outputs).toMatchObject({
+      main_source_sha: "${{ steps.resolve.outputs.main_source_sha }}",
+    });
+    expect(mainResolverScript).toContain("repos/openclaw/openclaw-windows-node/git/ref/heads/main");
+    expect(mainResolverScript).toContain("Windows-node main must resolve to an immutable commit.");
+    expect(workflow).toContain('release_sha="$(resolve_tag_sha "$tag")"');
+    expect(workflow).toContain('echo "${channel}_release_sha=${release_sha}" >> "$GITHUB_OUTPUT"');
+    expect(workflow).not.toContain(
+      'echo "${channel}_release_sha=$(resolve_tag_sha "$tag")" >> "$GITHUB_OUTPUT"',
+    );
+    expect(resolverScript.indexOf("| last")).toBeLessThan(
+      resolverScript.indexOf("| . as $release"),
+    );
+    expect(resolverScript).toContain("stable_tag_pattern='^v[0-9]+\\.[0-9]+\\.[0-9]+$'");
+    expect(resolverScript).toContain(
+      "prerelease_tag_pattern='^v[0-9]+\\.[0-9]+\\.[0-9]+-alpha\\.[0-9]+$'",
+    );
+    expect(resolverScript.indexOf("select(.tag_name | test($tag_pattern))")).toBeLessThan(
+      resolverScript.indexOf("| sort_by(.published_at)"),
+    );
+    expect(resolverScript).toContain("($prerelease.tag | semver_key) > ($stable.tag | semver_key)");
+    expect(resolverScript).toContain('select(.state == "uploaded")');
+    expect(resolverScript).toContain("($zip_assets | length) == 1");
+    expect(resolverScript).toContain(
+      "elif ($zip_assets | length) == 0 and ($msix_assets | length) == 1",
+    );
+    expect(resolverScript).toContain(
+      'asset_name="$(jq -er \'.asset_name | select(type == "string" and length > 0)\' <<< "$selection")"',
+    );
+    expect(resolverScript).toContain(
+      'asset_sha256="$(jq -er \'.asset_sha256 | select(test("^[a-f0-9]{64}$"))\' <<< "$selection")"',
+    );
+    expect(resolverScript).not.toContain(
+      'echo "${channel}_asset_name=$(jq -r \'.asset_name\' <<< "$selection")"',
+    );
+    expect(resolverScript).not.toContain(
+      'echo "${channel}_asset_sha256=$(jq -r \'.asset_sha256\' <<< "$selection")"',
+    );
+    expect(prerelease.uses).toBe(reusableWorkflow);
+    expect(prerelease.with).toMatchObject({
+      candidate_artifact_name: "${{ needs.prepare_release_package.outputs.artifact_name }}",
+      candidate_artifact_run_id: "${{ needs.prepare_release_package.outputs.artifact_run_id }}",
+      windows_node_release_asset_name:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.prerelease_asset_name }}",
+      windows_node_release_asset_sha256:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.prerelease_asset_sha256 }}",
+      windows_node_source: "release",
+      windows_node_source_sha:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.prerelease_release_sha }}",
+      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+    });
+    expect(stable.uses).toBe(reusableWorkflow);
+    expect(stable.with).toMatchObject({
+      candidate_artifact_name: "${{ needs.prepare_release_package.outputs.artifact_name }}",
+      candidate_artifact_run_id: "${{ needs.prepare_release_package.outputs.artifact_run_id }}",
+      windows_node_release_asset_name:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.stable_asset_name }}",
+      windows_node_release_asset_sha256:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.stable_asset_sha256 }}",
+      windows_node_source: "release",
+      windows_node_source_sha:
+        "${{ needs.resolve_windows_node_release_artifacts.outputs.stable_release_sha }}",
+      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+    });
+    expect(main.uses).toBe(reusableWorkflow);
+    expect(main.needs).toEqual([
+      "resolve_target",
+      "prepare_release_package",
+      "resolve_windows_node_main_source",
+    ]);
+    expect(main.with).toMatchObject({
+      candidate_artifact_name: "${{ needs.prepare_release_package.outputs.artifact_name }}",
+      candidate_artifact_run_id: "${{ needs.prepare_release_package.outputs.artifact_run_id }}",
+      windows_node_source: "main",
+      windows_node_source_sha:
+        "${{ needs.resolve_windows_node_main_source.outputs.main_source_sha }}",
+      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+      allow_protocol_mismatch: false,
+    });
+  });
+
+  it("selects Windows-node release channels by canonical tag convention", () => {
+    const releases = [
+      windowsNodeRelease({
+        assetName: "OpenClaw.Tray.WinUI_0.7.0_x64.msix",
+        prerelease: true,
+        publishedAt: "2026-07-20T00:00:00Z",
+        tag: "v0.7.0-msixtest.9",
+      }),
+      windowsNodeRelease({
+        prerelease: true,
+        publishedAt: "2026-07-10T00:00:00Z",
+        tag: "v0.6.13-alpha.2",
+      }),
+      windowsNodeRelease({
+        prerelease: true,
+        publishedAt: "2026-07-05T00:00:00Z",
+        tag: "v0.6.13-alpha.1",
+      }),
+      windowsNodeRelease({
+        prerelease: false,
+        publishedAt: "2026-06-30T00:00:00Z",
+        tag: "v0.6.12",
+      }),
+      windowsNodeRelease({
+        prerelease: false,
+        publishedAt: "2026-06-29T00:00:00Z",
+        tag: "v0.6.11",
+      }),
+    ];
+    const { outputs, result, summary } = runWindowsNodeReleaseResolver(releases);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(outputs.stable_tag).toBe("v0.6.12");
+    expect(outputs.stable_asset_name).toBe("OpenClawTray-0.6.12-win-x64.zip");
+    expect(outputs.prerelease_tag).toBe("v0.6.13-alpha.2");
+    expect(outputs.prerelease_asset_name).toBe("OpenClawTray-0.6.13-alpha.2-win-x64.zip");
+    expect(outputs.prerelease_asset_sha256).toBe("c".repeat(64));
+    expect(outputs.prerelease_release_sha).toBe("b".repeat(40));
+    expect(summary).toContain("v0.6.13-alpha.2");
+    expect(summary).not.toContain("msixtest");
+  });
+
+  it("rejects throwaway Windows-node test releases as the prerelease channel", () => {
+    const releases = [
+      windowsNodeRelease({
+        assetName: "OpenClaw.Tray.WinUI_0.6.11_x64.msix",
+        prerelease: true,
+        publishedAt: "2026-06-12T19:41:07Z",
+        tag: "v0.6.11-msixtest.1",
+      }),
+      windowsNodeRelease({
+        prerelease: false,
+        publishedAt: "2026-06-30T00:00:00Z",
+        tag: "v0.6.12",
+      }),
+    ];
+    const { outputs, result } = runWindowsNodeReleaseResolver(releases);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "No published Windows-node production prerelease (vX.Y.Z-alpha.N)",
+    );
+    expect(outputs).toEqual({});
+  });
+
+  it("fails closed when the newest alpha prerelease is superseded by stable", () => {
+    const releases = [
+      windowsNodeRelease({
+        prerelease: false,
+        publishedAt: "2026-06-30T00:00:00Z",
+        tag: "v0.6.12",
+      }),
+      windowsNodeRelease({
+        prerelease: true,
+        publishedAt: "2026-06-03T00:00:00Z",
+        tag: "v0.6.2-alpha.1",
+      }),
+    ];
+    const { outputs, result } = runWindowsNodeReleaseResolver(releases);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Windows-node prerelease v0.6.2-alpha.1 is superseded by stable v0.6.12",
+    );
+    expect(outputs).toEqual({});
+  });
+
+  it("fails closed when the current alpha prerelease has no hashed uploaded artifact", () => {
+    const releases = [
+      windowsNodeRelease({
+        digest: "",
+        prerelease: true,
+        publishedAt: "2026-07-10T00:00:00Z",
+        tag: "v0.6.13-alpha.1",
+      }),
+      windowsNodeRelease({
+        prerelease: true,
+        publishedAt: "2026-07-05T00:00:00Z",
+        tag: "v0.6.12-alpha.1",
+      }),
+      windowsNodeRelease({
+        prerelease: false,
+        publishedAt: "2026-06-30T00:00:00Z",
+        tag: "v0.6.11",
+      }),
+    ];
+    const { outputs, result } = runWindowsNodeReleaseResolver(releases);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "No published Windows-node production prerelease (vX.Y.Z-alpha.N)",
+    );
+    expect(outputs).toEqual({});
+  });
+
   it("routes release Matrix through the QA Lab selector", () => {
     const releaseWorkflow = readFileSync(RELEASE_CHECKS_WORKFLOW, "utf8");
     const releaseTelegramWorkflow = readFileSync(RELEASE_TELEGRAM_QA_WORKFLOW, "utf8");
@@ -5839,7 +6151,7 @@ describe("package artifact reuse", () => {
       'args+=(-f live_suite_filter="$LIVE_SUITE_FILTER")',
       'args+=(-f cross_os_suite_filter="$CROSS_OS_SUITE_FILTER")',
       'case "$RERUN_GROUP" in',
-      "install-smoke|cross-os|live-e2e|package|qa-parity|qa-live)",
+      "install-smoke|cross-os|windows-node|live-e2e|package|qa-parity|qa-live)",
       "cancel-in-progress: false",
       "Verify release checks accepted Tideclaw alpha advisory lanes",
       "release_checks_advisory_only",
@@ -6630,6 +6942,87 @@ describe("package artifact reuse", () => {
     if (emptyStderr) {
       expect(result.stderr).toBe("");
     }
+    for (const snippet of expected ?? []) {
+      expect(output).toContain(snippet);
+    }
+  });
+
+  it.each([
+    {
+      expected: [] as string[],
+      name: "accepts all successful selected Windows-node E2E children",
+      params: {
+        currentAttempt: "2",
+        currentResult: "skipped" as const,
+        telegramSelected: false,
+        windowsSelected: true,
+        windowsPrereleaseResult: "success" as const,
+        windowsMainResult: "success" as const,
+        windowsStableResult: "success" as const,
+      },
+      status: 0,
+    },
+    {
+      expected: ["::error::windows_node_prerelease_e2e ended with skipped"],
+      name: "rejects a skipped selected Windows-node prerelease E2E child",
+      params: {
+        currentAttempt: "2",
+        currentResult: "skipped" as const,
+        telegramSelected: false,
+        windowsSelected: true,
+        windowsPrereleaseResult: "skipped" as const,
+        windowsMainResult: "success" as const,
+        windowsStableResult: "success" as const,
+      },
+      status: 1,
+    },
+    {
+      expected: ["::error::windows_node_stable_e2e ended with failure"],
+      name: "rejects a failed selected Windows-node stable E2E child",
+      params: {
+        currentAttempt: "2",
+        currentResult: "skipped" as const,
+        telegramSelected: false,
+        windowsSelected: true,
+        windowsPrereleaseResult: "success" as const,
+        windowsMainResult: "success" as const,
+        windowsStableResult: "failure" as const,
+      },
+      status: 1,
+    },
+    {
+      expected: ["::error::windows_node_main_e2e ended with skipped"],
+      name: "rejects a skipped selected Windows-node main E2E child",
+      params: {
+        currentAttempt: "2",
+        currentResult: "skipped" as const,
+        telegramSelected: false,
+        windowsSelected: true,
+        windowsPrereleaseResult: "success" as const,
+        windowsMainResult: "skipped" as const,
+        windowsStableResult: "success" as const,
+      },
+      status: 1,
+    },
+    {
+      expected: [] as string[],
+      name: "accepts skipped Windows-node E2E children when unselected",
+      params: {
+        currentAttempt: "2",
+        currentResult: "skipped" as const,
+        telegramSelected: false,
+        windowsSelected: false,
+        windowsPrereleaseResult: "skipped" as const,
+        windowsMainResult: "skipped" as const,
+        windowsStableResult: "skipped" as const,
+      },
+      status: 0,
+    },
+  ] as const)("$name", ({ expected, params, status }) => {
+    const result = runReleaseChecksSummary(params);
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status, output).toBe(status);
     for (const snippet of expected ?? []) {
       expect(output).toContain(snippet);
     }

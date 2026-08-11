@@ -81,6 +81,7 @@ on:
           - plugin-prerelease
           - install-smoke
           - cross-os
+          - windows-node
           - live-e2e
           - package
           - qa-parity
@@ -391,7 +392,7 @@ jobs:
             else
               echo "- Plugin prerelease: skipped by rerun group"
             fi
-            if [[ "$RERUN_GROUP" == "all" || "$RERUN_GROUP" == "install-smoke" || "$RERUN_GROUP" == "cross-os" || "$RERUN_GROUP" == "live-e2e" || "$RERUN_GROUP" == "package" || "$RERUN_GROUP" == "qa-parity" || "$RERUN_GROUP" == "qa-live" ]]; then
+            if [[ "$RERUN_GROUP" == "all" || "$RERUN_GROUP" == "install-smoke" || "$RERUN_GROUP" == "cross-os" || "$RERUN_GROUP" == "windows-node" || "$RERUN_GROUP" == "live-e2e" || "$RERUN_GROUP" == "package" || "$RERUN_GROUP" == "qa-parity" || "$RERUN_GROUP" == "qa-live" ]]; then
               echo "- Release/live/Docker/package/QA: \`OpenClaw Release Checks\`"
             else
               echo "- Release/live/Docker/package/QA: skipped by rerun group"
@@ -589,7 +590,7 @@ jobs:
   prepare_release_candidate:
     name: Prepare shared release candidate
     needs: [resolve_target, evidence_reuse]
-    if: ${{ always() && needs.resolve_target.result == 'success' && needs.evidence_reuse.outputs.reuse != 'true' && inputs.release_package_spec == '' && inputs.package_acceptance_package_spec == '' && (contains(fromJSON('["all","plugin-prerelease","cross-os","package"]'), inputs.rerun_group) || (inputs.rerun_group == 'live-e2e' && needs.resolve_target.outputs.live_suite_filter == '')) }}
+    if: ${{ always() && needs.resolve_target.result == 'success' && needs.evidence_reuse.outputs.reuse != 'true' && inputs.release_package_spec == '' && inputs.package_acceptance_package_spec == '' && (contains(fromJSON('["all","plugin-prerelease","cross-os","windows-node","package"]'), inputs.rerun_group) || (inputs.rerun_group == 'live-e2e' && needs.resolve_target.outputs.live_suite_filter == '')) }}
     permissions:
       actions: read
       contents: read
@@ -1167,7 +1168,7 @@ jobs:
   release_checks:
     name: Run release/live/Docker/QA validation
     needs: [resolve_target, evidence_reuse, prepare_release_candidate]
-    if: ${{ always() && needs.resolve_target.result == 'success' && (needs.prepare_release_candidate.result == 'success' || needs.prepare_release_candidate.result == 'skipped') && contains(fromJSON('["all","install-smoke","cross-os","live-e2e","package","qa-parity","qa-live"]'), inputs.rerun_group) && needs.evidence_reuse.outputs.reuse != 'true' }}
+    if: ${{ always() && needs.resolve_target.result == 'success' && (needs.prepare_release_candidate.result == 'success' || needs.prepare_release_candidate.result == 'skipped') && contains(fromJSON('["all","install-smoke","cross-os","windows-node","live-e2e","package","qa-parity","qa-live"]'), inputs.rerun_group) && needs.evidence_reuse.outputs.reuse != 'true' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # The bounded package critical path tops out at 310 minutes; 420 leaves
     # queue/API margin. Parent timeout preserves the adopted child for exact cancellation.
@@ -1572,7 +1573,7 @@ jobs:
           echo "- Package Telegram E2E deferred: \`${SKIP_PACKAGE_TELEGRAM_E2E}\`" >> "$GITHUB_STEP_SUMMARY"
           if [[ -z "${RELEASE_PACKAGE_SPEC// }" && -z "${PACKAGE_ACCEPTANCE_PACKAGE_SPEC// }" ]]; then
             case "$RERUN_GROUP" in
-              all|plugin-prerelease|cross-os|package)
+              all|plugin-prerelease|cross-os|windows-node|package)
                 candidate_required=1
                 ;;
               live-e2e)
@@ -1644,7 +1645,7 @@ jobs:
               plugin-prerelease)
                 plugin_prerelease_required=1
                 ;;
-              install-smoke|cross-os|live-e2e|package|qa-parity|qa-live)
+              install-smoke|cross-os|windows-node|live-e2e|package|qa-parity|qa-live)
                 release_checks_required=1
                 ;;
               performance)
