@@ -109,6 +109,8 @@ export function closeRelaySession(
   const disposition = options?.disposition ?? "abort";
   session.harness.close();
   relaySessions.delete(session.id);
+  session.unregisterConnectionCleanup?.();
+  session.unregisterConnectionCleanup = undefined;
   forgetUnifiedTalkSession(session.id);
   clearTimeout(session.cleanupTimer);
   if (disposition === "detach") {
