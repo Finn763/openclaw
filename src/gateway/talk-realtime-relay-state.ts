@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "../config/types.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import type { RealtimeVoiceProviderPlugin } from "../plugins/types.js";
 import type { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import type { RealtimeVoiceAgentControlResult } from "../talk/agent-run-control.js";
@@ -70,7 +71,8 @@ export type TalkRealtimeRelayEventPayload =
     }
   | { relaySessionId: string; type: "close"; reason: "completed" | "error" };
 
-type TalkRealtimeRelayEvent = TalkRealtimeRelayEventPayload & { talkEvent?: TalkEvent };
+export type TalkRealtimeRelayEvent = TalkRealtimeRelayEventPayload & { talkEvent?: TalkEvent };
+export type TalkRealtimeRelayEventSink = (event: TalkRealtimeRelayEvent) => void;
 
 export type ForcedTerminalProviderResult = {
   result: unknown;
@@ -87,7 +89,9 @@ export type RelayAgentControlProviderSubmission = {
 export type RelaySession = {
   id: string;
   connId: string;
+  quotaOwnerId: string;
   context: GatewayRequestContext;
+  eventSink?: TalkRealtimeRelayEventSink;
   bridge: RealtimeVoiceBridgeSession;
   harness: RealtimeVoiceSessionHarness;
   sessionKey?: string;
@@ -122,6 +126,8 @@ export type RelaySession = {
 export type CreateTalkRealtimeRelaySessionParams = {
   context: GatewayRequestContext;
   connId: string;
+  quotaOwnerId?: string;
+  eventSink?: TalkRealtimeRelayEventSink;
   cfg?: OpenClawConfig;
   consultAuthority?: TalkAgentConsultAuthority;
   provider: RealtimeVoiceProviderPlugin;
@@ -184,15 +190,19 @@ export function resolveRelayProviderToolCallId(session: RelaySession, relayCallI
   return session.providerToolCallIds.get(relayCallId) ?? relayCallId;
 }
 
-export function broadcastToOwner(
-  context: GatewayRequestContext,
-  connId: string,
+export function publishTalkRealtimeRelayEvent(
+  owner: Pick<RelaySession, "connId" | "context" | "eventSink">,
   event: TalkRealtimeRelayEvent,
 ): void {
   // Classify the materialized Talk event so final results cannot be mistaken
   // for transient tool progress by individual provider callback paths.
   const delivery = relayEventDeliveryOptions(event, event.talkEvent);
-  context.broadcastToConnIds(RELAY_EVENT, event, new Set([connId]), delivery);
+  try {
+    owner.eventSink?.(event);
+  } catch (error) {
+    owner.context.logGateway.warn(`talk realtime event sink failed: ${formatErrorMessage(error)}`);
+  }
+  owner.context.broadcastToConnIds(RELAY_EVENT, event, new Set([owner.connId]), delivery);
 }
 
 function relayEventDeliveryOptions(
