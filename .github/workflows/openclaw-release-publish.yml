@@ -68,7 +68,7 @@ on:
         default: true
         type: boolean
       publish_docker_only:
-        description: Publish Docker only after independently verifying an already-published beta or extended-stable npm package
+        description: Complete an already-published extended-stable release by verifying npm, publishing Docker, then publishing its GitHub Release
         required: true
         default: false
         type: boolean
@@ -259,7 +259,7 @@ jobs:
           if [[ "${PUBLISH_DOCKER_ONLY}" == "true" ]]; then
             if [[ ! "${RELEASE_TAG}" =~ ^v([0-9]{4})\.([1-9][0-9]*)\.([1-9][0-9]*)$ ]] || \
               (( 10#${BASH_REMATCH[3]:-0} < 33 )); then
-              echo "Extended-stable Docker closeout requires a final .33+ release tag." >&2
+              echo "Extended-stable closeout requires a final .33+ release tag." >&2
               exit 1
             fi
             expected_validation_branch="extended-stable/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.33"
@@ -2532,20 +2532,12 @@ jobs:
           if-no-files-found: error
 
   prepare_extended_stable_release:
-    name: Verify npm and prepare extended-stable release
+    name: Verify npm and prepare extended-stable release notes
     needs: [resolve_release_target]
     if: ${{ inputs.publish_docker_only }}
     runs-on: ubuntu-latest
-    environment: npm-release
     permissions:
-      actions: read
-      contents: write
-      statuses: read
-    outputs:
-      docker_already_published: ${{ steps.release.outputs.docker_already_published }}
-      docker_status_run_id: ${{ steps.release.outputs.docker_status_run_id }}
-      release_id: ${{ steps.release.outputs.release_id }}
-      release_body_sha256: ${{ steps.release.outputs.release_body_sha256 }}
+      contents: read
     steps:
       - name: Verify exact npm and selector readback matches preflight bytes
         env:
@@ -2571,258 +2563,60 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout release SHA
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ needs.resolve_release_target.outputs.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
       - name: Checkout trusted release tooling
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.sha }}
-          path: .release-harness
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Node environment
+      - name: Setup trusted release tooling
         uses: ./.github/actions/setup-node-env
         with:
-          install-deps: "false"
           install-bun: "false"
 
-      - name: Install trusted release tooling dependencies
+      - name: Render canonical extended-stable release notes
         env:
-          CI: "true"
-        run: |
-          set -euo pipefail
-          install_args=(
-            --dir .release-harness
-            install
-            --frozen-lockfile
-            --prefer-offline
-            --config.engine-strict=false
-            --config.enable-pre-post-scripts=true
-            --config.side-effects-cache=true
-          )
-          pnpm "${install_args[@]}" || pnpm "${install_args[@]}"
-          # Node resolves --import tsx from the process cwd. Point that root at
-          # the trusted harness install instead of the frozen target checkout.
-          ln -s .release-harness/node_modules node_modules
-
-      - name: Create or resume the canonical draft release
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.resolve_release_target.outputs.sha }}
         run: |
           set -euo pipefail
           release_version="${RELEASE_TAG#v}"
-          release_title="openclaw ${release_version}"
-          notes_file="${RUNNER_TEMP}/extended-stable-release-notes.md"
-          verification_file="${RUNNER_TEMP}/extended-stable-release-verification.md"
+          notes_dir="${RUNNER_TEMP}/extended-stable-release-notes"
+          changelog_file="${notes_dir}/CHANGELOG.md"
+          notes_file="${notes_dir}/release-notes.md"
+          verification_file="${notes_dir}/verification.md"
+          mkdir -p "${notes_dir}"
 
-          verify_release_tag_target() {
-            local direct_sha peeled_sha remote_refs remote_sha
-            remote_refs="$(git ls-remote --tags origin \
-              "refs/tags/${RELEASE_TAG}" \
-              "refs/tags/${RELEASE_TAG}^{}")"
-            direct_sha="$(printf '%s\n' "${remote_refs}" |
-              awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref { print $1 }')"
-            peeled_sha="$(printf '%s\n' "${remote_refs}" |
-              awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref { print $1 }')"
-            remote_sha="${peeled_sha:-${direct_sha}}"
-            if [[ -z "${remote_sha}" || "${remote_sha}" != "${TARGET_SHA}" ]]; then
-              echo "Release tag ${RELEASE_TAG} must still resolve to ${TARGET_SHA}; found ${remote_sha:-<missing>}." >&2
-              exit 1
-            fi
-          }
-
-          resolve_release_id() {
-            gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
-              --json databaseId --jq '.databaseId' 2>/dev/null || true
-          }
-
-          wait_for_release_id() {
-            local attempt release_id
-            for attempt in $(seq 1 12); do
-              release_id="$(resolve_release_id)"
-              if [[ "${release_id}" =~ ^[1-9][0-9]*$ ]]; then
-                printf '%s\n' "${release_id}"
-                return 0
-              fi
-              if [[ "${attempt}" != "12" ]]; then
-                sleep 5
-              fi
-            done
-            return 1
-          }
-
-          verify_release_resource() {
-            local release_id="$1"
-            local expected_draft="${2:-}"
-            local require_exact_body="${3:-false}"
-            local resource_file="${RUNNER_TEMP}/extended-stable-release.json"
-            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" > "${resource_file}"
-            RELEASE_BODY_FILE="${notes_file}" \
-              RELEASE_CHANGELOG_FILE="${GITHUB_WORKSPACE}/CHANGELOG.md" \
-              RELEASE_REPOSITORY="${GITHUB_REPOSITORY}" \
-              RELEASE_TAG="${RELEASE_TAG}" \
-              RELEASE_TITLE="${release_title}" \
-              RELEASE_RESOURCE_FILE="${resource_file}" \
-              EXPECTED_DRAFT="${expected_draft}" \
-              REQUIRE_EXACT_BODY="${require_exact_body}" \
-              node --import tsx --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          import {
-            releaseNotesVersionForTag,
-            verifyGithubReleaseNotes,
-          } from "./.release-harness/scripts/render-github-release-notes.mts";
-
-          const release = JSON.parse(readFileSync(process.env.RELEASE_RESOURCE_FILE, "utf8"));
-          const body = release.body ?? "";
-          const changelog = readFileSync(process.env.RELEASE_CHANGELOG_FILE, "utf8");
-          const expectedDraft = process.env.EXPECTED_DRAFT;
-          const expectedBody = readFileSync(process.env.RELEASE_BODY_FILE, "utf8");
-          const notes = verifyGithubReleaseNotes({
-            body,
-            changelog,
-            version: releaseNotesVersionForTag(process.env.RELEASE_TAG),
-            tag: process.env.RELEASE_TAG,
-            repository: process.env.RELEASE_REPOSITORY,
-          });
-          if (
-            release.tag_name !== process.env.RELEASE_TAG ||
-            release.name !== process.env.RELEASE_TITLE ||
-            release.prerelease !== false ||
-            (expectedDraft !== "" && release.draft !== (expectedDraft === "true")) ||
-            !Array.isArray(release.assets) ||
-            release.assets.length !== 0 ||
-            (process.env.REQUIRE_EXACT_BODY === "true" && body !== expectedBody) ||
-            !notes.matches
-          ) {
-            console.error("Existing GitHub release does not match the canonical extended-stable contract.");
-            process.exitCode = 1;
-          }
-          NODE
-          }
-
-          wait_until_not_latest() {
-            local attempt latest_tag
-            for attempt in $(seq 1 12); do
-              latest_tag="$(
-                gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>/dev/null || true
-              )"
-              if [[ -n "${latest_tag}" && "${latest_tag}" != "${RELEASE_TAG}" ]]; then
-                return 0
-              fi
-              if [[ "${attempt}" != "12" ]]; then
-                sleep 5
-              fi
-            done
-            echo "Extended-stable release ${RELEASE_TAG} must not be GitHub Latest." >&2
-            return 1
-          }
-
-          verify_release_tag_target
+          git fetch --no-tags --depth=1 origin "${TARGET_SHA}"
+          git show "${TARGET_SHA}:CHANGELOG.md" > "${changelog_file}"
           cat > "${verification_file}" <<EOF
           ### Release verification
 
-          - Scope: \`openclaw@${release_version}\`, official npm plugins, and Gateway container images only.
-          - Channel: npm and container \`extended-stable\`; regular \`latest\` is unchanged.
-          - Container publication: this closeout requires durable Docker completion on the immutable release SHA.
+          - Scope: `openclaw@${release_version}`, official npm plugins, and Gateway container images only.
+          - Channel: npm and container `extended-stable`; regular `latest` is unchanged.
+          - Containers: published and verified before this release page became public.
           - Excluded: ClawHub, macOS, Windows, mobile, website, and private dist-tags.
           EOF
-          node --import tsx .release-harness/scripts/render-github-release-notes.mts \
-            --changelog CHANGELOG.md \
+          node --import tsx scripts/render-github-release-notes.mts \
+            --changelog "${changelog_file}" \
             --tag "${RELEASE_TAG}" \
             --repository "${GITHUB_REPOSITORY}" \
             --verification-file "${verification_file}" \
             --output "${notes_file}"
 
-          release_is_public=false
-          release_id="$(resolve_release_id)"
-          if [[ -n "${release_id}" ]]; then
-            verify_release_resource "${release_id}"
-          else
-            if ! gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
-              --verify-tag \
-              --draft \
-              --title "${release_title}" \
-              --notes-file "${notes_file}" \
-              --prerelease=false \
-              --latest=false; then
-              echo "Draft creation raced with another writer; resolving the existing release."
-            fi
-            release_id="$(wait_for_release_id)" || {
-              echo "GitHub did not expose a numeric release ID after draft creation." >&2
-              exit 1
-            }
-            verify_release_resource "${release_id}"
-          fi
-          release_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --jq '.draft')"
-          if [[ "${release_draft}" == "true" ]]; then
-            gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
-              --title "${release_title}" \
-              --notes-file "${notes_file}" \
-              --prerelease=false \
-              --latest=false
-            verify_release_resource "${release_id}" true true
-          elif [[ "${release_draft}" == "false" ]]; then
-            verify_release_resource "${release_id}" false true
-            wait_until_not_latest
-            release_is_public=true
-            echo "Existing canonical public release found; Docker completion will be checked independently."
-          else
-            echo "GitHub release ${release_id} has an invalid draft state." >&2
-            exit 1
-          fi
-          release_body_sha256="$(
-            sha256sum "${notes_file}" | awk '{print $1}'
-          )"
-          docker_status_file="${RUNNER_TEMP}/extended-stable-docker-status.json"
-          gh api "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/statuses?per_page=100" > "${docker_status_file}"
-          docker_status_run_id="$(node .release-harness/scripts/docker-channel-promote.mjs \
-            --find-statuses-file "${docker_status_file}" \
-            --version "${release_version}" \
-            --repository "${GITHUB_REPOSITORY}" \
-            --source-sha "${TARGET_SHA}")"
-          docker_already_published=false
-          if [[ -n "${docker_status_run_id}" ]]; then
-            docker_run_file="${RUNNER_TEMP}/extended-stable-docker-run.json"
-            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${docker_status_run_id}" > "${docker_run_file}"
-            jq -e --arg repository "${GITHUB_REPOSITORY}" \
-              --arg run_id "${docker_status_run_id}" '
-                (.id | tostring) == $run_id and
-                .name == "OpenClaw Release Publish" and
-                (.path | split("@")[0]) == ".github/workflows/openclaw-release-publish.yml" and
-                .event == "workflow_dispatch" and
-                .status == "completed" and
-                .repository.full_name == $repository
-              ' "${docker_run_file}" >/dev/null || {
-                echo "Docker completion status does not reference a completed OpenClaw Release Publish run." >&2
-                exit 1
-              }
-            docker_already_published=true
-          fi
-          echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
-          echo "release_body_sha256=${release_body_sha256}" >> "$GITHUB_OUTPUT"
-          echo "docker_already_published=${docker_already_published}" >> "$GITHUB_OUTPUT"
-          echo "docker_status_run_id=${docker_status_run_id}" >> "$GITHUB_OUTPUT"
-          if [[ "${docker_already_published}" == "true" ]]; then
-            echo "- Docker completion: durable status from run ${docker_status_run_id}; rebuild skipped" >> "$GITHUB_STEP_SUMMARY"
-          elif [[ "${release_is_public}" == "true" ]]; then
-            echo "- Extended-stable GitHub release: public without Docker completion; Docker publication required" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- Extended-stable GitHub release draft: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"
-          fi
+      - name: Upload canonical extended-stable release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: extended-stable-release-notes-${{ inputs.tag }}
+          path: ${{ runner.temp }}/extended-stable-release-notes/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
 
   publish_docker:
     name: Publish Docker images
     needs: [resolve_release_target, publish, prepare_extended_stable_release]
-    if: ${{ always() && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || (inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success' && needs.prepare_extended_stable_release.outputs.docker_already_published != 'true')) }}
+    if: ${{ always() && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || (inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success')) }}
     uses: ./.github/workflows/docker-release.yml
     with:
       tag: ${{ inputs.tag }}
@@ -2833,7 +2627,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      statuses: write
 
   publish_vcr:
     name: Mirror Docker images to Vercel Container Registry
@@ -2876,130 +2669,37 @@ jobs:
             exit 1
           fi
 
-  verify_extended_stable_docker_completion:
-    name: Verify durable extended-stable Docker completion
-    needs: [resolve_release_target, prepare_extended_stable_release, publish_docker]
-    if: ${{ always() && inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success' && (needs.publish_docker.result == 'success' || (needs.publish_docker.result == 'skipped' && needs.prepare_extended_stable_release.outputs.docker_already_published == 'true')) }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      statuses: read
-    steps:
-      - name: Checkout trusted release tooling
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify durable Docker completion status
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
-          TARGET_SHA: ${{ needs.resolve_release_target.outputs.sha }}
-        run: |
-          set -euo pipefail
-          release_version="${RELEASE_TAG#v}"
-          status_file="${RUNNER_TEMP}/extended-stable-docker-status.json"
-          docker_status_run_id=""
-          for attempt in $(seq 1 12); do
-            gh api "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/statuses?per_page=100" > "${status_file}"
-            docker_status_run_id="$(node scripts/docker-channel-promote.mjs \
-              --find-statuses-file "${status_file}" \
-              --version "${release_version}" \
-              --repository "${GITHUB_REPOSITORY}" \
-              --source-sha "${TARGET_SHA}")"
-            if [[ -n "${docker_status_run_id}" ]]; then
-              break
-            fi
-            if [[ "${attempt}" == "12" ]]; then
-              echo "Docker publication completed without a durable completion status." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-
-          docker_run_file="${RUNNER_TEMP}/extended-stable-docker-run.json"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${docker_status_run_id}" > "${docker_run_file}"
-          jq -e --arg current_run_id "${GITHUB_RUN_ID}" \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg run_id "${docker_status_run_id}" '
-              (.id | tostring) == $run_id and
-              .name == "OpenClaw Release Publish" and
-              (.path | split("@")[0]) == ".github/workflows/openclaw-release-publish.yml" and
-              .event == "workflow_dispatch" and
-              (.status == "completed" or ($run_id == $current_run_id and .status == "in_progress")) and
-              .repository.full_name == $repository
-            ' "${docker_run_file}" >/dev/null || {
-              echo "Docker completion status does not reference the expected release workflow run." >&2
-              exit 1
-            }
-          echo "- Durable Docker completion: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${docker_status_run_id}" >> "$GITHUB_STEP_SUMMARY"
-
   finalize_extended_stable_github_release:
-    name: Finalize extended-stable GitHub release
-    needs:
-      [
-        resolve_release_target,
-        prepare_extended_stable_release,
-        verify_extended_stable_docker_completion,
-      ]
-    if: ${{ always() && inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success' && needs.verify_extended_stable_docker_completion.result == 'success' }}
+    name: Publish extended-stable GitHub release
+    needs: [resolve_release_target, prepare_extended_stable_release, publish_docker]
+    if: ${{ always() && inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success' && needs.publish_docker.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
       contents: write
     steps:
-      - name: Publish the verified extended-stable draft
+      - name: Download canonical extended-stable release notes
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v8.0.1
+        with:
+          name: extended-stable-release-notes-${{ inputs.tag }}
+          path: ${{ runner.temp }}/extended-stable-release-notes
+
+      - name: Publish canonical extended-stable release
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_BODY_SHA256: ${{ needs.prepare_extended_stable_release.outputs.release_body_sha256 }}
-          RELEASE_ID: ${{ needs.prepare_extended_stable_release.outputs.release_id }}
           RELEASE_TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.resolve_release_target.outputs.sha }}
         run: |
           set -euo pipefail
-          if [[ ! "${RELEASE_ID}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Extended-stable finalization requires a numeric GitHub release ID." >&2
-            exit 1
-          fi
-          if [[ ! "${EXPECTED_BODY_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "Extended-stable finalization requires a canonical release body digest." >&2
-            exit 1
-          fi
           release_version="${RELEASE_TAG#v}"
           release_title="openclaw ${release_version}"
-          resource_file="${RUNNER_TEMP}/extended-stable-final-release.json"
+          notes_file="${RUNNER_TEMP}/extended-stable-release-notes/release-notes.md"
+          resource_file="${RUNNER_TEMP}/extended-stable-release.json"
 
-          verify_release_state() {
-            local expected_draft="$1"
-            gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "${resource_file}"
-            RELEASE_RESOURCE_FILE="${resource_file}" \
-              RELEASE_TAG="${RELEASE_TAG}" \
-              RELEASE_TITLE="${release_title}" \
-              EXPECTED_BODY_SHA256="${EXPECTED_BODY_SHA256}" \
-              EXPECTED_DRAFT="${expected_draft}" \
-              node --input-type=module <<'NODE'
-          import { createHash } from "node:crypto";
-          import { readFileSync } from "node:fs";
-
-          const release = JSON.parse(readFileSync(process.env.RELEASE_RESOURCE_FILE, "utf8"));
-          const bodySha256 = createHash("sha256").update(release.body ?? "").digest("hex");
-          if (
-            release.tag_name !== process.env.RELEASE_TAG ||
-            release.name !== process.env.RELEASE_TITLE ||
-            release.prerelease !== false ||
-            release.draft !== (process.env.EXPECTED_DRAFT === "true") ||
-            !Array.isArray(release.assets) ||
-            release.assets.length !== 0 ||
-            bodySha256 !== process.env.EXPECTED_BODY_SHA256
-          ) {
-            console.error("GitHub release state does not match the extended-stable contract.");
-            process.exitCode = 1;
-          }
-          NODE
-          }
+          if [[ ! -s "${notes_file}" ]]; then
+            echo "Canonical extended-stable release notes artifact is missing or empty." >&2
+            exit 1
+          fi
 
           verify_release_tag_target() {
             local direct_sha peeled_sha remote_refs remote_sha
@@ -3012,49 +2712,82 @@ jobs:
               awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref { print $1 }')"
             remote_sha="${peeled_sha:-${direct_sha}}"
             if [[ -z "${remote_sha}" || "${remote_sha}" != "${TARGET_SHA}" ]]; then
-              echo "Release tag ${RELEASE_TAG} must still resolve to ${TARGET_SHA}; found ${remote_sha:-<missing>}." >&2
+              echo "Release tag ${RELEASE_TAG} must resolve to ${TARGET_SHA}; found ${remote_sha:-<missing>}." >&2
               exit 1
             fi
           }
 
-          # Docker publication can take long enough for the tag to change after
-          # preparation. Recheck immediately before accepting or publishing the page.
-          verify_release_tag_target
-          current_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.draft')"
-          if [[ "${current_draft}" == "true" ]]; then
-            verify_release_state true
-            # GITHUB_TOKEN publication intentionally does not fan out release.published
-            # workflows; extended-stable scope stays owned by this closeout.
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-              -F draft=false \
-              -F prerelease=false \
-              -f make_latest=false >/dev/null
-          elif [[ "${current_draft}" != "false" ]]; then
-            echo "GitHub release ${RELEASE_ID} has an invalid draft state." >&2
-            exit 1
-          fi
+          fetch_release_resource() {
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+              > "${resource_file}" 2>/dev/null
+          }
 
-          for attempt in $(seq 1 12); do
-            if verify_release_state false; then
-              break
-            fi
-            if [[ "${attempt}" == "12" ]]; then
-              echo "GitHub release ${RELEASE_ID} did not reach its public state." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          for attempt in $(seq 1 12); do
+          verify_release_resource() {
+            local expected_draft="$1"
+            RELEASE_BODY_FILE="${notes_file}" \
+              RELEASE_RESOURCE_FILE="${resource_file}" \
+              RELEASE_TAG="${RELEASE_TAG}" \
+              RELEASE_TITLE="${release_title}" \
+              EXPECTED_DRAFT="${expected_draft}" \
+              node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const release = JSON.parse(readFileSync(process.env.RELEASE_RESOURCE_FILE, "utf8"));
+          const expectedBody = readFileSync(process.env.RELEASE_BODY_FILE, "utf8");
+          if (
+            release.tag_name !== process.env.RELEASE_TAG ||
+            release.name !== process.env.RELEASE_TITLE ||
+            release.draft !== (process.env.EXPECTED_DRAFT === "true") ||
+            release.prerelease !== false ||
+            !Array.isArray(release.assets) ||
+            release.assets.length !== 0 ||
+            (release.body ?? "") !== expectedBody
+          ) {
+            console.error("GitHub release does not match the canonical extended-stable contract.");
+            process.exitCode = 1;
+          }
+          NODE
+          }
+
+          wait_until_public_and_canonical() {
+            local attempt
+            for attempt in $(seq 1 12); do
+              if fetch_release_resource && verify_release_resource false; then
+                return 0
+              fi
+              [[ "${attempt}" == "12" ]] || sleep 5
+            done
+            echo "Extended-stable GitHub release did not reach its canonical public state." >&2
+            return 1
+          }
+
+          verify_not_latest() {
+            local latest_tag
             latest_tag="$(
               gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>/dev/null || true
             )"
-            if [[ -n "${latest_tag}" && "${latest_tag}" != "${RELEASE_TAG}" ]]; then
-              break
+            if [[ -z "${latest_tag}" || "${latest_tag}" == "${RELEASE_TAG}" ]]; then
+              echo "Extended-stable release ${RELEASE_TAG} must not be GitHub Latest." >&2
+              return 1
             fi
-            if [[ "${attempt}" == "12" ]]; then
-              echo "Extended-stable release ${RELEASE_TAG} must not become GitHub Latest." >&2
-              exit 1
+          }
+
+          verify_release_tag_target
+          if fetch_release_resource; then
+            verify_release_resource false
+            verify_not_latest
+            echo "- Extended-stable GitHub release: already public and canonical" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          else
+            if ! gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "${release_title}" \
+              --notes-file "${notes_file}" \
+              --latest=false; then
+              echo "Release creation raced with another writer; verifying the existing page."
             fi
-            sleep 5
-          done
-          echo "- Extended-stable GitHub release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          wait_until_public_and_canonical
+          verify_not_latest
+          echo "- Extended-stable GitHub release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}" >> "${GITHUB_STEP_SUMMARY}"

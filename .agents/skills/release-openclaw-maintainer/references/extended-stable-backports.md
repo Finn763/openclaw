@@ -26,7 +26,7 @@ extended-stable package and publication constraints.
   and workflow validation. GitHub evaluates tag-push workflows from that tree.
 - Exclude ClawHub publication, GitHub Release assets, the macOS app, Windows
   Hub, mobile apps, website downloads, npm `latest`, and private-repository
-  dist-tags. The Docker closeout creates a notes-only GitHub Release page.
+  dist-tags. The release closeout creates a notes-only GitHub Release page.
 - Review the complete mainline delta using the shared evidence-driven audit.
   Do not stop after the first obvious fixes or consider public PRs, titles, or
   dependency bumps the complete source set.

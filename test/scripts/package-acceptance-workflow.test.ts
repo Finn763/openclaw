@@ -2091,6 +2091,9 @@ describe("package acceptance workflow", () => {
     expect(workflow).toContain("main_ref: ${{ steps.inputs.outputs.main_ref }}");
     expect(workflow).toContain("TRIGGER_SHA: ${{ github.sha }}");
     expect(workflow).toContain('main_ref="$TRIGGER_SHA"');
+    expect(workflow).toContain('classifyReleaseTrain(parsed) === "stable"');
+    expect(workflow).toContain('classifyReleaseTrain(parsed) !== "stable"');
+    expect(workflow).toContain("below the extended-stable .33 boundary");
     expect(workflow).toContain("ref: ${{ needs.resolve.outputs.main_ref }}");
     expect(workflow).toContain(
       "Stable closeout skipped: $evidence_source_tag predates immutable postpublish evidence.",
@@ -6814,98 +6817,6 @@ describe("package artifact reuse", () => {
     expect(finalizeJob.needs).toEqual(["publish", "publish_docker"]);
     expect(finalizeJob.if).toContain("needs.publish_docker.result == 'success'");
     expect(finalizeRelease.run).toContain('gh release edit "${RELEASE_TAG}"');
-
-    const extendedPrepareJob = workflowJob(
-      RELEASE_PUBLISH_WORKFLOW,
-      "prepare_extended_stable_release",
-    );
-    const extendedPrepare = workflowStep(
-      extendedPrepareJob,
-      "Create or resume the canonical draft release",
-    );
-    const extendedPrepareSteps = extendedPrepareJob.steps ?? [];
-    const extendedPrepareStepNames = extendedPrepareSteps.map((step) => step.name);
-    const extendedHarnessCheckoutIndex = extendedPrepareStepNames.indexOf(
-      "Checkout trusted release tooling",
-    );
-    const extendedSetupIndex = extendedPrepareStepNames.indexOf("Setup Node environment");
-    const extendedInstallIndex = extendedPrepareStepNames.indexOf(
-      "Install trusted release tooling dependencies",
-    );
-    const extendedDraftIndex = extendedPrepareStepNames.indexOf(
-      "Create or resume the canonical draft release",
-    );
-    const extendedDockerCompletionJob = workflowJob(
-      RELEASE_PUBLISH_WORKFLOW,
-      "verify_extended_stable_docker_completion",
-    );
-    const extendedDockerCompletion = workflowStep(
-      extendedDockerCompletionJob,
-      "Verify durable Docker completion status",
-    );
-    const extendedFinalizeJob = workflowJob(
-      RELEASE_PUBLISH_WORKFLOW,
-      "finalize_extended_stable_github_release",
-    );
-    const extendedFinalize = workflowStep(
-      extendedFinalizeJob,
-      "Publish the verified extended-stable draft",
-    );
-    const extendedFinalizeRun = extendedFinalize.run ?? "";
-    expect(extendedPrepareJob.needs).toEqual(["resolve_release_target"]);
-    expect(extendedSetupIndex).toBeGreaterThan(extendedHarnessCheckoutIndex);
-    expect(extendedInstallIndex).toBeGreaterThan(extendedSetupIndex);
-    expect(extendedDraftIndex).toBeGreaterThan(extendedInstallIndex);
-    expect(workflowStep(extendedPrepareJob, "Setup Node environment").with).toMatchObject({
-      "install-bun": "false",
-      "install-deps": "false",
-    });
-    expect(
-      workflowStep(extendedPrepareJob, "Install trusted release tooling dependencies").run,
-    ).toContain("ln -s .release-harness/node_modules node_modules");
-    expect(extendedPrepare.run).toContain("verify_release_tag_target");
-    expect(extendedPrepare.run).toContain("verifyGithubReleaseNotes");
-    expect(extendedPrepare.run).toContain(
-      "node --import tsx .release-harness/scripts/render-github-release-notes.mts",
-    );
-    expect(extendedPrepare.run).toContain("node --import tsx --input-type=module");
-    expect(extendedPrepare.run).not.toContain("render-github-release-notes.mjs");
-    expect(extendedPrepare.run).toContain("body !== expectedBody");
-    expect(extendedPrepare.run).toContain("release.assets.length !== 0");
-    expect(extendedPrepare.run).toContain("commits/${TARGET_SHA}/statuses?per_page=100");
-    expect(extendedPrepare.run).toContain("--find-statuses-file");
-    expect(extendedPrepare.run).not.toContain("commits/${TARGET_SHA}/status?per_page=100");
-    expect(extendedPrepare.run).toContain("docker_already_published=true");
-    expect(extendedPrepare.run).toContain("public without Docker completion");
-    expect(extendedPrepare.run).toContain("--draft");
-    expect(extendedPrepare.run).toContain("--latest=false");
-    expect(extendedDockerCompletionJob.needs).toEqual([
-      "resolve_release_target",
-      "prepare_extended_stable_release",
-      "publish_docker",
-    ]);
-    expect(extendedDockerCompletion.run).toContain("commits/${TARGET_SHA}/statuses?per_page=100");
-    expect(extendedDockerCompletion.run).toContain("--find-statuses-file");
-    expect(extendedDockerCompletion.run).not.toContain("commits/${TARGET_SHA}/status?per_page=100");
-    expect(extendedDockerCompletion.run).toContain("Docker publication completed without");
-    expect(extendedFinalizeJob.needs).toEqual([
-      "resolve_release_target",
-      "prepare_extended_stable_release",
-      "verify_extended_stable_docker_completion",
-    ]);
-    expect(extendedFinalizeJob.if).toContain(
-      "needs.verify_extended_stable_docker_completion.result == 'success'",
-    );
-    expect(extendedFinalizeRun).toContain("-f make_latest=false");
-    expect(extendedFinalizeRun).toContain("EXPECTED_BODY_SHA256");
-    expect(extendedFinalizeRun).toContain("release.assets.length !== 0");
-    expect(extendedFinalizeRun).toContain("for attempt in $(seq 1 12)");
-    expect(extendedFinalizeRun).toContain(
-      'git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git"',
-    );
-    expect(extendedFinalizeRun.indexOf("verify_release_tag_target\n")).toBeLessThan(
-      extendedFinalizeRun.indexOf('current_draft="$(gh api'),
-    );
   });
 
   it("accepts tag-matched frozen release branches in OpenClaw npm preflight", () => {

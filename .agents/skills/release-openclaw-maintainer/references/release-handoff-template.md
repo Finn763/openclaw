@@ -33,7 +33,7 @@ operator steering. Do not preserve superseded scope.
 - Plugin NPM Release: `<run id / URL or none>`
 - publish parent: `<run id / URL or none>`
 - Docker release/repair: `<run ids / tag / aliases or none>`
-- GitHub Release: `<draft/public / numeric id / non-Latest readback or none>`
+- GitHub Release: `<public URL / non-Latest readback or none>`
 - immutable successful children: `<run ids / artifacts or none>`
 - registry/provenance readback: `<artifact or command result>`
 

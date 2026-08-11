@@ -82,7 +82,7 @@ gh workflow run full-release-validation.yml \
   -f release_profile=stable
 ```
 
-The Docker-only closeout derives `extended-stable/YYYY.M.33` from the final
+The extended-stable closeout derives `extended-stable/YYYY.M.33` from the final
 `.33+` tag, requires the tag commit to be reachable from that exact branch, and
 passes that branch to the validation-evidence verifier. It does not substitute
 the closeout workflow's `main` ref for the candidate branch.

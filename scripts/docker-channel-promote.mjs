@@ -394,7 +394,6 @@ function main() {
     args: process.argv.slice(2),
     options: {
       "allow-rollback": { type: "boolean" },
-      "find-statuses-file": { type: "string" },
       help: { type: "boolean", short: "h" },
       image: { type: "string", multiple: true },
       "image-tag-suffix": { type: "string", default: "" },
@@ -413,28 +412,6 @@ function main() {
   const version = values.version?.trim();
   if (!version) {
     throw new Error("--version is required.");
-  }
-  if (values["status-payload"]) {
-    const payload = createDockerPublicationStatus({
-      version,
-      repository: values.repository ?? "",
-      sourceSha: values["source-sha"] ?? "",
-      runId: values["run-id"] ?? "",
-    });
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
-    return;
-  }
-  if (values["find-statuses-file"]) {
-    const match = findDockerPublicationStatus({
-      statuses: JSON.parse(readFileSync(values["find-statuses-file"], "utf8")),
-      version,
-      repository: values.repository ?? "",
-      sourceSha: values["source-sha"] ?? "",
-    });
-    if (match) {
-      process.stdout.write(`${match.runId}\n`);
-    }
-    return;
   }
   const images = (values.image ?? []).map((image) => image.trim());
   if (images.length === 0 || images.some((image) => image.length === 0)) {
