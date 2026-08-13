@@ -72,6 +72,9 @@ function renderRawMarkdownHtml(
   if (env?.progressBars) {
     return PROGRESS_HTML_RE.test(content.trim()) ? content : "";
   }
+  if (!block && /^<br\s*\/?>$/iu.test(content)) {
+    return "<br>";
+  }
   return escapeMarkdownHtml(content) + (block ? "\n" : "");
 }
 
