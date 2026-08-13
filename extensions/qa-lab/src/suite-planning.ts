@@ -89,6 +89,9 @@ function selectQaFlowSuiteScenarios(params: {
   return params.scenarios.filter(
     (scenario) =>
       scenario.execution.kind === "flow" &&
+      (!params.channel ||
+        params.channelDriver === "qa-channel" ||
+        scenarioDeclaresQaChannel(scenario, params.channel)) &&
       scenarioMatchesQaProviderLane({
         scenario,
         providerMode: params.providerMode,

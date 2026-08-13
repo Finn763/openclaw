@@ -140,7 +140,6 @@ describe("live transport QA scenario selection", () => {
     { channelId: "matrix", scenarioId: "thread-follow-up" },
     { channelId: "telegram", scenarioId: "channel-canary" },
     { channelId: "telegram", scenarioId: "channel-message-flows" },
-    { channelId: "discord", scenarioId: "channel-canary" },
   ] as const)(
     "keeps $scenarioId eligible through both $channelId drivers",
     ({ channelId, scenarioId }) => {
