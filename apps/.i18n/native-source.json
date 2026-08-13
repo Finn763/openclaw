@@ -48133,6 +48133,28 @@
       ]
     },
     {
+      "id": "native.apple.050cddb7d6d24e52",
+      "source": "Use realtime Gateway relay",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-named-argument",
+          "path": "apps/macos/Sources/OpenClaw/VoiceWakeSettings.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.d7c89897a6c2da7f",
+      "source": "Use the Gateway's configured realtime voice session on this Mac. Requires realtime, gateway-relay, and agent-consult in Talk settings.",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-named-argument-multiline",
+          "path": "apps/macos/Sources/OpenClaw/VoiceWakeSettings.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.58566125ab806740",
       "source": "Use the panel + Canvas",
       "surface": "apple",
