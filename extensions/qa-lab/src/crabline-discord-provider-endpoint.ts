@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   setDiscordProviderEndpointDescriptor,
   type DiscordProviderEndpointDescriptor,
-} from "@openclaw/discord/provider-endpoint-api.js";
+} from "@openclaw/discord/test-api.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
@@ -47,11 +47,6 @@ export function registerCrablineDiscordProviderEndpoint(api: OpenClawPluginApi):
     throw error;
   }
   const descriptor = readDescriptor(JSON.parse(serialized));
-  // Install before channel startup; the child Gateway owns clearing this process-local seam.
+  // Install before channel startup; Discord seals this process-lifetime bootstrap on activation.
   setDiscordProviderEndpointDescriptor(descriptor);
-  api.lifecycle.registerRuntimeLifecycle({
-    id: "qa-crabline-discord-provider-endpoint",
-    description: "Clears the QA-owned Discord provider endpoint when the child Gateway stops.",
-    cleanup: () => setDiscordProviderEndpointDescriptor(undefined),
-  });
 }

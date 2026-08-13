@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const setDiscordProviderEndpointDescriptor = vi.hoisted(() => vi.fn());
 
-vi.mock("@openclaw/discord/provider-endpoint-api.js", () => ({
+vi.mock("@openclaw/discord/test-api.js", () => ({
   setDiscordProviderEndpointDescriptor,
 }));
 
@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("Crabline Discord child provider endpoint", () => {
-  it("loads the QA-owned artifact before startup and clears it during teardown", async () => {
+  it("loads the QA-owned artifact once before startup without a teardown mutation", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-qa-discord-endpoint-"));
     process.env[QA_TEMP_ROOT_ENV] = tempRoot;
     const descriptor = {
@@ -47,14 +47,8 @@ describe("Crabline Discord child provider endpoint", () => {
       );
 
       expect(setDiscordProviderEndpointDescriptor).toHaveBeenCalledWith(descriptor);
-      expect(registerRuntimeLifecycle).toHaveBeenCalledOnce();
-      expect(setDiscordProviderEndpointDescriptor.mock.invocationCallOrder[0]).toBeLessThan(
-        registerRuntimeLifecycle.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-      );
-
-      const lifecycle = registerRuntimeLifecycle.mock.calls[0]?.[0];
-      await lifecycle?.cleanup({ reason: "shutdown" });
-      expect(setDiscordProviderEndpointDescriptor).toHaveBeenLastCalledWith(undefined);
+      expect(setDiscordProviderEndpointDescriptor).toHaveBeenCalledOnce();
+      expect(registerRuntimeLifecycle).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
