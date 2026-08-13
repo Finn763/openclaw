@@ -1,8 +1,12 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const workflowPath = ".github/workflows/openclaw-npm-release.yml";
+const tempRoots = useAutoCleanupTempDirTracker(afterEach);
 
 type Step = {
   env?: Record<string, string>;
@@ -397,7 +401,42 @@ describe("minimal npm extended-stable workflow", () => {
     expect(verify.run).toContain(
       "--json workflowName,displayTitle,headBranch,headSha,event,status,conclusion,url",
     );
-    expect(verify.run).toContain("openclaw-npm-extended-stable-release.mjs verify-run");
+    expect(verify.run).toContain(
+      "trusted-workflow/scripts/openclaw-npm-extended-stable-release.mjs verify-run",
+    );
+  });
+
+  it("runs the orchestrated plugin verifier from trusted tooling, not the immutable target", () => {
+    const verify = step(
+      workflow().jobs?.publish_openclaw_npm,
+      "Verify plugin npm release run metadata",
+    );
+    const verifierPath = verify.run?.match(
+      /node ([^\s]+openclaw-npm-extended-stable-release\.mjs) verify-run/u,
+    )?.[1];
+    expect(verifierPath).toBeDefined();
+
+    const root = tempRoots.make("openclaw-old-tag-plugin-verifier-");
+    const targetVerifier = path.join(root, "scripts/openclaw-npm-extended-stable-release.mjs");
+    const trustedVerifier = path.join(
+      root,
+      "trusted-workflow/scripts/openclaw-npm-extended-stable-release.mjs",
+    );
+    mkdirSync(path.dirname(targetVerifier), { recursive: true });
+    mkdirSync(path.dirname(trustedVerifier), { recursive: true });
+    writeFileSync(
+      targetVerifier,
+      'process.stderr.write("immutable target verifier does not support orchestrated identity\\n"); process.exit(41);\n',
+    );
+    writeFileSync(trustedVerifier, 'process.stdout.write("trusted verifier accepted\\n");\n');
+
+    const result = spawnSync(process.execPath, [verifierPath!, "verify-run"], {
+      cwd: root,
+      encoding: "utf8",
+      input: "{}",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("trusted verifier accepted\n");
   });
 
   it("captures selector fail closed, publishes extended-stable, retries, and summarizes", () => {
