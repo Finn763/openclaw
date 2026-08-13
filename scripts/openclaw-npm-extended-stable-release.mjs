@@ -175,8 +175,8 @@ export function validateExtendedStableRunIdentity({
   npmDistTag,
   expectedBranch,
   expectedSha,
-  expectedOrchestratorBranch = undefined,
-  expectedOrchestratorSha = undefined,
+  expectedOrchestratorBranch = "",
+  expectedOrchestratorSha = "",
 }) {
   const expectedWorkflowName =
     kind === "preflight"
