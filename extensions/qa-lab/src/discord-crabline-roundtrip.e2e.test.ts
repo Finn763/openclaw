@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveOpenClawCrablineChannelDriverSelection } from "@openclaw/crabline";
+import { readStringValue } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { describe, expect, it } from "vitest";
 import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
 import { runQaSuite } from "./suite-launch.runtime.js";
@@ -21,10 +22,6 @@ function readObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function readString(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
 
 async function readRecorderEvents(recorderPath: string): Promise<RecorderEvent[]> {
@@ -101,26 +98,26 @@ describe("Discord Crabline real-plugin roundtrip", () => {
           event.accepted === true,
       );
       const inboundBody = readObject(inbound?.body);
-      const inboundChannelId = readString(inboundBody?.channelId);
-      const parentChannelId = readString(inboundBody?.parentChannelId);
+      const inboundChannelId = readStringValue(inboundBody?.channelId) ?? "";
+      const parentChannelId = readStringValue(inboundBody?.parentChannelId) ?? "";
       expect(inboundChannelId).toMatch(/^\d{17,20}$/u);
       expect(parentChannelId).toMatch(/^\d{17,20}$/u);
       expect(inboundChannelId).not.toBe(parentChannelId);
-      expect(readString(inboundBody?.content)).toMatch(/<@\d{17,20}>/u);
+      expect(readStringValue(inboundBody?.content) ?? "").toMatch(/<@\d{17,20}>/u);
 
       const outbound = events.find(
         (event) =>
           event.type === "api" &&
           event.method === "POST" &&
           event.path === `/api/v10/channels/${inboundChannelId}/messages` &&
-          readString(readObject(event.body)?.content).includes(EXPECTED_MARKER) &&
+          (readStringValue(readObject(event.body)?.content) ?? "").includes(EXPECTED_MARKER) &&
           event.accepted === true,
       );
       const outboundBody = readObject(outbound?.body);
       const messageReference = readObject(outboundBody?.message_reference);
       expect(outbound).toBeDefined();
-      expect(readString(outboundBody?.content)).toContain(EXPECTED_MARKER);
-      expect(readString(outboundBody?.content)).not.toMatch(/<@\d{17,20}>/u);
+      expect(readStringValue(outboundBody?.content) ?? "").toContain(EXPECTED_MARKER);
+      expect(readStringValue(outboundBody?.content) ?? "").not.toMatch(/<@\d{17,20}>/u);
       expect(messageReference).toMatchObject({
         message_id: expect.stringMatching(/^\d{17,20}$/u),
       });
