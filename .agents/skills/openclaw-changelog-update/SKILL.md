@@ -273,7 +273,8 @@ Extended-stable has one release commit and one canonical GitHub Release body.
 After version prep and approved backports, regenerate `## YYYY.M.P` with the
 regular manifest and original-main-PR provenance rules. Land it by PR, then
 validate the final branch tip before tagging. The release closeout renders that
-tag-owned section into a non-Latest release page. Re-audit after a product
+tag-owned section into the shared draft before the parent pipeline publishes
+the non-Latest release page. Re-audit after a product
 backport; a tooling-only repair needs no changelog entry. Never rewrite a
 published tag or changelog.
 

@@ -88,7 +88,8 @@ passes that branch to the validation-evidence verifier. It does not substitute
 the closeout workflow's `main` ref for the candidate branch.
 
 The helper's temporary `release-ci/*` ref is valid only when every child uses
-the pinned trusted workflow SHA and the v3 manifest binds the canonical branch,
+the pinned trusted workflow SHA and the Full Release Validation evidence
+manifest uses schema `openclaw.release-validation-evidence/v3` to bind the canonical branch,
 exact release commit, run ID, and attempt. Reject narrow runs, stale attempts,
 untrusted workflow SHAs, and mismatched targets.
 

@@ -197,11 +197,12 @@ Gateway extended-stable runs npm preflight, Full Release Validation, and plugin
 npm release from `extended-stable/YYYY.M.33`; core publish consumes those three
 run IDs plus the validation attempt. Complete evidence may come from the
 canonical branch, reachable current-main tooling, or the trusted main-pinned
-`release-ci/*` harness when its v3 manifest binds the exact target and attempt.
-The post-npm `OpenClaw Release Publish` closeout publishes Gateway images and
-only the `extended-stable*` aliases, then publishes the notes-only GitHub
-Release with `latest=false`; it skips ClawHub, native-app, website, and private
-dist-tag surfaces. See [Monthly Gateway extended-stable
+`release-ci/*` harness when its Full Release Validation evidence manifest uses
+schema `openclaw.release-validation-evidence/v3` and binds the exact target and
+attempt. `OpenClaw Release Publish` then runs the shared draft, plugin npm, core
+npm, evidence, Docker, and finalization stages with
+`npm_dist_tag=extended-stable`. That selection leaves npm `latest` unchanged;
+the track skips ClawHub, native-app, website, and private dist-tag surfaces. See [Monthly Gateway extended-stable
 publication](/reference/RELEASING#monthly-gateway-extended-stable-publication)
 for commands and recovery.
 
@@ -389,14 +390,12 @@ Focused plugin-only repairs use `plugin_publish_scope=selected` with a nonempty
 package list. Plugin-only `all-publishable` runs require the same immutable npm
 preflight and Full Release Validation evidence as a core publish.
 
-Extended-stable uses this workflow only after npm publication, with
-`publish_openclaw_npm=false` and `publish_docker_only=true`. That closeout
-rechecks immutable npm evidence and the exact canonical validation branch,
-publishes Docker, and only then renders canonical release notes and creates the
-public notes-only non-Latest GitHub Release without entering plugin, ClawHub,
-or native-app publication. Re-running failed jobs retries the finalizer without
-repeating a successful Docker job; a fresh dispatch repeats the idempotent
-same-version Docker verification and promotion.
+Extended-stable uses the same workflow with `publish_openclaw_npm=true` and
+`npm_dist_tag=extended-stable`. The parent publishes all official npm plugins
+and core under that selector, creates the draft and attaches immutable release
+evidence, skips ClawHub/native publication, publishes Docker, and finalizes the
+non-Latest GitHub Release. `publish_docker_only=true` is reserved for recovery
+when npm was already published outside the parent pipeline.
 
 ```bash
 gh workflow run openclaw-release-publish.yml \

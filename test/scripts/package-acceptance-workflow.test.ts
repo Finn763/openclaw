@@ -6838,10 +6838,10 @@ describe("package artifact reuse", () => {
     const releaseSkill = readFileSync(RELEASE_MAINTAINER_SKILL, "utf8");
 
     expect(releaseWorkflow).toContain(
-      "Stable OpenClaw publish requires an explicit windows_node_tag.",
+      "Regular stable OpenClaw publish requires an explicit windows_node_tag.",
     );
     expect(releaseWorkflow).toContain(
-      "Stable OpenClaw publish requires candidate-approved windows_node_installer_digests.",
+      "Regular stable OpenClaw publish requires candidate-approved windows_node_installer_digests.",
     );
     expect(releaseWorkflow).toContain("promote_windows_release_assets()");
     expect(releaseWorkflow).toContain("dispatch_workflow windows-node-release.yml");
@@ -6927,7 +6927,7 @@ describe("package artifact reuse", () => {
       "the selected `windows_node_tag`, its saved `windows_node_installer_digests`,",
     );
     expect(releaseDocs).toContain(
-      "candidate-approved `windows_node_installer_digests`, and verify the canonical",
+      "candidate-approved `windows_node_installer_digests` map. Before dispatching",
     );
     expect(releaseSkill).toContain(
       "candidate-approved installer digest map as `windows_node_installer_digests`.",

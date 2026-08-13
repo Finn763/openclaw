@@ -1489,6 +1489,10 @@ describe("release validation no-push transport", () => {
       resolveTarget,
       "Validate release tag is reachable from a trusted release branch",
     );
+    const publishJob = job(releasePublish, "publish");
+    const resolveClawHubPlan = step(publishJob, "Resolve ClawHub release plan");
+    const dispatchPublish = step(publishJob, "Dispatch publish workflows");
+    const dispatchRun = dispatchPublish.run ?? "";
 
     expect(dockerRelease.on?.push).toBeUndefined();
     expect(dockerRelease.on?.workflow_dispatch).toBeUndefined();
@@ -1518,6 +1522,13 @@ describe("release validation no-push transport", () => {
     expect(validateInputs.run).toContain(
       'expected_validation_branch="extended-stable/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.33"',
     );
+    expect(validateInputs.run).not.toContain(
+      "Extended-stable core npm publication stays on the canonical extended-stable release flow",
+    );
+    expect(validateInputs.run).toContain(
+      'if [[ "${RELEASE_NPM_DIST_TAG}" == "extended-stable" ]]; then',
+    );
+    expect(publishJob.if).toBe("${{ !inputs.publish_docker_only }}");
     expect(validateEvidence.env?.EXPECTED_WORKFLOW_BRANCH).toBe(
       "${{ steps.inputs.outputs.expected_validation_branch }}",
     );
@@ -1557,6 +1568,26 @@ describe("release validation no-push transport", () => {
     ).toContain("Full release validation target SHA mismatch");
     expect(readFileSync(releasePublishPath, "utf8")).toContain(
       "kept draft until Docker publication succeeds",
+    );
+    expect(resolveClawHubPlan.run).toContain("plan_args+=(--skip-clawhub)");
+    expect(dispatchRun).toContain("force_skip_clawhub=true");
+    expect(dispatchRun).toContain('elif [[ "${RELEASE_NPM_DIST_TAG}" == "latest" ]]; then');
+    expect(dispatchRun).toContain('latest_arg="--latest=false"');
+    expect(dispatchRun).toContain("-f npm_dist_tag=extended-stable");
+    expect(dispatchRun).toContain(
+      '-f release_candidate_branch="${{ needs.resolve_release_target.outputs.expected_validation_branch }}"',
+    );
+    expect(dispatchRun).toContain('-f plugin_npm_run_id="${plugin_npm_run_id}"');
+    expect(dispatchRun).toContain("upload_dependency_evidence_release_asset");
+    expect(dispatchRun).toContain("upload_release_evidence_assets");
+    expect(dispatchRun).toContain(
+      '[[ "${RELEASE_NPM_DIST_TAG}" != "extended-stable" && "${RELEASE_TAG}" != *"-alpha."*',
+    );
+    expect(step(resolveTarget, "Validate stable Windows source release").if).toContain(
+      "inputs.npm_dist_tag != 'extended-stable'",
+    );
+    expect(step(publishJob, "Attest Android release approval").if).toContain(
+      "inputs.npm_dist_tag != 'extended-stable'",
     );
     expect(job(releasePublish, "finalize_github_release").needs).toEqual([
       "resolve_release_target",
