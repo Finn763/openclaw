@@ -669,10 +669,7 @@ describe("Docker channel promotion", () => {
       "cancel-in-progress": false,
       queue: "max",
     });
-    expect(verifyAttestations.permissions).toEqual({
-      contents: "read",
-      packages: "write",
-    });
+    expect(verifyAttestations.permissions).toEqual({ contents: "read", packages: "write" });
 
     const manifestTagStep = createManifest.steps?.find(
       (step) => step.name === "Resolve manifest tags",
@@ -701,10 +698,7 @@ describe("Docker channel promotion", () => {
     expect(releaseSteps[releasePromotionIndex]?.run).not.toContain("--allow-rollback");
     expect(
       Object.values(releaseWorkflow.jobs ?? {}).flatMap((job) =>
-        (job.steps ?? []).filter(
-          (step) =>
-            step.run?.includes("docker-channel-promote.mjs") && step.run.includes("--image"),
-        ),
+        (job.steps ?? []).filter((step) => step.run?.includes("docker-channel-promote.mjs")),
       ),
     ).toHaveLength(1);
 
