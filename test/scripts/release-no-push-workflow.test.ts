@@ -1559,6 +1559,7 @@ describe("release validation no-push transport", () => {
       "kept draft until Docker publication succeeds",
     );
     expect(job(releasePublish, "finalize_github_release").needs).toEqual([
+      "resolve_release_target",
       "publish",
       "publish_docker",
     ]);
@@ -1577,7 +1578,7 @@ describe("release validation no-push transport", () => {
     expect(verifyNpm.run).toContain('npm view "openclaw@${version}" version');
     expect(verifyNpm.run).toContain("Published npm tarball does not match");
 
-    const finalizeRelease = job(releasePublish, "finalize_extended_stable_github_release");
+    const finalizeRelease = job(releasePublish, "finalize_github_release");
     const finalizeSteps = finalizeRelease.steps ?? [];
     const finalizeStepNames = finalizeSteps.map((workflowStep) => workflowStep.name);
     const checkoutIndex = finalizeStepNames.indexOf("Checkout trusted release tooling");
@@ -1591,8 +1592,10 @@ describe("release validation no-push transport", () => {
     );
     const publishReleaseRun = publishRelease.run ?? "";
 
-    expect(finalizeRelease.needs).toEqual(["resolve_release_target", "publish_docker"]);
+    expect(finalizeRelease.needs).toEqual(["resolve_release_target", "publish", "publish_docker"]);
+    expect(finalizeRelease.if).toContain("inputs.publish_openclaw_npm");
     expect(finalizeRelease.if).toContain("inputs.publish_docker_only");
+    expect(finalizeRelease.if).toContain("needs.publish.result == 'success'");
     expect(finalizeRelease.if).toContain("needs.publish_docker.result == 'success'");
     expect(finalizeRelease.environment).toBe("npm-release");
     expect(finalizeRelease.permissions).toEqual({ contents: "write" });
@@ -1603,10 +1606,17 @@ describe("release validation no-push transport", () => {
       ref: "${{ github.sha }}",
       "persist-credentials": false,
     });
+    expect(step(finalizeRelease, "Checkout trusted release tooling").if).toBe(
+      "${{ inputs.publish_docker_only }}",
+    );
     expect(step(finalizeRelease, "Setup trusted release tooling")).toMatchObject({
       uses: "./.github/actions/setup-node-env",
       with: { "install-bun": "false" },
     });
+    expect(step(finalizeRelease, "Publish the verified draft release").if).toBe(
+      "${{ inputs.publish_openclaw_npm }}",
+    );
+    expect(publishRelease.if).toBe("${{ inputs.publish_docker_only }}");
     expect(publishReleaseRun).toContain('git fetch --no-tags --depth=1 origin "${TARGET_SHA}"');
     expect(publishReleaseRun).toContain('git show "${TARGET_SHA}:CHANGELOG.md"');
     expect(publishReleaseRun).toContain(
@@ -1634,6 +1644,7 @@ describe("release validation no-push transport", () => {
 
     const releasePublishText = readFileSync(releasePublishPath, "utf8");
     expect(releasePublishText).not.toContain("prepare_extended_stable_release");
+    expect(releasePublishText).not.toContain("finalize_extended_stable_github_release");
     expect(releasePublishText).not.toContain("extended-stable-release-notes-${{ inputs.tag }}");
     expect(releasePublishText).not.toContain("verify_extended_stable_docker_completion");
     expect(releasePublishText).not.toContain("Docker completion status");
@@ -1652,7 +1663,7 @@ describe("release validation no-push transport", () => {
   it("rechecks lightweight and annotated extended-stable tags before finalization", () => {
     const releasePublish = readWorkflow(".github/workflows/openclaw-release-publish.yml");
     const publishDraft = step(
-      job(releasePublish, "finalize_extended_stable_github_release"),
+      job(releasePublish, "finalize_github_release"),
       "Render and publish canonical extended-stable release",
     );
     const verifyTag = shellFunctionSource(publishDraft.run ?? "", "verify_release_tag_target");

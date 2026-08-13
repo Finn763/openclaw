@@ -2594,14 +2594,15 @@ jobs:
 
   finalize_github_release:
     name: Finalize GitHub release
-    needs: [publish, publish_docker]
-    if: ${{ always() && inputs.publish_openclaw_npm && needs.publish.result == 'success' && needs.publish_docker.result == 'success' }}
+    needs: [resolve_release_target, publish, publish_docker]
+    if: ${{ always() && needs.publish_docker.result == 'success' && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || inputs.publish_docker_only) }}
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
       contents: write
     steps:
       - name: Publish the verified draft release
+        if: ${{ inputs.publish_openclaw_npm }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -2619,16 +2620,8 @@ jobs:
             exit 1
           fi
 
-  finalize_extended_stable_github_release:
-    name: Publish extended-stable GitHub release
-    needs: [resolve_release_target, publish_docker]
-    if: ${{ always() && inputs.publish_docker_only && needs.publish_docker.result == 'success' }}
-    runs-on: ubuntu-latest
-    environment: npm-release
-    permissions:
-      contents: write
-    steps:
       - name: Checkout trusted release tooling
+        if: ${{ inputs.publish_docker_only }}
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.sha }}
@@ -2636,11 +2629,13 @@ jobs:
           persist-credentials: false
 
       - name: Setup trusted release tooling
+        if: ${{ inputs.publish_docker_only }}
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
 
       - name: Render and publish canonical extended-stable release
+        if: ${{ inputs.publish_docker_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
