@@ -516,8 +516,7 @@ export async function attachAuthenticatedGatewayConnect(
     });
     return;
   }
-  // Node identity and pairing checks can yield before registration. Keep the
-  // preauth watchdog live until this socket actually owns its admitted client.
+  // Keep the preauth watchdog and payload cap until this socket owns the admitted client.
   clearHandshakeTimer();
   setSocketMaxPayload(socket, MAX_PAYLOAD_BYTES);
   setHandshakeState("connected");
