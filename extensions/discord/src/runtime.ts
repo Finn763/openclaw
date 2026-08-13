@@ -1,7 +1,7 @@
 // Discord plugin module implements runtime behavior.
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
-import { initializeDiscordProviderEndpointFromEnv } from "./provider-endpoint.js";
+import { sealDiscordProviderEndpoint } from "./provider-endpoint.js";
 
 type DiscordChannelRuntime = {
   messageActions?: typeof import("./channel-actions.js").discordMessageActions;
@@ -24,7 +24,7 @@ const {
 });
 
 function setDiscordRuntime(runtime: DiscordRuntime): void {
-  initializeDiscordProviderEndpointFromEnv();
+  sealDiscordProviderEndpoint();
   setDiscordRuntimeStore(runtime);
 }
 
