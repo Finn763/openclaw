@@ -189,20 +189,6 @@ function step(workflowJob: WorkflowJob, name: string): WorkflowStep {
   return value;
 }
 
-function shellFunctionSource(source: string, functionName: string): string {
-  const startMarker = `${functionName}() {`;
-  const endMarker = "\n}";
-  const start = source.indexOf(startMarker);
-  if (start < 0) {
-    throw new Error(`missing shell function ${functionName}`);
-  }
-  const end = source.indexOf(endMarker, start);
-  if (end < 0) {
-    throw new Error(`missing shell function terminator ${functionName}`);
-  }
-  return source.slice(start, end + endMarker.length);
-}
-
 function expectReadOnlyPackagePermission(workflowJob: WorkflowJob): void {
   expect(permissionAt(workflowJob.permissions, "packages", "none")).toBe("read");
 }
@@ -1528,7 +1514,7 @@ describe("release validation no-push transport", () => {
     expect(validateInputs.run).toContain(
       'if [[ "${RELEASE_NPM_DIST_TAG}" == "extended-stable" ]]; then',
     );
-    expect(publishJob.if).toBe("${{ !inputs.publish_docker_only }}");
+    expect(publishJob.if).toBeUndefined();
     expect(validateEvidence.env?.EXPECTED_WORKFLOW_BRANCH).toBe(
       "${{ steps.inputs.outputs.expected_validation_branch }}",
     );
@@ -1539,13 +1525,9 @@ describe("release validation no-push transport", () => {
       "must be reachable from ${EXPECTED_VALIDATION_BRANCH}",
     );
 
-    expect(dockerCall.needs).toEqual([
-      "resolve_release_target",
-      "publish",
-      "verify_core_npm_registry",
-    ]);
+    expect(dockerCall.needs).toEqual(["resolve_release_target", "publish"]);
+    expect(dockerCall.if).toContain("inputs.publish_openclaw_npm");
     expect(dockerCall.if).toContain("needs.publish.result == 'success'");
-    expect(dockerCall.if).toContain("needs.verify_core_npm_registry.result == 'success'");
     expect(dockerCall.with).toEqual({
       tag: "${{ inputs.tag }}",
       release_sha: "${{ needs.resolve_release_target.outputs.sha }}",
@@ -1595,85 +1577,24 @@ describe("release validation no-push transport", () => {
       "publish_docker",
     ]);
 
-    const verifyRegistry = job(releasePublish, "verify_core_npm_registry");
-    const verifyNpm = step(
-      verifyRegistry,
-      "Verify exact npm and selector readback matches preflight bytes",
-    );
-
-    expect(verifyRegistry.needs).toEqual(["resolve_release_target"]);
-    expect(verifyRegistry.if).toBe("${{ inputs.publish_docker_only }}");
-    expect(verifyRegistry.environment).toBeUndefined();
-    expect(verifyRegistry.permissions).toEqual({ contents: "read" });
-    expect(verifyRegistry.steps).toHaveLength(1);
-    expect(verifyNpm.run).toContain('npm view "openclaw@${version}" version');
-    expect(verifyNpm.run).toContain("Published npm tarball does not match");
-
     const finalizeRelease = job(releasePublish, "finalize_github_release");
     const finalizeSteps = finalizeRelease.steps ?? [];
-    const finalizeStepNames = finalizeSteps.map((workflowStep) => workflowStep.name);
-    const checkoutIndex = finalizeStepNames.indexOf("Checkout trusted release tooling");
-    const setupIndex = finalizeStepNames.indexOf("Setup trusted release tooling");
-    const publishIndex = finalizeStepNames.indexOf(
-      "Render and publish canonical extended-stable release",
-    );
-    const publishRelease = step(
-      finalizeRelease,
-      "Render and publish canonical extended-stable release",
-    );
-    const publishReleaseRun = publishRelease.run ?? "";
+    const publishRelease = step(finalizeRelease, "Publish the verified draft release");
 
     expect(finalizeRelease.needs).toEqual(["resolve_release_target", "publish", "publish_docker"]);
     expect(finalizeRelease.if).toContain("inputs.publish_openclaw_npm");
-    expect(finalizeRelease.if).toContain("inputs.publish_docker_only");
     expect(finalizeRelease.if).toContain("needs.publish.result == 'success'");
     expect(finalizeRelease.if).toContain("needs.publish_docker.result == 'success'");
     expect(finalizeRelease.environment).toBe("npm-release");
     expect(finalizeRelease.permissions).toEqual({ contents: "write" });
-    expect(checkoutIndex).toBeGreaterThan(-1);
-    expect(setupIndex).toBeGreaterThan(checkoutIndex);
-    expect(publishIndex).toBeGreaterThan(setupIndex);
-    expect(step(finalizeRelease, "Checkout trusted release tooling").with).toMatchObject({
-      ref: "${{ github.sha }}",
-      "persist-credentials": false,
-    });
-    expect(step(finalizeRelease, "Checkout trusted release tooling").if).toBe(
-      "${{ inputs.publish_docker_only }}",
-    );
-    expect(step(finalizeRelease, "Setup trusted release tooling")).toMatchObject({
-      uses: "./.github/actions/setup-node-env",
-      with: { "install-bun": "false" },
-    });
-    expect(step(finalizeRelease, "Publish the verified draft release").if).toBe(
-      "${{ inputs.publish_openclaw_npm }}",
-    );
-    expect(publishRelease.if).toBe("${{ inputs.publish_docker_only }}");
-    expect(publishReleaseRun).toContain('git fetch --no-tags --depth=1 origin "${TARGET_SHA}"');
-    expect(publishReleaseRun).toContain('git show "${TARGET_SHA}:CHANGELOG.md"');
-    expect(publishReleaseRun).toContain(
-      "node --import tsx scripts/render-github-release-notes.mts",
-    );
-    expect(publishReleaseRun).not.toContain("render-github-release-notes.mjs");
-    expect(publishReleaseRun.indexOf("render-github-release-notes.mts")).toBeLessThan(
-      publishReleaseRun.indexOf('gh release create "${RELEASE_TAG}"'),
-    );
-    expect(publishReleaseRun).toContain("verify_release_tag_target");
-    expect(publishReleaseRun).toContain('gh release create "${RELEASE_TAG}"');
-    expect(publishReleaseRun).toContain("--verify-tag");
-    expect(publishReleaseRun).not.toContain("--draft");
-    expect(publishReleaseRun).not.toContain("--prerelease");
-    expect(publishReleaseRun).toContain("--latest=false");
-    expect(publishReleaseRun).toContain("release.assets.length !== 0");
-    expect(publishReleaseRun).toContain('(release.body ?? "") !== expectedBody');
-    expect(publishReleaseRun).toContain("verify_release_resource false");
-    expect(publishReleaseRun).not.toContain("--draft=false");
-    expect(publishReleaseRun).toContain("already public and canonical");
-    expect(publishReleaseRun).toContain("releases/latest");
-    expect(publishReleaseRun).toContain("must not be GitHub Latest");
-    expect(publishReleaseRun).not.toContain("docker_already_published");
-    expect(publishReleaseRun).not.toContain("/statuses");
+    expect(finalizeSteps).toHaveLength(1);
+    expect(publishRelease.if).toBeUndefined();
+    expect(publishRelease.run).toContain('gh release edit "${RELEASE_TAG}"');
+    expect(publishRelease.run).toContain("--draft=false");
 
     const releasePublishText = readFileSync(releasePublishPath, "utf8");
+    expect(releasePublishText).not.toContain("publish_docker_only");
+    expect(releasePublishText).not.toContain("verify_core_npm_registry");
     expect(releasePublishText).not.toContain("prepare_extended_stable_release");
     expect(releasePublishText).not.toContain("finalize_extended_stable_github_release");
     expect(releasePublishText).not.toContain("extended-stable-release-notes-${{ inputs.tag }}");
@@ -1689,56 +1610,6 @@ describe("release validation no-push transport", () => {
     expect(identity.run).toContain('"${tag_sha}" != "${RELEASE_SHA}"');
     expect(identity.run).toContain('"v${package_version}" != "${RELEASE_TAG}"');
     expect(identity.run).toContain("^v${package_version}-[1-9][0-9]*$");
-  });
-
-  it("rechecks lightweight and annotated extended-stable tags before finalization", () => {
-    const releasePublish = readWorkflow(".github/workflows/openclaw-release-publish.yml");
-    const publishDraft = step(
-      job(releasePublish, "finalize_github_release"),
-      "Render and publish canonical extended-stable release",
-    );
-    const verifyTag = shellFunctionSource(publishDraft.run ?? "", "verify_release_tag_target");
-    const targetSha = "a".repeat(40);
-    const tagObjectSha = "b".repeat(40);
-
-    const runVerify = (remoteRefs: string) =>
-      spawnSync(
-        "bash",
-        [
-          "-c",
-          `
-set -euo pipefail
-GITHUB_REPOSITORY=openclaw/openclaw
-RELEASE_TAG=v2026.6.35
-TARGET_SHA=${targetSha}
-git() {
-  printf '%s' "\${REMOTE_REFS}"
-}
-${verifyTag}
-verify_release_tag_target
-`,
-        ],
-        {
-          encoding: "utf8",
-          env: { ...process.env, REMOTE_REFS: remoteRefs },
-        },
-      );
-
-    const lightweight = runVerify(`${targetSha}\trefs/tags/v2026.6.35\n`);
-    expect(lightweight.status, lightweight.stderr).toBe(0);
-
-    const annotated = runVerify(
-      `${tagObjectSha}\trefs/tags/v2026.6.35\n${targetSha}\trefs/tags/v2026.6.35^{}\n`,
-    );
-    expect(annotated.status, annotated.stderr).toBe(0);
-
-    const moved = runVerify(`${"c".repeat(40)}\trefs/tags/v2026.6.35\n`);
-    expect(moved.status).toBe(1);
-    expect(moved.stderr).toContain(`must resolve to ${targetSha}`);
-
-    const missing = runVerify("");
-    expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain("found <missing>");
   });
 
   it("fails a missing required local live image before any registry pull", () => {

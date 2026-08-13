@@ -156,6 +156,13 @@ preflight, and tarball-digest binding to the release SHA. Both commands must
 return `YYYY.M.P`. Verify every prepared core package and `all-publishable`
 official plugin at its exact version and selector.
 
+If core npm published but the parent failed afterward, repeat the same
+`OpenClaw Release Publish` command with
+`-f openclaw_npm_resume_run_id=<successful-core-publish-run-id>`. The parent
+must prove the live registry tarball is the preflight artifact before it resumes
+release evidence, Docker, and the shared finalizer. Never bypass those stages
+with a separate Docker-only closeout.
+
 If only the root selector fails, use the generated
 `npm dist-tag add openclaw@YYYY.M.P extended-stable` repair command printed in
 the workflow summary. Repair existing plugin or other prepared-core selectors
@@ -689,8 +696,8 @@ readback confirms that every exact package and `extended-stable` tag converged.
 - `windows_node_tag`: exact non-prerelease `openclaw/openclaw-windows-node` release tag; required for regular stable OpenClaw publish
 - `windows_node_installer_digests`: candidate-approved compact JSON map of the current Windows installer names to their pinned `sha256:` digests; required for stable OpenClaw publish
 - `npm_telegram_run_id`: optional successful `NPM Telegram Beta E2E` run id to include in final release evidence
+- `openclaw_npm_resume_run_id`: successful original `OpenClaw NPM Release` run id when core npm is already published; the shared parent verifies that version's registry tarball against preflight before resuming evidence, Docker, and finalization
 - `npm_dist_tag`: npm target tag passed to the plugin and core publishers, one of `alpha`, `beta`, `latest`, or `extended-stable`; only `latest` moves npm `latest`
-- `publish_docker_only`: recovery-only path for an extended-stable version whose npm publication already completed outside the parent pipeline. It requires `publish_openclaw_npm=false`, complete preflight and Full Release Validation evidence, then verifies the exact npm package, selector, and tarball digest, publishes Docker, and creates a missing public GitHub Release with `latest=false`. Do not use it for a normal extended-stable release.
 - `plugin_publish_scope`: defaults to `all-publishable`; use `selected` only for focused plugin-only repair work with `publish_openclaw_npm=false`
 - `plugins`: comma-separated `@openclaw/*` package names when `plugin_publish_scope=selected`
 - `publish_openclaw_npm`: defaults to `true`; set `false` only when using the workflow as a plugin-only repair orchestrator

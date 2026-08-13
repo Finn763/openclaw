@@ -300,9 +300,11 @@ on pinned current `main` as the exact command and validation contract.
    automatic rollback. For alias repair, dispatch the approval-gated
    `docker-channel-promote.yml` from current `main` with the exact tag; never
    rebuild or move the release tag. Re-run failed jobs for finalizer recovery.
-   Use `publish_docker_only=true` only when npm was already published outside
-   the parent pipeline. This track selects npm `extended-stable`, leaving npm
-   `latest` unchanged, and does not publish macOS, Windows, mobile, website,
+   If core npm already published, rerun the same parent pipeline with
+   `openclaw_npm_resume_run_id` bound to the successful original core publish;
+   it must prove the registry tarball matches preflight before resuming evidence,
+   Docker, and finalization. This track selects npm `extended-stable`, leaving
+   npm `latest` unchanged, and does not publish macOS, Windows, mobile, website,
    ClawHub, or private dist-tag artifacts.
 
 ## Keep release channel naming aligned

@@ -394,8 +394,9 @@ Extended-stable uses the same workflow with `publish_openclaw_npm=true` and
 `npm_dist_tag=extended-stable`. The parent publishes all official npm plugins
 and core under that selector, creates the draft and attaches immutable release
 evidence, skips ClawHub/native publication, publishes Docker, and finalizes the
-non-Latest GitHub Release. `publish_docker_only=true` is reserved for recovery
-when npm was already published outside the parent pipeline.
+non-Latest GitHub Release. If core npm already published, rerun this same path
+with `openclaw_npm_resume_run_id` set to the successful original core publish;
+the parent verifies the immutable registry bytes before resuming.
 
 ```bash
 gh workflow run openclaw-release-publish.yml \
