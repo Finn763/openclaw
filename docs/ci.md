@@ -392,9 +392,9 @@ preflight and Full Release Validation evidence as a core publish.
 Extended-stable uses this workflow only after npm publication, with
 `publish_openclaw_npm=false` and `publish_docker_only=true`. That closeout
 rechecks immutable npm evidence and the exact canonical validation branch,
-renders canonical release notes, publishes Docker, and creates the public
-notes-only non-Latest GitHub Release without entering plugin, ClawHub, or
-native-app publication. Re-running failed jobs retries the finalizer without
+publishes Docker, and only then renders canonical release notes and creates the
+public notes-only non-Latest GitHub Release without entering plugin, ClawHub,
+or native-app publication. Re-running failed jobs retries the finalizer without
 repeating a successful Docker job; a fresh dispatch repeats the idempotent
 same-version Docker verification and promotion.
 

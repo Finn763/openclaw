@@ -1531,10 +1531,10 @@ describe("release validation no-push transport", () => {
     expect(dockerCall.needs).toEqual([
       "resolve_release_target",
       "publish",
-      "prepare_extended_stable_release",
+      "verify_core_npm_registry",
     ]);
     expect(dockerCall.if).toContain("needs.publish.result == 'success'");
-    expect(dockerCall.if).toContain("needs.prepare_extended_stable_release.result == 'success'");
+    expect(dockerCall.if).toContain("needs.verify_core_npm_registry.result == 'success'");
     expect(dockerCall.with).toEqual({
       tag: "${{ inputs.tag }}",
       release_sha: "${{ needs.resolve_release_target.outputs.sha }}",
@@ -1563,66 +1563,59 @@ describe("release validation no-push transport", () => {
       "publish_docker",
     ]);
 
-    const prepareRelease = job(releasePublish, "prepare_extended_stable_release");
-    const prepareSteps = prepareRelease.steps ?? [];
-    const prepareStepNames = prepareSteps.map((workflowStep) => workflowStep.name);
+    const verifyRegistry = job(releasePublish, "verify_core_npm_registry");
     const verifyNpm = step(
-      prepareRelease,
+      verifyRegistry,
       "Verify exact npm and selector readback matches preflight bytes",
     );
-    const renderNotes = step(prepareRelease, "Render canonical extended-stable release notes");
-    const checkoutIndex = prepareStepNames.indexOf("Checkout trusted release tooling");
-    const setupIndex = prepareStepNames.indexOf("Setup trusted release tooling");
-    const renderIndex = prepareStepNames.indexOf("Render canonical extended-stable release notes");
-    const uploadIndex = prepareStepNames.indexOf("Upload canonical extended-stable release notes");
 
-    expect(prepareRelease.needs).toEqual(["resolve_release_target"]);
-    expect(prepareRelease.if).toBe("${{ inputs.publish_docker_only }}");
-    expect(prepareRelease.environment).toBeUndefined();
-    expect(prepareRelease.permissions).toEqual({ contents: "read" });
-    expect(setupIndex).toBeGreaterThan(checkoutIndex);
-    expect(renderIndex).toBeGreaterThan(setupIndex);
-    expect(uploadIndex).toBeGreaterThan(renderIndex);
+    expect(verifyRegistry.needs).toEqual(["resolve_release_target"]);
+    expect(verifyRegistry.if).toBe("${{ inputs.publish_docker_only }}");
+    expect(verifyRegistry.environment).toBeUndefined();
+    expect(verifyRegistry.permissions).toEqual({ contents: "read" });
+    expect(verifyRegistry.steps).toHaveLength(1);
     expect(verifyNpm.run).toContain('npm view "openclaw@${version}" version');
     expect(verifyNpm.run).toContain("Published npm tarball does not match");
-    expect(step(prepareRelease, "Checkout trusted release tooling").with).toMatchObject({
-      ref: "${{ github.sha }}",
-      "persist-credentials": false,
-    });
-    expect(step(prepareRelease, "Setup trusted release tooling")).toMatchObject({
-      uses: "./.github/actions/setup-node-env",
-      with: { "install-bun": "false" },
-    });
-    expect(renderNotes.run).toContain('git fetch --no-tags --depth=1 origin "${TARGET_SHA}"');
-    expect(renderNotes.run).toContain('git show "${TARGET_SHA}:CHANGELOG.md"');
-    expect(renderNotes.run).toContain("node --import tsx scripts/render-github-release-notes.mts");
-    expect(renderNotes.run).not.toContain("render-github-release-notes.mjs");
-    const uploadNotes = step(prepareRelease, "Upload canonical extended-stable release notes");
-    expect(uploadNotes.with).toMatchObject({
-      name: "extended-stable-release-notes-${{ inputs.tag }}",
-      "if-no-files-found": "error",
-    });
 
     const finalizeRelease = job(releasePublish, "finalize_extended_stable_github_release");
-    const downloadNotes = step(finalizeRelease, "Download canonical extended-stable release notes");
-    const publishRelease = step(finalizeRelease, "Publish canonical extended-stable release");
+    const finalizeSteps = finalizeRelease.steps ?? [];
+    const finalizeStepNames = finalizeSteps.map((workflowStep) => workflowStep.name);
+    const checkoutIndex = finalizeStepNames.indexOf("Checkout trusted release tooling");
+    const setupIndex = finalizeStepNames.indexOf("Setup trusted release tooling");
+    const publishIndex = finalizeStepNames.indexOf(
+      "Render and publish canonical extended-stable release",
+    );
+    const publishRelease = step(
+      finalizeRelease,
+      "Render and publish canonical extended-stable release",
+    );
     const publishReleaseRun = publishRelease.run ?? "";
 
-    expect(finalizeRelease.needs).toEqual([
-      "resolve_release_target",
-      "prepare_extended_stable_release",
-      "publish_docker",
-    ]);
+    expect(finalizeRelease.needs).toEqual(["resolve_release_target", "publish_docker"]);
     expect(finalizeRelease.if).toContain("inputs.publish_docker_only");
-    expect(finalizeRelease.if).toContain(
-      "needs.prepare_extended_stable_release.result == 'success'",
-    );
     expect(finalizeRelease.if).toContain("needs.publish_docker.result == 'success'");
     expect(finalizeRelease.environment).toBe("npm-release");
     expect(finalizeRelease.permissions).toEqual({ contents: "write" });
-    expect(downloadNotes.with).toMatchObject({
-      name: "extended-stable-release-notes-${{ inputs.tag }}",
+    expect(checkoutIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeGreaterThan(checkoutIndex);
+    expect(publishIndex).toBeGreaterThan(setupIndex);
+    expect(step(finalizeRelease, "Checkout trusted release tooling").with).toMatchObject({
+      ref: "${{ github.sha }}",
+      "persist-credentials": false,
     });
+    expect(step(finalizeRelease, "Setup trusted release tooling")).toMatchObject({
+      uses: "./.github/actions/setup-node-env",
+      with: { "install-bun": "false" },
+    });
+    expect(publishReleaseRun).toContain('git fetch --no-tags --depth=1 origin "${TARGET_SHA}"');
+    expect(publishReleaseRun).toContain('git show "${TARGET_SHA}:CHANGELOG.md"');
+    expect(publishReleaseRun).toContain(
+      "node --import tsx scripts/render-github-release-notes.mts",
+    );
+    expect(publishReleaseRun).not.toContain("render-github-release-notes.mjs");
+    expect(publishReleaseRun.indexOf("render-github-release-notes.mts")).toBeLessThan(
+      publishReleaseRun.indexOf('gh release create "${RELEASE_TAG}"'),
+    );
     expect(publishReleaseRun).toContain("verify_release_tag_target");
     expect(publishReleaseRun).toContain('gh release create "${RELEASE_TAG}"');
     expect(publishReleaseRun).toContain("--verify-tag");
@@ -1640,6 +1633,8 @@ describe("release validation no-push transport", () => {
     expect(publishReleaseRun).not.toContain("/statuses");
 
     const releasePublishText = readFileSync(releasePublishPath, "utf8");
+    expect(releasePublishText).not.toContain("prepare_extended_stable_release");
+    expect(releasePublishText).not.toContain("extended-stable-release-notes-${{ inputs.tag }}");
     expect(releasePublishText).not.toContain("verify_extended_stable_docker_completion");
     expect(releasePublishText).not.toContain("Docker completion status");
     expect(JSON.stringify(dockerRelease)).not.toContain("statuses");
@@ -1658,7 +1653,7 @@ describe("release validation no-push transport", () => {
     const releasePublish = readWorkflow(".github/workflows/openclaw-release-publish.yml");
     const publishDraft = step(
       job(releasePublish, "finalize_extended_stable_github_release"),
-      "Publish canonical extended-stable release",
+      "Render and publish canonical extended-stable release",
     );
     const verifyTag = shellFunctionSource(publishDraft.run ?? "", "verify_release_tag_target");
     const targetSha = "a".repeat(40);

@@ -203,11 +203,11 @@ After that core registry readback succeeds, start Docker publication only throug
 `OpenClaw Release Publish`. Its extended-stable closeout path rechecks the
 saved npm preflight artifact, exact `Full Release Validation` evidence, exact npm
 version and `extended-stable` selector, and published tarball digest. It then
-renders and validates the canonical release notes, calls the reusable
-`Docker Release` workflow, and creates the public non-prerelease GitHub Release
-with `latest=false` only after Docker succeeds. Re-run failed jobs to retry a
-failed release-page finalizer without repeating successful Docker work; a fresh
-workflow dispatch safely repeats same-version Docker verification and
+calls the reusable `Docker Release` workflow. Only after Docker succeeds does
+the finalizer render and validate the canonical release notes and create the
+public non-prerelease GitHub Release with `latest=false`. Re-run failed jobs to
+retry a failed release-page finalizer without repeating successful Docker work;
+a fresh workflow dispatch safely repeats same-version Docker verification and
 promotion. A tag push never publishes Docker images or a release page by
 itself:
 
@@ -740,7 +740,7 @@ readback confirms that every exact package and `extended-stable` tag converged.
 - `windows_node_installer_digests`: candidate-approved compact JSON map of the current Windows installer names to their pinned `sha256:` digests; required for stable OpenClaw publish
 - `npm_telegram_run_id`: optional successful `NPM Telegram Beta E2E` run id to include in final release evidence
 - `npm_dist_tag`: npm target tag for the OpenClaw package, one of `alpha`, `beta`, `latest`, or `extended-stable`
-- `publish_docker_only`: legacy input name for the extended-stable recovery/closeout path. It requires `publish_openclaw_npm=false`, complete preflight and Full Release Validation evidence, then verifies the exact npm package, selector, and tarball digest, renders canonical notes, publishes Docker, and creates the public notes-only GitHub Release with `latest=false`.
+- `publish_docker_only`: legacy input name for the extended-stable recovery/closeout path. It requires `publish_openclaw_npm=false`, complete preflight and Full Release Validation evidence, then verifies the exact npm package, selector, and tarball digest, publishes Docker, and finally renders canonical notes and creates the public notes-only GitHub Release with `latest=false`.
 - `plugin_publish_scope`: defaults to `all-publishable`; use `selected` only for focused plugin-only repair work with `publish_openclaw_npm=false`
 - `plugins`: comma-separated `@openclaw/*` package names when `plugin_publish_scope=selected`
 - `publish_openclaw_npm`: defaults to `true`; set `false` only when using the workflow as a plugin-only repair orchestrator

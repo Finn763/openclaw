@@ -2531,8 +2531,8 @@ jobs:
           path: ${{ runner.temp }}/openclaw-release-postpublish-evidence
           if-no-files-found: error
 
-  prepare_extended_stable_release:
-    name: Verify npm and prepare extended-stable release notes
+  verify_core_npm_registry:
+    name: Verify already-published core npm package
     needs: [resolve_release_target]
     if: ${{ inputs.publish_docker_only }}
     runs-on: ubuntu-latest
@@ -2563,60 +2563,10 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout trusted release tooling
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Setup trusted release tooling
-        uses: ./.github/actions/setup-node-env
-        with:
-          install-bun: "false"
-
-      - name: Render canonical extended-stable release notes
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-          TARGET_SHA: ${{ needs.resolve_release_target.outputs.sha }}
-        run: |
-          set -euo pipefail
-          release_version="${RELEASE_TAG#v}"
-          notes_dir="${RUNNER_TEMP}/extended-stable-release-notes"
-          changelog_file="${notes_dir}/CHANGELOG.md"
-          notes_file="${notes_dir}/release-notes.md"
-          verification_file="${notes_dir}/verification.md"
-          mkdir -p "${notes_dir}"
-
-          git fetch --no-tags --depth=1 origin "${TARGET_SHA}"
-          git show "${TARGET_SHA}:CHANGELOG.md" > "${changelog_file}"
-          cat > "${verification_file}" <<EOF
-          ### Release verification
-
-          - Scope: `openclaw@${release_version}`, official npm plugins, and Gateway container images only.
-          - Channel: npm and container `extended-stable`; regular `latest` is unchanged.
-          - Containers: published and verified before this release page became public.
-          - Excluded: ClawHub, macOS, Windows, mobile, website, and private dist-tags.
-          EOF
-          node --import tsx scripts/render-github-release-notes.mts \
-            --changelog "${changelog_file}" \
-            --tag "${RELEASE_TAG}" \
-            --repository "${GITHUB_REPOSITORY}" \
-            --verification-file "${verification_file}" \
-            --output "${notes_file}"
-
-      - name: Upload canonical extended-stable release notes
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: extended-stable-release-notes-${{ inputs.tag }}
-          path: ${{ runner.temp }}/extended-stable-release-notes/release-notes.md
-          if-no-files-found: error
-          retention-days: 7
-
   publish_docker:
     name: Publish Docker images
-    needs: [resolve_release_target, publish, prepare_extended_stable_release]
-    if: ${{ always() && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || (inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success')) }}
+    needs: [resolve_release_target, publish, verify_core_npm_registry]
+    if: ${{ always() && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || (inputs.publish_docker_only && needs.verify_core_npm_registry.result == 'success')) }}
     uses: ./.github/workflows/docker-release.yml
     with:
       tag: ${{ inputs.tag }}
@@ -2671,20 +2621,26 @@ jobs:
 
   finalize_extended_stable_github_release:
     name: Publish extended-stable GitHub release
-    needs: [resolve_release_target, prepare_extended_stable_release, publish_docker]
-    if: ${{ always() && inputs.publish_docker_only && needs.prepare_extended_stable_release.result == 'success' && needs.publish_docker.result == 'success' }}
+    needs: [resolve_release_target, publish_docker]
+    if: ${{ always() && inputs.publish_docker_only && needs.publish_docker.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
       contents: write
     steps:
-      - name: Download canonical extended-stable release notes
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v8.0.1
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          name: extended-stable-release-notes-${{ inputs.tag }}
-          path: ${{ runner.temp }}/extended-stable-release-notes
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Publish canonical extended-stable release
+      - name: Setup trusted release tooling
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Render and publish canonical extended-stable release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -2693,13 +2649,29 @@ jobs:
           set -euo pipefail
           release_version="${RELEASE_TAG#v}"
           release_title="openclaw ${release_version}"
-          notes_file="${RUNNER_TEMP}/extended-stable-release-notes/release-notes.md"
+          notes_dir="${RUNNER_TEMP}/extended-stable-release-notes"
+          changelog_file="${notes_dir}/CHANGELOG.md"
+          notes_file="${notes_dir}/release-notes.md"
+          verification_file="${notes_dir}/verification.md"
           resource_file="${RUNNER_TEMP}/extended-stable-release.json"
+          mkdir -p "${notes_dir}"
 
-          if [[ ! -s "${notes_file}" ]]; then
-            echo "Canonical extended-stable release notes artifact is missing or empty." >&2
-            exit 1
-          fi
+          git fetch --no-tags --depth=1 origin "${TARGET_SHA}"
+          git show "${TARGET_SHA}:CHANGELOG.md" > "${changelog_file}"
+          cat > "${verification_file}" <<EOF
+          ### Release verification
+
+          - Scope: `openclaw@${release_version}`, official npm plugins, and Gateway container images only.
+          - Channel: npm and container `extended-stable`; regular `latest` is unchanged.
+          - Containers: published and verified before this release page became public.
+          - Excluded: ClawHub, macOS, Windows, mobile, website, and private dist-tags.
+          EOF
+          node --import tsx scripts/render-github-release-notes.mts \
+            --changelog "${changelog_file}" \
+            --tag "${RELEASE_TAG}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --verification-file "${verification_file}" \
+            --output "${notes_file}"
 
           verify_release_tag_target() {
             local direct_sha peeled_sha remote_refs remote_sha

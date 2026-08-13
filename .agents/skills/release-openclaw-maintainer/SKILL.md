@@ -304,13 +304,13 @@ on pinned current `main` as the exact command and validation contract.
    approval-gated `docker-channel-promote.yml` from current `main` with the exact
    tag; never rebuild or move the release tag.
 10. Dispatch the extended-stable `OpenClaw Release Publish` closeout. It must
-    reverify the exact npm selector and tarball, render the canonical release
-    notes, publish Docker, and only then create the public non-prerelease GitHub
-    Release with `latest=false`. Re-run failed jobs to retry a failed finalizer
-    without repeating successful Docker work; a fresh dispatch safely repeats
-    same-version Docker verification and promotion. Do not publish macOS,
-    Windows, mobile, website, ClawHub, npm `latest`, or private dist-tag
-    artifacts from this path.
+    reverify the exact npm selector and tarball, then publish Docker. Only after
+    Docker succeeds does the finalizer render the canonical release notes and
+    create the public non-prerelease GitHub Release with `latest=false`. Re-run
+    failed jobs to retry a failed finalizer without repeating successful Docker
+    work; a fresh dispatch safely repeats same-version Docker verification and
+    promotion. Do not publish macOS, Windows, mobile, website, ClawHub, npm
+    `latest`, or private dist-tag artifacts from this path.
 
 ## Keep release channel naming aligned
 
