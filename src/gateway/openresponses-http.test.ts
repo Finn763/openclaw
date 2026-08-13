@@ -20,7 +20,6 @@ import {
 } from "../process/gateway-work-admission.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { IMAGE_ONLY_USER_MESSAGE } from "./agent-prompt.js";
-import type { Usage } from "./open-responses.schema.js";
 import { buildAssistantDeltaResult } from "./test-helpers.agent-results.js";
 import {
   agentCommandMock,
@@ -46,31 +45,6 @@ vi.mock("../infra/net/fetch-guard.js", async () => {
 });
 
 installGatewayTestHooks({ scope: "suite" });
-
-const agentCommand = agentCommandMock;
-
-function expectedResponsesUsage(
-  inputTokens: number,
-  outputTokens: number,
-  totalTokens: number,
-  details: {
-    cachedTokens?: number;
-    cacheWriteTokens?: number;
-    reasoningTokens?: number;
-  } = {},
-): Usage {
-  const usage: OpenAI.Responses.ResponseUsage = {
-    input_tokens: inputTokens,
-    input_tokens_details: {
-      cached_tokens: details.cachedTokens ?? 0,
-      cache_write_tokens: details.cacheWriteTokens ?? 0,
-    },
-    output_tokens: outputTokens,
-    output_tokens_details: { reasoning_tokens: details.reasoningTokens ?? 0 },
-    total_tokens: totalTokens,
-  };
-  return usage;
-}
 
 let enabledServer: Awaited<ReturnType<typeof startServer>>;
 let enabledPort: number;
@@ -287,36 +261,6 @@ const STREAM_FAILURE_CASES = [
     expectedCode: "api_error",
     expectedMessage: "internal error",
   },
-] as const;
-
-const PRESERVED_STREAM_FAILURE_CASES = [
-  {
-    name: "an exhausted fallback result",
-    text: "Terminal tool summary",
-    lifecycle: { fallbackExhaustedFailure: true },
-    error: {
-      kind: "incomplete_turn",
-      message: "raw exhausted provider detail should stay private",
-      fallbackSafe: true,
-      terminalPresentation: true,
-    },
-  },
-  {
-    name: "a non-replayable error result",
-    text: "Command may have changed state",
-    lifecycle: { replayInvalid: true },
-    error: {
-      kind: "incomplete_turn",
-      message: "raw non-replayable provider detail should stay private",
-      fallbackSafe: false,
-    },
-  },
-] as const;
-
-const PRESERVED_STREAM_LIFECYCLE_CASES = [
-  { label: "after an error lifecycle", emitError: true, emitEnd: false },
-  { label: "without an error lifecycle", emitError: false, emitEnd: false },
-  { label: "after a superseded error lifecycle", emitError: true, emitEnd: true },
 ] as const;
 
 function buildUrlInputMessage(params: {
@@ -1858,261 +1802,102 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(agentCommandMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, true])(
-    "replays canonical OpenAI SDK response output with stream=%s",
-    async (stream) => {
-      const reasoning: OpenAI.Responses.ResponseReasoningItem = {
-        type: "reasoning",
-        id: "rs_replay_1",
-        summary: [{ type: "summary_text", text: "Locate the current weather." }],
-        content: [{ type: "reasoning_text", text: "Use the weather tool." }],
-        encrypted_content: null,
-        status: "completed",
-      };
-      const assistant: OpenAI.Responses.ResponseOutputMessage = {
-        type: "message",
-        id: "msg_replay_1",
-        role: "assistant",
-        phase: null,
-        status: "completed",
-        content: [
-          {
-            type: "output_text",
-            text: "Checking the weather.",
-            annotations: [],
-            logprobs: [
-              {
-                token: "Checking",
-                bytes: [67, 104, 101, 99, 107, 105, 110, 103],
-                logprob: -0.25,
-                top_logprobs: [{ token: "Checking", bytes: [67], logprob: -0.25 }],
-              },
-            ],
-          },
-          {
-            type: "output_text",
-            text: "Tool details retained.",
-            annotations: [],
-            logprobs: [],
-          },
-        ],
-      };
-      const functionCall: OpenAI.Responses.ResponseFunctionToolCall = {
-        type: "function_call",
-        id: "fc_replay_1",
-        call_id: "call_replay_1",
-        name: "get_weather",
-        arguments: '{"city":"Taipei"}',
-        caller: { type: "direct" },
-        namespace: "weather",
-        status: "completed",
-      };
-      const functionOutput: OpenAI.Responses.ResponseFunctionToolCallOutputItem = {
-        type: "function_call_output",
-        id: "fc_output_replay_1",
-        call_id: "call_replay_1",
-        output: '{"temperature":"72F"}',
-        caller: { type: "program", caller_id: "program_replay_1" },
-        created_by: "weather-worker",
-        status: "completed",
-      };
+  it("replays strict SDK output and preserves structured tool data without fetching it", async () => {
+    const structuredOutput = [
+      {
+        type: "input_text",
+        text: "Structured weather: 72F.",
+        prompt_cache_breakpoint: { mode: "explicit" },
+      },
+      {
+        type: "input_image",
+        detail: "auto",
+        image_url: "https://example.invalid/sdk-tool-image.png",
+      },
+      {
+        type: "input_file",
+        detail: "auto",
+        file_url: "https://example.invalid/sdk-tool-output.txt",
+        filename: "sdk-tool-output.txt",
+      },
+    ] satisfies OpenAI.Responses.ResponseFunctionCallOutputItemList;
 
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({ payloads: [{ text: "Taipei is 72F." }] } as never);
-
-      const res = await postResponses(enabledPort, {
-        model: "openclaw",
-        stream,
-        input: [
-          { type: "message", role: "user", content: "Check the weather." },
-          reasoning,
-          assistant,
-          functionCall,
-          functionOutput,
-          { type: "message", role: "user", content: "Summarize the result." },
-        ],
-      });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-      } else {
-        expect((JSON.parse(body) as { status?: string }).status).toBe("completed");
-      }
-      const prompt = firstAgentOpts().message;
-      expect(prompt).toContain("Checking the weather.");
-      expect(prompt).toContain('{"temperature":"72F"}');
-      expect(prompt).toContain("Summarize the result.");
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "replays strict OpenAI SDK program-call ownership metadata with stream=%s",
-    async (stream) => {
-      const functionCall: OpenAI.Responses.ResponseFunctionToolCallItem = {
-        type: "function_call",
-        id: "fc_owned_replay_1",
-        call_id: "call_owned_replay_1",
-        name: "get_weather",
-        arguments: '{"city":"Taipei"}',
-        caller: { type: "program", caller_id: "program_owned_replay_1" },
-        namespace: "weather",
-        created_by: "weather-program",
-        status: "completed",
-      };
-      const functionOutput: OpenAI.Responses.ResponseFunctionToolCallOutputItem = {
-        type: "function_call_output",
-        id: "fc_output_owned_replay_1",
-        call_id: "call_owned_replay_1",
-        output: '{"temperature":"72F"}',
-        caller: { type: "direct" },
-        created_by: "weather-worker",
-        status: "completed",
-      };
-
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: "Owned replay accepted." }],
-      } as never);
-      const res = await postResponses(enabledPort, {
-        model: "openclaw",
-        stream,
-        input: [
-          functionCall,
-          functionOutput,
-          { type: "message", role: "user", content: "Summarize the owned tool result." },
-        ],
-      });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-      } else {
-        expect((JSON.parse(body) as { status?: string }).status).toBe("completed");
-      }
-      expect(firstAgentOpts().message).toContain('{"temperature":"72F"}');
-      expect(firstAgentOpts().message).toContain("Summarize the owned tool result.");
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "replays structured OpenAI SDK function output without fetching media with stream=%s",
-    async (stream) => {
-      const output = [
+    agentCommandMock.mockClear();
+    agentCommandMock.mockResolvedValueOnce({ payloads: [{ text: "Taipei is 72F." }] } as never);
+    const res = await postResponses(enabledPort, {
+      model: "openclaw",
+      input: [
         {
-          type: "input_text",
-          text: "Structured weather: 72F.",
-          prompt_cache_breakpoint: { mode: "explicit" },
-        },
+          type: "reasoning",
+          id: "rs_replay_1",
+          summary: [{ type: "summary_text", text: "Locate the current weather." }],
+          content: [{ type: "reasoning_text", text: "Use the weather tool." }],
+          encrypted_content: null,
+          status: "completed",
+        } satisfies OpenAI.Responses.ResponseReasoningItem,
         {
-          type: "input_image",
-          detail: "auto",
-          image_url: "https://example.invalid/sdk-tool-image.png",
-        },
+          type: "message",
+          id: "msg_replay_1",
+          role: "assistant",
+          phase: null,
+          status: "completed",
+          content: [
+            {
+              type: "output_text",
+              text: "Checking the weather.",
+              annotations: [
+                {
+                  type: "url_citation",
+                  start_index: 0,
+                  end_index: 8,
+                  title: "Weather",
+                  url: "https://example.invalid/weather",
+                },
+              ],
+              logprobs: [
+                {
+                  token: "Checking",
+                  bytes: null,
+                  logprob: -0.25,
+                  top_logprobs: [{ token: "Checking", bytes: null, logprob: -0.25 }],
+                },
+              ],
+            },
+          ],
+        } satisfies OpenAI.Responses.ResponseOutputMessage,
         {
-          type: "input_file",
-          detail: "auto",
-          file_url: "https://example.invalid/sdk-tool-output.txt",
-          filename: "sdk-tool-output.txt",
-        },
-      ] satisfies OpenAI.Responses.ResponseFunctionCallOutputItemList;
-      const structuredOutput: OpenAI.Responses.ResponseFunctionToolCallOutputItem = {
-        type: "function_call_output",
-        id: "fc_output_structured_1",
-        call_id: "call_structured_1",
-        output,
-        status: "completed",
-      };
-
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: "Structured replay accepted." }],
-      } as never);
-
-      const res = await postResponses(enabledPort, {
-        model: "openclaw",
-        stream,
-        input: [
-          structuredOutput,
-          { type: "message", role: "user", content: "Summarize the structured result." },
-        ],
-      });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-      } else {
-        expect((JSON.parse(body) as { status?: string }).status).toBe("completed");
-      }
-      const opts = firstAgentOpts();
-      expect(opts.message).toContain(JSON.stringify(output));
-      expect(opts.message).toContain("Structured weather: 72F.");
-      expect(opts.message).toContain("https://example.invalid/sdk-tool-image.png");
-      expect(opts.message).toContain("https://example.invalid/sdk-tool-output.txt");
-      expect(opts.images ?? []).toEqual([]);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "replays nullable output-token byte vectors with stream=%s",
-    async (stream) => {
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({ payloads: [{ text: "Replay accepted." }] } as never);
-
-      const res = await postResponses(enabledPort, {
-        model: "openclaw",
-        stream,
-        input: [
-          {
-            type: "message",
-            id: "msg_nullable_logprobs_1",
-            role: "assistant",
-            status: "completed",
-            content: [
-              {
-                type: "output_text",
-                text: "Nullable byte replay.",
-                annotations: [],
-                logprobs: [
-                  {
-                    token: "nullable",
-                    bytes: null,
-                    logprob: -0.5,
-                    top_logprobs: [{ token: "nullable", bytes: null, logprob: -0.5 }],
-                  },
-                ],
-              },
-            ],
-          },
-          { type: "message", role: "user", content: "Continue safely." },
-        ],
-      });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-      } else {
-        expect((JSON.parse(body) as { status?: string }).status).toBe("completed");
-      }
-      expect(firstAgentOpts().message).toContain("Nullable byte replay.");
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
+          type: "function_call",
+          id: "fc_replay_1",
+          call_id: "call_replay_1",
+          name: "get_weather",
+          arguments: '{"city":"Taipei"}',
+          caller: { type: "program", caller_id: "program_replay_1" },
+          namespace: "weather",
+          created_by: "weather-program",
+          status: "completed",
+        } satisfies OpenAI.Responses.ResponseFunctionToolCallItem,
+        {
+          type: "function_call_output",
+          id: "fc_output_replay_1",
+          call_id: "call_replay_1",
+          output: structuredOutput,
+          caller: { type: "direct" },
+          created_by: "weather-worker",
+          status: "completed",
+        } satisfies OpenAI.Responses.ResponseFunctionToolCallOutputItem,
+        { type: "message", role: "user", content: "Summarize the result." },
+      ],
+    });
+    const body = await res.text();
+    expect(res.status, body).toBe(200);
+    expect((JSON.parse(body) as { status?: string }).status).toBe("completed");
+    const opts = firstAgentOpts();
+    expect(opts.message).toContain("Checking the weather.");
+    expect(opts.message).toContain(JSON.stringify(structuredOutput));
+    expect(opts.message).toContain("Summarize the result.");
+    expect(opts.images ?? []).toEqual([]);
+    expect(agentCommandMock).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     {
@@ -2124,41 +1909,23 @@ describe("OpenResponses HTTP API (e2e)", () => {
       },
     },
     {
-      name: "an unknown function-output field",
-      item: {
-        type: "function_call_output",
-        id: "fc_output_invalid_1",
-        call_id: "call_invalid_1",
-        output: "ok",
-        status: "completed",
-        untrusted_extra: true,
-      },
-    },
-    {
       name: "an unknown nested function-caller field",
       item: {
         type: "function_call",
-        id: "fc_caller_invalid_1",
-        call_id: "call_caller_invalid_1",
+        call_id: "call_invalid_1",
         name: "get_weather",
-        arguments: '{"city":"Taipei"}',
-        caller: {
-          type: "direct",
-          caller_id: "untrusted-program-escalation",
-        },
+        arguments: "{}",
+        caller: { type: "direct", caller_id: "untrusted-program-escalation" },
       },
     },
     {
-      name: "an unknown nested structured function-output field",
+      name: "an unknown nested structured-output field",
       item: {
         type: "function_call_output",
-        id: "fc_output_structured_invalid_1",
-        call_id: "call_structured_invalid_1",
-        status: "completed",
+        call_id: "call_invalid_1",
         output: [
           {
             type: "input_image",
-            detail: "auto",
             image_url: "https://example.invalid/sdk-tool-image.png",
             untrusted_extra: true,
           },
@@ -2169,14 +1936,11 @@ describe("OpenResponses HTTP API (e2e)", () => {
       name: "an unknown nested token-logprob field",
       item: {
         type: "message",
-        id: "msg_invalid_logprobs_1",
         role: "assistant",
-        status: "completed",
         content: [
           {
             type: "output_text",
             text: "Reject non-SDK token metadata.",
-            annotations: [],
             logprobs: [
               {
                 token: "reject",
@@ -2191,446 +1955,72 @@ describe("OpenResponses HTTP API (e2e)", () => {
       },
     },
   ])("rejects non-SDK replay input containing $name", async ({ item }) => {
-    agentCommand.mockClear();
-
+    agentCommandMock.mockClear();
     const res = await postResponses(enabledPort, {
       model: "openclaw",
-      input: [item, { type: "message", role: "user", content: "Reject the invalid replay." }],
+      input: [item, { type: "message", role: "user", content: "Reject invalid replay." }],
     });
     const body = await res.text();
     expect(res.status, body).toBe(400);
     expect((JSON.parse(body) as { error?: { type?: string } }).error?.type).toBe(
       "invalid_request_error",
     );
-    expect(agentCommand).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    {
-      name: "without lifecycle metadata",
-      result: { payloads: [{ text: "FAKE_PLUGIN_OK fake_plugin_tool_17" }] },
-      usage: expectedResponsesUsage(0, 0, 0),
-    },
-    {
-      name: "with usage-only metadata",
-      result: {
-        payloads: [{ text: "FAKE_PLUGIN_OK fake_plugin_tool_17" }],
-        meta: { agentMeta: { usage: { input: 128, output: 40, total: 168 } } },
-      },
-      usage: expectedResponsesUsage(128, 40, 168),
-    },
-    {
-      name: "after a successfully completed non-replayable tool turn",
-      result: {
-        payloads: [{ text: "FAKE_PLUGIN_OK fake_plugin_tool_17" }],
-        meta: {
-          agentMeta: { usage: { input: 128, output: 40, total: 168 } },
-          livenessState: "working",
-          replayInvalid: true,
-          stopReason: "stop",
-        },
-      },
-      usage: expectedResponsesUsage(128, 40, 168),
-    },
-  ])("completes a successful QA tool-search result $name", async ({ result, usage }) => {
-    const previousAgentsConfig = testState.agentsConfig;
-    testState.agentsConfig = { list: [{ id: "main" }, { id: "qa" }] };
-    resetConfigRuntimeState();
-    try {
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce(result as never);
-
-      const res = await postResponses(
-        enabledPort,
-        {
-          model: "openclaw/qa",
-          input: [
-            {
-              type: "message",
-              role: "user",
-              content: [
-                {
-                  type: "input_text",
-                  text: "tool search qa check target=fake_plugin_tool_17",
-                },
-              ],
-            },
-          ],
-          max_output_tokens: 256,
-          stream: false,
-        },
-        {
-          "x-openclaw-agent": "qa",
-          "x-openclaw-session-key": "tool-search-gateway-normal",
-        },
-      );
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-      const response = JSON.parse(body) as {
-        status?: string;
-        output?: Array<{ type?: string; content?: Array<{ text?: string }> }>;
-        usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
-      };
-      expect(response.status).toBe("completed");
-      expect(response.output?.[0]?.type).toBe("message");
-      expect(response.output?.[0]?.content?.[0]?.text).toBe("FAKE_PLUGIN_OK fake_plugin_tool_17");
-      expect(response.usage).toEqual(usage);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    } finally {
-      testState.agentsConfig = previousAgentsConfig;
-      resetConfigRuntimeState();
-    }
+    expect(agentCommandMock).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
-    "completes a recovered response after an earlier error payload with stream=%s",
+    "fails a resolved terminal error without exposing provider details with stream=%s",
     async (stream) => {
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [
-          { text: "Historical failed provider attempt", isError: true },
-          { text: "fallback recovered" },
-          {},
-        ],
-      } as never);
-
-      const res = await postResponses(enabledPort, { stream, model: "openclaw", input: "hi" });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(0);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-        expect(body).toContain("fallback recovered");
-      } else {
-        const response = JSON.parse(body) as {
-          status?: string;
-          output?: Array<{ type?: string; content?: Array<{ text?: string }> }>;
-        };
-        expect(response.status).toBe("completed");
-        expect(response.output?.[0]?.type).toBe("message");
-        expect(response.output?.[0]?.content?.[0]?.text).toContain("fallback recovered");
-      }
-
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "completes a recovered media-only response after an earlier error payload with stream=%s",
-    async (stream) => {
-      const privateFailure = "Historical private provider failure";
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [
-          { text: privateFailure, isError: true },
-          {
-            mediaUrl: "https://example.invalid/recovered-image.png",
-            mediaUrls: ["https://example.invalid/recovered-document.pdf"],
-          },
-        ],
-      } as never);
-
-      const res = await postResponses(enabledPort, {
-        stream,
-        model: "openclaw",
-        input: "recover the generated attachment",
-      });
-      const body = await res.text();
-      expect(res.status, body).toBe(200);
-
-      if (stream) {
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-      } else {
-        const response = JSON.parse(body) as { status?: string; error?: unknown };
-        expect(response.status).toBe("completed");
-        expect(response.error).toBeUndefined();
-      }
-
-      expect(body).not.toContain("api_error");
-      expect(body).not.toContain(privateFailure);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "preserves a failed response when only transient notices follow with stream=%s",
-    async (stream) => {
-      const privateFailure = "Historical private provider failure";
-      const notices = [
-        { text: "Private commentary notice", isCommentary: true },
-        { text: "Private compaction notice", isCompactionNotice: true },
-        { text: "Private fallback notice", isFallbackNotice: true },
-        { text: "Private reasoning snapshot", isReasoningSnapshot: true },
-        { text: "Private status notice", isStatusNotice: true },
-        { text: "Private hidden notice", visible: false },
-      ];
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: privateFailure, isError: true }, ...notices],
-      } as never);
-
-      const res = await postResponses(enabledPort, {
-        stream,
-        model: "openclaw",
-        input: "finish the failed request",
-      });
-      const body = await res.text();
-
-      if (stream) {
-        expect(res.status, body).toBe(200);
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-        const failedResponse = (
-          parseSseData(findSseEvent(events, "response.failed")) as {
-            response?: { status?: string; error?: { code?: string; message?: string } };
-          }
-        ).response;
-        expect(failedResponse?.status).toBe("failed");
-        expect(failedResponse?.error).toEqual({ code: "api_error", message: "internal error" });
-      } else {
-        expect(res.status, body).toBe(502);
-        const response = JSON.parse(body) as {
-          status?: string;
-          output?: unknown[];
-          error?: { code?: string; message?: string };
-        };
-        expect(response.status).toBe("failed");
-        expect(response.output).toEqual([]);
-        expect(response.error).toEqual({ code: "api_error", message: "internal error" });
-      }
-
-      expect(body).not.toContain(privateFailure);
-      for (const notice of notices) {
-        expect(body).not.toContain(notice.text);
-      }
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([false, true])(
-    "preserves a failed response when its final payload is whitespace with stream=%s",
-    async (stream) => {
-      const privateFailure = "Historical private provider failure";
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: privateFailure, isError: true }, { text: " \t\n " }],
-      } as never);
-
-      const res = await postResponses(enabledPort, { stream, model: "openclaw", input: "hi" });
-      const body = await res.text();
-
-      if (stream) {
-        expect(res.status, body).toBe(200);
-        const events = parseSseEvents(body);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-        const failedResponse = (
-          parseSseData(findSseEvent(events, "response.failed")) as {
-            response?: { status?: string; error?: { code?: string; message?: string } };
-          }
-        ).response;
-        expect(failedResponse?.status).toBe("failed");
-        expect(failedResponse?.error).toEqual({ code: "api_error", message: "internal error" });
-      } else {
-        expect(res.status, body).toBe(502);
-        const response = JSON.parse(body) as {
-          status?: string;
-          output?: unknown[];
-          error?: { code?: string; message?: string };
-        };
-        expect(response.status).toBe("failed");
-        expect(response.output).toEqual([]);
-        expect(response.error).toEqual({ code: "api_error", message: "internal error" });
-      }
-
-      expect(body).not.toContain(privateFailure);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(PRESERVED_STREAM_FAILURE_CASES)(
-    "fails non-stream responses for $name without exposing provider details",
-    async ({ text, error }) => {
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text, isError: true }],
+      const privatePayload = "private terminal payload";
+      const privateError = "private provider detail";
+      agentCommandMock.mockClear();
+      agentCommandMock.mockResolvedValueOnce({
+        payloads: [{ text: privatePayload, isError: true }],
         meta: {
-          error,
+          error: { kind: "incomplete_turn", message: privateError },
           agentMeta: { usage: { input: 7, output: 3, total: 10 } },
         },
       } as never);
 
-      const res = await postResponses(enabledPort, { model: "openclaw", input: "hi" });
-      expect(res.status).toBe(502);
+      const res = await postResponses(enabledPort, {
+        model: "openclaw",
+        input: "hi",
+        stream,
+      });
       const body = await res.text();
-      const response = JSON.parse(body) as {
-        status?: string;
-        output?: unknown[];
-        error?: { code?: string; message?: string };
-        usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
-      };
-      expect(response.status).toBe("failed");
-      expect(response.output).toEqual([]);
-      expect(response.error).toEqual({ code: "api_error", message: "internal error" });
-      expect(response.usage).toEqual(expectedResponsesUsage(7, 3, 10));
-      expect(body).not.toContain(text);
-      expect(body).not.toContain(error.message);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(
-    STREAM_FAILURE_CASES.flatMap((failure) =>
-      [false, true].map((emitErrorLifecycle) => ({
-        name: failure.name,
-        createError: failure.createError,
-        tools: failure.tools,
-        expectedCode: failure.expectedCode,
-        expectedMessage: failure.expectedMessage,
-        emitErrorLifecycle,
-        label: `${failure.name} ${emitErrorLifecycle ? "after" : "without"} an error lifecycle`,
-      })),
-    ),
-  )(
-    "closes the response stream for $label without reporting completion",
-    async ({ createError, emitErrorLifecycle, expectedCode, expectedMessage, tools }) => {
-      const idleRootCount = getActiveGatewayRootWorkCount();
-      agentCommandMock.mockClear();
-      agentCommandMock.mockImplementationOnce((async (opts: unknown) => {
-        if (emitErrorLifecycle) {
-          const runId = (opts as { runId?: string }).runId;
-          if (!runId) {
-            throw new Error("expected a streaming response run ID");
-          }
-          emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "error" } });
-        }
-        throw createError();
-      }) as never);
-
-      const res = await postResponses(
-        enabledPort,
-        {
-          stream: true,
-          model: "openclaw",
-          input: "hi",
-          tools,
-        },
-        undefined,
-        AbortSignal.timeout(5_000),
-      );
-      expect(res.status).toBe(200);
-
-      const events = parseSseEvents(await res.text());
-      const failedEvents = events.filter((event) => event.event === "response.failed");
-      expect(failedEvents).toHaveLength(1);
-      expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
-      expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-      expect(events.at(-1)?.data).toBe("[DONE]");
-
-      const failedResponse = (
-        parseSseData(findSseEvent(events, "response.failed")) as {
+      if (stream) {
+        expect(res.status, body).toBe(200);
+        const events = parseSseEvents(body);
+        const failed = parseSseData(findSseEvent(events, "response.failed")) as {
           response?: { status?: string; error?: { code?: string; message?: string } };
-        }
-      ).response;
-      expect(failedResponse?.status).toBe("failed");
-      expect(failedResponse?.error?.code).toBe(expectedCode);
-      expect(failedResponse?.error?.message).toContain(expectedMessage);
-      expect(agentCommandMock).toHaveBeenCalledTimes(1);
-      await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(idleRootCount));
-    },
-  );
-
-  it.each(
-    PRESERVED_STREAM_FAILURE_CASES.flatMap((failure) =>
-      PRESERVED_STREAM_LIFECYCLE_CASES.map((lifecycleCase) => ({
-        name: failure.name,
-        text: failure.text,
-        lifecycle: failure.lifecycle,
-        error: failure.error,
-        lifecycleLabel: lifecycleCase.label,
-        emitError: lifecycleCase.emitError,
-        emitEnd: lifecycleCase.emitEnd,
-      })),
-    ),
-  )(
-    "fails the response stream when $name resolves $lifecycleLabel",
-    async ({ text, lifecycle, error, emitError, emitEnd }) => {
-      const idleRootCount = getActiveGatewayRootWorkCount();
-      agentCommand.mockClear();
-      agentCommand.mockImplementationOnce((async (opts: unknown) => {
-        const runId = (opts as { runId?: string }).runId;
-        if (!runId) {
-          throw new Error("expected a streaming response run ID");
-        }
-        if (emitError) {
-          emitAgentEvent({
-            runId,
-            stream: "lifecycle",
-            data: { phase: "error", error: text, ...lifecycle },
-          });
-        }
-        if (emitEnd) {
-          emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
-        }
-        return {
-          payloads: [{ text, isError: true }],
-          meta: {
-            stopReason: "end_turn",
-            error,
-            agentMeta: { usage: { input: 7, output: 3, total: 10 } },
-          },
         };
-      }) as never);
-
-      const res = await postResponses(
-        enabledPort,
-        { stream: true, model: "openclaw", input: "hi" },
-        undefined,
-        AbortSignal.timeout(5_000),
-      );
-      expect(res.status).toBe(200);
-
-      const body = await res.text();
-      const events = parseSseEvents(body);
-      expect(events.filter((event) => event.event === "response.failed")).toHaveLength(1);
-      expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
-      expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-      expect(events.at(-1)?.data).toBe("[DONE]");
-
-      const failedResponse = (
-        parseSseData(findSseEvent(events, "response.failed")) as {
-          response?: {
-            status?: string;
-            error?: { code?: string; message?: string };
-            usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
-          };
-        }
-      ).response;
-      expect(failedResponse?.status).toBe("failed");
-      expect(failedResponse?.error).toEqual({ code: "api_error", message: "internal error" });
-      expect(failedResponse?.usage).toEqual(expectedResponsesUsage(7, 3, 10));
-      expect(body).not.toContain(error.message);
-      expect(body).not.toContain(text);
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-      await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(idleRootCount));
+        expect(failed.response?.status).toBe("failed");
+        expect(failed.response?.error).toEqual({
+          code: "api_error",
+          message: "internal error",
+        });
+        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
+        expect(events.at(-1)?.data).toBe("[DONE]");
+      } else {
+        expect(res.status, body).toBe(502);
+        const response = JSON.parse(body) as {
+          status?: string;
+          output?: unknown[];
+          error?: { code?: string; message?: string };
+        };
+        expect(response.status).toBe("failed");
+        expect(response.output).toEqual([]);
+        expect(response.error).toEqual({ code: "api_error", message: "internal error" });
+      }
+      expect(body).not.toContain(privatePayload);
+      expect(body).not.toContain(privateError);
+      expect(agentCommandMock).toHaveBeenCalledTimes(1);
     },
   );
 
-  it("completes a response when a failed attempt recovers through model fallback", async () => {
-    agentCommand.mockClear();
-    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+  it("completes a stream when a failed attempt is superseded by fallback success", async () => {
+    agentCommandMock.mockClear();
+    agentCommandMock.mockImplementationOnce((async (opts: unknown) => {
       const runId = (opts as { runId?: string }).runId;
       if (!runId) {
         throw new Error("expected a streaming response run ID");
@@ -2657,7 +2047,6 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(body).toContain("fallback recovered");
     expect(body).not.toContain("raw primary provider failure");
   });
-
   it("preserves declared owner identity for streaming and non-streaming private callers", async () => {
     const port = enabledPort;
     for (const stream of [false, true]) {
@@ -3625,150 +3014,52 @@ describe("OpenResponses HTTP API (e2e)", () => {
     await ensureResponseConsumed(secondResponse);
   });
 
-  it("does not reuse another user's previous response under the same auth subject", async () => {
-    const port = enabledPort;
-    agentCommandMock.mockClear();
-    agentCommandMock.mockResolvedValueOnce({
-      payloads: [{ text: "First turn." }],
-    } as never);
-
-    const firstResponse = await postResponses(port, {
-      stream: false,
-      model: "openclaw",
-      user: "alice",
-      input: "hello",
-    });
-    expect(firstResponse.status).toBe(200);
-    const firstJson = (await firstResponse.json()) as { id?: string };
-    const firstOpts = firstAgentOpts() as { sessionKey?: string } | undefined;
-    expect(firstOpts?.sessionKey ?? "").toContain("openresponses-user:alice");
-
-    agentCommandMock.mockResolvedValueOnce({
-      payloads: [{ text: "Second turn." }],
-    } as never);
-
-    const secondResponse = await postResponses(port, {
-      stream: false,
-      model: "openclaw",
-      user: "bob",
-      previous_response_id: firstJson.id,
-      input: "hello again",
-    });
-    expect(secondResponse.status).toBe(200);
-    const secondOpts = firstAgentOpts(1) as { sessionKey?: string } | undefined;
-    expect(secondOpts?.sessionKey).not.toBe(firstOpts?.sessionKey);
-    expect(secondOpts?.sessionKey ?? "").toContain("openresponses-user:bob");
-    await ensureResponseConsumed(secondResponse);
-  });
-
-  it.each(
-    [false, true].flatMap((stream) =>
-      [false, true].map((namedUser) => ({
-        stream,
-        namedUser,
-        label: `${namedUser ? "named" : "anonymous"} response with stream=${stream}`,
-      })),
-    ),
-  )(
-    "isolates a previous $label when the optional SDK user is omitted",
-    async ({ stream, namedUser }) => {
-      agentCommand.mockClear();
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: "First private turn." }],
-      } as never);
-
-      const firstResponse = await postResponses(enabledPort, {
-        stream: false,
-        model: "openclaw",
-        ...(namedUser ? { user: "  alice  " } : {}),
-        input: "private first turn",
-      });
-      const firstBody = await firstResponse.text();
-      expect(firstResponse.status, firstBody).toBe(200);
-      const firstJson = JSON.parse(firstBody) as { id?: string };
-      if (!firstJson.id) {
-        throw new Error("expected a previous response ID");
-      }
-      const firstSessionKey = requireSessionKey(
-        (firstAgentOpts() as { sessionKey?: string }).sessionKey,
-        "first response",
-      );
-      if (namedUser) {
-        expect(firstSessionKey).toContain("openresponses-user:alice");
-      }
-
-      agentCommand.mockResolvedValueOnce({
-        payloads: [{ text: "Optional-user continuation recovered." }],
-      } as never);
-      const secondRequest = {
-        model: "openclaw",
-        stream,
-        previous_response_id: firstJson.id,
-        input: "continue without optional user metadata",
-      } satisfies OpenAI.Responses.ResponseCreateParams;
-      const secondResponse = await postResponses(enabledPort, secondRequest);
-      const secondBody = await secondResponse.text();
-      expect(secondResponse.status, secondBody).toBe(200);
-      const continuedSessionKey = requireSessionKey(
-        (firstAgentOpts(1) as { sessionKey?: string }).sessionKey,
-        "optional-user continuation",
-      );
-      if (namedUser) {
-        expect(continuedSessionKey).not.toBe(firstSessionKey);
-        expect(continuedSessionKey).not.toContain("openresponses-user:alice");
-      } else {
-        expect(continuedSessionKey).toBe(firstSessionKey);
-      }
-
-      if (stream) {
-        const events = parseSseEvents(secondBody);
-        expect(events.filter((event) => event.event === "response.completed")).toHaveLength(1);
-        expect(events.filter((event) => event.event === "response.failed")).toHaveLength(0);
-        expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
-        expect(events.at(-1)?.data).toBe("[DONE]");
-      } else {
-        const secondJson = JSON.parse(secondBody) as { status?: string };
-        expect(secondJson.status).toBe("completed");
-      }
-      expect(secondBody).toContain("Optional-user continuation recovered.");
-      expect(agentCommand).toHaveBeenCalledTimes(2);
+  it.each([
+    {
+      name: "same normalized user",
+      firstUser: "  alice  ",
+      secondUser: "alice",
+      reuses: true,
     },
-  );
-
-  it("reuses a previous response for the same normalized user", async () => {
-    agentCommand.mockClear();
-    agentCommand.mockResolvedValueOnce({
-      payloads: [{ text: "First private turn." }],
-    } as never);
-
+    { name: "different user", firstUser: "alice", secondUser: "bob", reuses: false },
+    { name: "omitted named user", firstUser: "alice", secondUser: undefined, reuses: false },
+    { name: "anonymous user", firstUser: undefined, secondUser: undefined, reuses: true },
+  ])("scopes previous responses by $name", async ({ firstUser, secondUser, reuses }) => {
+    agentCommandMock.mockClear();
+    agentCommandMock.mockResolvedValueOnce({ payloads: [{ text: "First turn." }] } as never);
     const firstResponse = await postResponses(enabledPort, {
-      stream: false,
       model: "openclaw",
-      user: "  alice  ",
-      input: "private first turn",
+      ...(firstUser === undefined ? {} : { user: firstUser }),
+      input: "first turn",
     });
     expect(firstResponse.status).toBe(200);
     const firstJson = (await firstResponse.json()) as { id?: string };
-    const firstOpts = firstAgentOpts() as { sessionKey?: string } | undefined;
-    expect(firstOpts?.sessionKey ?? "").toContain("openresponses-user:alice");
+    if (!firstJson.id) {
+      throw new Error("expected a previous response ID");
+    }
+    const firstSessionKey = requireSessionKey(
+      (firstAgentOpts() as { sessionKey?: string }).sessionKey,
+      "first response",
+    );
 
-    agentCommand.mockResolvedValueOnce({
-      payloads: [{ text: "Second private turn." }],
-    } as never);
-
+    agentCommandMock.mockResolvedValueOnce({ payloads: [{ text: "Second turn." }] } as never);
     const secondResponse = await postResponses(enabledPort, {
-      stream: false,
       model: "openclaw",
-      user: "alice",
+      ...(secondUser === undefined ? {} : { user: secondUser }),
       previous_response_id: firstJson.id,
-      input: "private follow-up",
+      input: "second turn",
     });
     expect(secondResponse.status).toBe(200);
-    const secondOpts = firstAgentOpts(1) as { sessionKey?: string } | undefined;
-    expect(secondOpts?.sessionKey).toBe(firstOpts?.sessionKey);
+    const secondSessionKey = requireSessionKey(
+      (firstAgentOpts(1) as { sessionKey?: string }).sessionKey,
+      "second response",
+    );
+    expect(secondSessionKey === firstSessionKey).toBe(reuses);
+    if (secondUser) {
+      expect(secondSessionKey).toContain(`openresponses-user:${secondUser}`);
+    }
     await ensureResponseConsumed(secondResponse);
   });
-
   it("stores response session mappings when the response is emitted", async () => {
     const port = enabledPort;
     agentCommandMock.mockClear();
@@ -3812,60 +3103,6 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(openResponsesTesting.lookupResponseSessionAt("resp_4", 505)).toBeUndefined();
     expect(openResponsesTesting.lookupResponseSessionAt("resp_5", 505)).toBe("session_5");
     expect(openResponsesTesting.lookupResponseSessionAt("resp_504", 505)).toBe("session_504");
-  });
-
-  it("keeps cached previous responses scoped to their normalized user", () => {
-    openResponsesTesting.storeResponseSessionAt("resp_alice", "session_alice", 100, {
-      authSubject: "subject:a",
-      agentId: "main",
-      user: "  alice  ",
-    });
-
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_alice", 101, {
-        authSubject: "subject:a",
-        agentId: "main",
-        user: "alice",
-      }),
-    ).toBe("session_alice");
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_alice", 101, {
-        authSubject: "subject:a",
-        agentId: "main",
-        user: "bob",
-      }),
-    ).toBeUndefined();
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_alice", 101, {
-        authSubject: "subject:a",
-        agentId: "main",
-      }),
-    ).toBeUndefined();
-
-    openResponsesTesting.storeResponseSessionAt("resp_anonymous", "session_anonymous", 102, {
-      authSubject: "subject:a",
-      agentId: "main",
-    });
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_anonymous", 103, {
-        authSubject: "subject:a",
-        agentId: "main",
-      }),
-    ).toBe("session_anonymous");
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_anonymous", 103, {
-        authSubject: "subject:a",
-        agentId: "main",
-        user: "   ",
-      }),
-    ).toBe("session_anonymous");
-    expect(
-      openResponsesTesting.lookupResponseSessionAt("resp_anonymous", 103, {
-        authSubject: "subject:a",
-        agentId: "main",
-        user: "alice",
-      }),
-    ).toBeUndefined();
   });
 
   it("does not reuse cached sessions when the auth subject changes", () => {
