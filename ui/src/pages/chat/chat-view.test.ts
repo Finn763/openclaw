@@ -4195,6 +4195,35 @@ describe("chat slash menu accessibility", () => {
     expect(listbox?.querySelector(`#${activeId}`)?.getAttribute("aria-selected")).toBe("true");
   });
 
+  it("opens model-supported thinking arguments after tab-completing /think", () => {
+    const sessions = createSessionsListResult({
+      model: "gpt-5.6-sol",
+      modelProvider: "openai",
+    });
+    const session = expectDefined(sessions.sessions[0], "active session");
+    session.thinkingLevels = [
+      { id: "off", label: "off" },
+      { id: "minimal", label: "minimal" },
+      { id: "low", label: "low" },
+      { id: "medium", label: "medium" },
+      { id: "high", label: "high" },
+      { id: "xhigh", label: "xhigh" },
+      { id: "max", label: "max" },
+      { id: "ultra", label: "ultra" },
+    ];
+    const { container } = createReactiveDraftHarness({ sessions });
+
+    inputDraft(container, "/think");
+    keydownComposer(container, "Tab");
+
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/think ");
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>(".slash-menu [role='option']")).map(
+        (option) => option.querySelector(".slash-menu-name")?.textContent?.trim(),
+      ),
+    ).toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  });
+
   it("clears active descendant when suggestions close", () => {
     const harness = createSlashRerenderHarness();
     let container = harness.inputAndRender(harness.container, "/");

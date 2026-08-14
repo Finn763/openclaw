@@ -43,9 +43,29 @@ export type ChatThinkingSelectState = {
 function resolveThinkingLevelOptionsForSession(
   session: ChatThinkingTarget | undefined,
   defaults: ThinkingSessionDefaults,
+  fallbackLabels?: readonly string[],
 ): GatewayThinkingLevelOption[] {
   const { provider, model } = resolveThinkingTargetModel({ defaults, session });
-  return resolveThinkingLevelOptions({ catalog: [], defaults, model, provider, session });
+  return resolveThinkingLevelOptions({
+    catalog: [],
+    defaults,
+    fallbackLabels,
+    model,
+    provider,
+    session,
+  });
+}
+
+export function resolveThinkingCommandArgOptionsForSession(
+  session: ChatThinkingTarget | undefined,
+  defaults?: SessionsListResult["defaults"],
+): string[] {
+  const options = resolveThinkingLevelOptionsForSession(session, defaults, []).map((level) =>
+    normalizeThinkingOptionValue(level.id),
+  );
+  return options.length > 0
+    ? ["default", ...new Set(options.filter((option) => option && option !== "default"))]
+    : [];
 }
 
 export function formatThinkingCommandOptionsForSession(
@@ -167,6 +187,7 @@ function resolveThinkingCatalogEntry(
 function resolveThinkingLevelOptions(params: {
   catalog: readonly ModelCatalogEntry[];
   defaults: ThinkingSessionDefaults;
+  fallbackLabels?: readonly string[];
   hideUnsupportedOffOnly?: boolean;
   model: string | null;
   provider: string | null;
@@ -202,7 +223,7 @@ function resolveThinkingLevelOptions(params: {
       return [];
     }
   }
-  const labels = explicitLabels ?? BASE_THINKING_LEVELS;
+  const labels = explicitLabels ?? params.fallbackLabels ?? BASE_THINKING_LEVELS;
   return labels.map((label) => ({
     id: normalizeThinkLevel(label) ?? normalizeLowercaseStringOrEmpty(label),
     label,
