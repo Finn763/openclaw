@@ -430,11 +430,19 @@ function chatHtml(opts: ChatFixtureOptions = {}, mobileNavLayout = false) {
                           <div class="chat-session-rail__hint">The companion is already answering a question.</div>
                         </article>
                       </div>
-                      <footer class="chat-session-rail__composer">
-                        <label class="chat-session-rail__prompt">
-                          <input class="chat-session-rail__input" type="text" placeholder="What should I know?" />
-                        </label>
-                        <button class="chat-send-btn">${iconSvg()}</button>
+                      <footer class="agent-chat__input chat-session-rail__composer" data-composer-layout="multiline">
+                        <div class="agent-chat__composer-input-row">
+                          <label class="agent-chat__composer-combobox chat-session-rail__prompt">
+                            <input class="chat-session-rail__input" type="text" placeholder="What should I know?" />
+                          </label>
+                        </div>
+                        <div class="agent-chat__composer-footer">
+                          <div class="agent-chat__composer-trail">
+                            <div class="agent-chat__composer-actions">
+                              <button class="chat-send-btn">${iconSvg()}</button>
+                            </div>
+                          </div>
+                        </div>
                       </footer>
                     </section>
                   </openclaw-chat-session-rail>`
@@ -559,7 +567,9 @@ function chatHtml(opts: ChatFixtureOptions = {}, mobileNavLayout = false) {
 }
 
 async function syncFixtureComposerPopoverAnchor(page: Page) {
-  await page.locator(".agent-chat__input").evaluate((node) => {
+  // The session companion runs the same composer surface, so the pane's own
+  // composer is named by its shell rather than by the shared surface class.
+  await page.locator(".agent-chat__composer-shell > .agent-chat__input").evaluate((node) => {
     const viewport = window.visualViewport;
     const viewportTop = viewport?.offsetTop ?? 0;
     const layoutViewportHeight = document.documentElement.clientHeight || window.innerHeight;
@@ -1861,7 +1871,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         return {
           assistantBubble: styleFor(".chat-group.assistant .chat-bubble:first-child"),
           bubble: styleFor(".chat-group.user .chat-bubble:first-child"),
-          composer: styleFor(".agent-chat__input"),
+          composer: styleFor(".agent-chat__composer-shell > .agent-chat__input"),
           footer: styleFor(".agent-chat__composer-footer"),
           textarea: styleFor(".agent-chat__composer-combobox > textarea"),
         };
@@ -1912,7 +1922,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       // into two: a draft that fits on a single line still leaves the surface at
       // its multiline floor, with the whole action row below the editor.
       const [surface, editor, actionRow] = await Promise.all([
-        getRect(page, ".agent-chat__input"),
+        getRect(page, ".agent-chat__composer-shell > .agent-chat__input"),
         getRect(page, ".agent-chat__composer-combobox > textarea"),
         getRect(page, ".agent-chat__composer-footer"),
       ]);
@@ -2330,7 +2340,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         return {
           attach: rectFor('.agent-chat__input-btn[aria-label="Add attachment"]'),
           attachIcon: rectFor('.agent-chat__input-btn[aria-label="Add attachment"] svg'),
-          input: rectFor(".agent-chat__input"),
+          input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
           meta: rectFor(".agent-chat__composer-meta"),
           model: rectFor(".chat-composer-model-control"),
           context: rectFor(".context-ring"),
@@ -2410,7 +2420,10 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
     async (width, height, composerAttachment) => {
       const page = await openFixture(width, height, { composerAttachment });
       try {
-        const composer = await getBoundingBox(page, ".agent-chat__input");
+        const composer = await getBoundingBox(
+          page,
+          ".agent-chat__composer-shell > .agent-chat__input",
+        );
         const menuSelector = ".context-usage__popover";
         const triggerSelector = ".context-ring";
         await page.locator(triggerSelector).evaluate((node) => {
@@ -2458,12 +2471,17 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       await waitForLayoutSettled(page, ".context-usage__popover, .agent-chat__input");
       await syncFixtureComposerPopoverAnchor(page);
       await waitForLayoutSettled(page, ".context-usage__popover, .agent-chat__input");
-      const composer = await getBoundingBox(page, ".agent-chat__input");
+      const composer = await getBoundingBox(
+        page,
+        ".agent-chat__composer-shell > .agent-chat__input",
+      );
       const menu = await getBoundingBox(page, ".context-usage__popover");
-      const anchorEvidence = await page.locator(".agent-chat__input").evaluate((node) => ({
-        anchorBottom: getComputedStyle(node).getPropertyValue("--chat-composer-popover-bottom"),
-        layoutHeight: document.documentElement.clientHeight,
-      }));
+      const anchorEvidence = await page
+        .locator(".agent-chat__composer-shell > .agent-chat__input")
+        .evaluate((node) => ({
+          anchorBottom: getComputedStyle(node).getPropertyValue("--chat-composer-popover-bottom"),
+          layoutHeight: document.documentElement.clientHeight,
+        }));
 
       expect(menu.y).toBeGreaterThanOrEqual(300);
       expect(
@@ -2571,7 +2589,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           return {
             chat: rectFor(".card.chat"),
             shell: rectFor(".agent-chat__composer-shell"),
-            input: rectFor(".agent-chat__input"),
+            input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
             thread: rectFor(".chat-thread"),
             footer: rectFor(".agent-chat__composer-footer"),
             textarea: rectFor(".agent-chat__composer-combobox > textarea"),
@@ -2708,7 +2726,10 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       const page = await openFixture(width, height, { composerAttachment: true });
       try {
         await expectNoHorizontalOverflow(page);
-        const input = await getBoundingBox(page, ".agent-chat__input");
+        const input = await getBoundingBox(
+          page,
+          ".agent-chat__composer-shell > .agent-chat__input",
+        );
         const preview = await getBoundingBox(page, ".chat-attachments-preview");
         const attachment = await getBoundingBox(page, ".chat-attachment-thumb");
         const previewPaddingTop = await page
@@ -2864,7 +2885,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           };
         };
         return {
-          input: rectFor(".agent-chat__input"),
+          input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
           thread: rectFor(".chat-thread"),
           textarea: rectFor(".agent-chat__composer-combobox > textarea"),
         };
@@ -2887,7 +2908,9 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       expect(textarea.scrollHeight).toBeGreaterThan(textarea.clientHeight);
 
       const scrolled = await page.evaluate(() => {
-        const composer = document.querySelector(".agent-chat__input") as HTMLElement | null;
+        const composer = document.querySelector(
+          ".agent-chat__composer-shell > .agent-chat__input",
+        ) as HTMLElement | null;
         if (composer) {
           composer.scrollTop = composer.scrollHeight;
         }
@@ -2901,7 +2924,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         };
         return {
           shell: rectFor(".agent-chat__composer-shell"),
-          input: rectFor(".agent-chat__input"),
+          input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
           meta: rectFor(".agent-chat__composer-meta"),
           model: rectFor(".chat-composer-model-control"),
           send: rectFor(".chat-send-btn"),
@@ -2954,7 +2977,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           };
         };
         return {
-          input: rectFor(".agent-chat__input"),
+          input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
           menu: rectFor(".slash-menu"),
           textarea: rectFor(".agent-chat__composer-combobox > textarea"),
           footer: rectFor(".agent-chat__composer-footer"),
@@ -2976,7 +2999,9 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       expect(textarea.y).toBeGreaterThan(menu.y);
 
       const scrolled = await page.evaluate(() => {
-        const composer = document.querySelector(".agent-chat__input") as HTMLElement | null;
+        const composer = document.querySelector(
+          ".agent-chat__composer-shell > .agent-chat__input",
+        ) as HTMLElement | null;
         if (composer) {
           composer.scrollTop = composer.scrollHeight;
         }
@@ -2989,7 +3014,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
         };
         return {
-          input: rectFor(".agent-chat__input"),
+          input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
           footer: rectFor(".agent-chat__composer-footer"),
         };
       });

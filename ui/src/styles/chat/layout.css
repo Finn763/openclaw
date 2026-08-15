@@ -2463,8 +2463,10 @@ button.chat-pr__diff {
      first frame. This floor is what keeps that reading — an empty draft plus a
      row of 28px controls would otherwise settle into a bar too shallow to look
      like a writing surface, and the composer would appear to change kind the
-     moment the first line wrapped. */
-  min-height: 98px;
+     moment the first line wrapped. A surface may lower the floor without leaving
+     the two-region shape — the session companion does, because it is a narrow
+     side panel rather than the page's main writing area. */
+  min-height: var(--chat-composer-min-height, 98px);
   margin: 0;
   padding: 0;
   background: var(--chat-composer-surface);
@@ -2545,6 +2547,44 @@ button.chat-pr__diff {
   .agent-chat__input {
     backdrop-filter: blur(12px) saturate(1.6);
     -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  }
+}
+
+/* The session companion runs the same composer surface in a side panel, so it
+   keeps the shape, corner, border, focus and insets and changes only what being
+   a panel requires. Compound selectors so these land whatever order the panel's
+   stylesheet and this one resolve in.
+   The floor drops because this is not the page's main writing area: the shared
+   98px exists so a short draft still reads as a writing surface next to a full
+   transcript, and in a 400px rail that same floor would make a one-line prompt
+   the loudest thing in the panel. Two regions either way — a lower floor is
+   still the editor above its action row. */
+.chat-session-rail__composer.agent-chat__input {
+  /* No floor at all: the panel's prompt is a single line and its action row
+     carries one control, so a floor would only buy dead air between the two and
+     leave the send looking stranded at the bottom of an empty box. The two
+     regions still stack; they simply sit as close as their own content allows. */
+  --chat-composer-min-height: auto;
+  --chat-composer-editor-inset-block: 4px;
+
+  flex: 0 0 auto;
+  margin: 0 10px 10px;
+}
+
+/* One control in this row, so it keeps only the inset that stops the send from
+   touching the frame. The shared bottom margin is sized for a row of chips. */
+.chat-session-rail__composer.agent-chat__input .agent-chat__composer-footer {
+  margin-bottom: 4px;
+}
+
+/* The rail is a resizable column, so the prompt meets widths the main composer
+   never sees. It gives up its side inset first: the draft is the only thing in
+   this region, so the frame yields to it rather than the other way round. */
+@media (max-width: 1100px) {
+  .chat-session-rail__composer.agent-chat__input {
+    --chat-composer-editor-inset-inline: 10px;
+
+    margin-inline: 6px;
   }
 }
 

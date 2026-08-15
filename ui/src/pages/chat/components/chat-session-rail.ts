@@ -630,40 +630,54 @@ export class ChatSessionRailElement extends OpenClawLightDomElement {
         ${this.companion.exchanges.length === 0 && !this.companion.pendingQuestion
           ? this.renderStarters()
           : nothing}
+        <!-- Same composer surface as the transcript and new-session pages: the
+             prompt on top, the action row docked beneath it. The companion only
+             owns a draft and a send, so its action row carries just those; the
+             shape, corner, border, focus and inset all come from the shared
+             surface rather than from a second set of rules here. -->
         <form
-          class="chat-session-rail__composer"
+          class="agent-chat__input chat-session-rail__composer"
+          data-composer-layout="multiline"
           @submit=${(event: SubmitEvent) => {
             event.preventDefault();
             this.submit();
           }}
         >
-          <label class="chat-session-rail__prompt">
-            <input
-              class="chat-session-rail__input"
-              type="text"
-              maxlength="400"
-              autocomplete="off"
-              aria-label=${t("chat.rail.askLabel")}
-              .value=${this.companion.draft}
-              placeholder=${this.companion.pendingQuestion
-                ? t("chat.rail.askPending")
-                : t("chat.rail.askPlaceholder")}
-              ?disabled=${!this.connected || this.companion.pendingQuestion !== null}
-              @input=${(event: InputEvent) => {
-                this.onDraftChange?.((event.currentTarget as HTMLInputElement).value);
-              }}
-            />
-          </label>
-          <button
-            class="chat-send-btn"
-            type="submit"
-            aria-label=${t("chat.rail.askSubmit")}
-            ?disabled=${!this.connected ||
-            this.companion.pendingQuestion !== null ||
-            !this.companion.draft.trim()}
-          >
-            ${icons.arrowUp}
-          </button>
+          <div class="agent-chat__composer-input-row">
+            <label class="agent-chat__composer-combobox chat-session-rail__prompt">
+              <input
+                class="chat-session-rail__input"
+                type="text"
+                maxlength="400"
+                autocomplete="off"
+                aria-label=${t("chat.rail.askLabel")}
+                .value=${this.companion.draft}
+                placeholder=${this.companion.pendingQuestion
+                  ? t("chat.rail.askPending")
+                  : t("chat.rail.askPlaceholder")}
+                ?disabled=${!this.connected || this.companion.pendingQuestion !== null}
+                @input=${(event: InputEvent) => {
+                  this.onDraftChange?.((event.currentTarget as HTMLInputElement).value);
+                }}
+              />
+            </label>
+          </div>
+          <div class="agent-chat__composer-footer">
+            <div class="agent-chat__composer-trail">
+              <div class="agent-chat__composer-actions">
+                <button
+                  class="chat-send-btn"
+                  type="submit"
+                  aria-label=${t("chat.rail.askSubmit")}
+                  ?disabled=${!this.connected ||
+                  this.companion.pendingQuestion !== null ||
+                  !this.companion.draft.trim()}
+                >
+                  ${icons.arrowUp}
+                </button>
+              </div>
+            </div>
+          </div>
         </form>
       </section>
     `;
