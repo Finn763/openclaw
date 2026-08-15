@@ -283,4 +283,14 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).not.toContain("killed the tsgo process tree");
   }, 30_000);
+
+  it("saturates an override past Node's timer ceiling instead of arming a 1ms watchdog", () => {
+    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
+    writeFakeTsgo(cwd, "#!/bin/sh\nsleep 1\nexit 0\n");
+
+    const result = runFakeTsgo(cwd, "2147483648");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("killed the tsgo process tree");
+  }, 30_000);
 });
