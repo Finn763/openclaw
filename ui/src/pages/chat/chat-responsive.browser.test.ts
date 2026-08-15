@@ -1894,7 +1894,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       const composerInset = width <= 768 ? 4 : 8;
       // The editor's horizontal inset belongs to its row, not to the control,
       // so the text keeps one origin while the surface changes shape.
-      const textareaBlockInset = width <= 768 ? 10 : 4;
+      const textareaBlockInset = width <= 768 ? 10 : 6;
       expect(geometry.textarea?.paddingTop).toBe(textareaBlockInset);
       expect(geometry.textarea?.paddingRight).toBe(0);
       expect(geometry.textarea?.paddingBottom).toBe(textareaBlockInset);

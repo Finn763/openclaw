@@ -2436,6 +2436,13 @@ button.chat-pr__diff {
   --chat-composer-chip-padding-inline: 8px;
   --chat-composer-chip-text: 13px;
   --chat-composer-chip-icon: 14px;
+  /* Breathing room between the draft and the surface it sits in. Small on
+     purpose — it exists so the text never touches the frame, not to pad the
+     composer out — and owned here so the editor's inset is one decision for
+     every composer that uses this surface. The resting stature is unaffected:
+     the surface's own floor is taller than the editor plus these insets. */
+  --chat-composer-editor-inset-inline: 14px;
+  --chat-composer-editor-inset-block: 6px;
   /* The editor is a reading and writing surface, not a compact form field, so it
      owns a 16px base instead of the shared control token, whose 14px base only
      reaches 16px through an iOS zoom floor — text that size by accident does not
@@ -2634,7 +2641,9 @@ button.chat-pr__diff {
      past this the surface stops moving and the draft scrolls inside it. */
   max-height: 25dvh;
   resize: none;
-  padding-block: 4px;
+  padding-block: var(--chat-composer-editor-inset-block);
+  /* The horizontal inset belongs to the row, so the text keeps one origin while
+     the surface changes shape; the control adds none of its own. */
   padding-inline: 0;
   border: none;
   background: transparent;
@@ -2695,9 +2704,9 @@ button.chat-pr__diff {
 }
 
 /* Model and reasoning live in their own row inside this group, which carries a
-   tighter gap of its own elsewhere in the app. Inside the composer that made the
-   pair sit closer to each other than to the session-mode chip beside them, which
-   read as two components rather than three peers. */
+   tighter gap of its own elsewhere in the app. Inside the composer the pair is
+   bound by its separator instead, so the pair keeps the family rhythm while the
+   mark between them is what makes it read as one phrase. */
 .agent-chat__composer-controls .chat-controls__model-settings {
   gap: var(--chat-composer-chip-gap);
 }
@@ -2762,7 +2771,7 @@ button.chat-pr__diff {
   align-items: flex-end;
   gap: 4px;
   min-width: 0;
-  padding: 4px 12px 0;
+  padding: var(--chat-composer-editor-inset-block) var(--chat-composer-editor-inset-inline) 0;
 }
 
 .agent-chat__disabled-reason {
@@ -4058,6 +4067,10 @@ button.chat-pr__diff {
     --chat-composer-chip-height: 44px;
     --chat-composer-chip-gap: 4px;
     --chat-composer-chip-padding-inline: 4px;
+    /* Narrow viewports spend their width on the draft, so the editor keeps the
+       tighter side inset here; the block inset stays, because that is the one
+       that keeps text off the frame rather than off the screen edge. */
+    --chat-composer-editor-inset-inline: 12px;
   }
 
   .agent-chat__composer-input-row {
