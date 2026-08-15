@@ -54,6 +54,25 @@ type MicrophonePickerProps = {
   onSelect: (deviceId: string) => void;
 };
 
+/**
+ * Drops focus from the device picker's trigger once a device has been chosen.
+ * The dropdown restores focus there on close, which is right for a normal
+ * trigger and wrong for this one: it is revealed by hover, so a focused trigger
+ * keeps the microphone expanded after the pointer has moved on. Deferred to the
+ * next task because the dropdown restores focus as part of closing.
+ */
+function releaseMicrophonePickerFocus(dropdown: EventTarget | null): void {
+  if (!(dropdown instanceof HTMLElement)) {
+    return;
+  }
+  queueMicrotask(() => {
+    const trigger = dropdown.querySelector<HTMLElement>(".chat-talk-input-picker__trigger");
+    if (trigger && document.activeElement === trigger) {
+      trigger.blur();
+    }
+  });
+}
+
 export function renderMicrophonePicker(props: MicrophonePickerProps) {
   // Discovery reporting an issue with nothing enumerated is the browser stating
   // there is no capture route at all: a "System default" row would claim a
@@ -81,8 +100,14 @@ export function renderMicrophonePicker(props: MicrophonePickerProps) {
       .open=${props.open}
       @wa-show=${props.onOpen}
       @wa-hide=${props.onClose}
-      @wa-select=${(event: CustomEvent<{ item: { value?: string } }>) =>
-        props.onSelect(event.detail.item.value ?? "")}
+      @wa-select=${(event: CustomEvent<{ item: { value?: string } }>) => {
+        props.onSelect(event.detail.item.value ?? "");
+        // The dropdown hands focus back to its trigger on close, but this trigger
+        // only exists while the control is hovered or keyboard-focused. Left
+        // focused it holds the microphone open with the pointer nowhere near it,
+        // so the choice is made and the control returns to rest.
+        releaseMicrophonePickerFocus(event.currentTarget);
+      }}
     >
       <button
         slot="trigger"

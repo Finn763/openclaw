@@ -3664,7 +3664,7 @@ button.chat-pr__diff {
 }
 
 .agent-chat__input .chat-talk-control:hover:not(:has(.chat-send-btn:disabled)),
-.agent-chat__input .chat-talk-control:focus-within {
+.agent-chat__input .chat-talk-control:has(:focus-visible) {
   background: var(--chat-composer-hover);
 }
 
@@ -3774,13 +3774,18 @@ button.chat-pr__diff {
     color var(--duration-fast) ease;
 }
 
-/* Hover reveals it for pointers, focus-within for keyboards, and [open] holds it
-   while its own menu is up — losing the trigger mid-interaction would leave the
-   menu anchored to nothing. Collapsed it keeps zero width instead of
+/* Hover reveals it for pointers, keyboard focus for everyone else, and [open]
+   holds it while its own menu is up — losing the trigger mid-interaction would
+   leave the menu anchored to nothing. Collapsed it keeps zero width instead of
    `display: none`, so it stays in the tab order's natural place; `pointer-events`
-   is what stops the zero-width strip from swallowing clicks meant for the mic. */
+   is what stops the zero-width strip from swallowing clicks meant for the mic.
+   Keyed to :focus-visible rather than :focus-within on purpose. Closing the menu
+   returns focus to this trigger, so a plain :focus-within reveal outlived the
+   interaction that opened it: after picking a device with the mouse the control
+   stayed expanded with the pointer nowhere near it. :focus-visible ignores that
+   restored pointer focus while still holding the reveal for a keyboard user. */
 .chat-talk-control:hover .chat-talk-input-picker__trigger,
-.chat-talk-control:focus-within .chat-talk-input-picker__trigger,
+.chat-talk-control:has(:focus-visible) .chat-talk-input-picker__trigger,
 .chat-talk-input-picker[open] .chat-talk-input-picker__trigger {
   /* Wide enough to seat its glyph the way the microphone seats its own: at 16 the
      chevron ended up a couple of pixels off the pill's leading edge while the mic
