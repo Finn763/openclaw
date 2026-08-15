@@ -198,18 +198,19 @@ suite.define(() => {
       await expect.poll(() => takePhoto.isVisible()).toBe(true);
       // The plus becomes a close mark while its menu is up: one glyph rotating,
       // so the button that opened the menu visibly is the one that dismisses it.
-      const attachGlyphTransform = () =>
-        attach.evaluate((element) =>
-          getComputedStyle(element.querySelector("svg") as SVGElement).transform.replaceAll(
-            " ",
-            "",
-          ),
-        );
-      await expect
-        .poll(attachGlyphTransform)
-        .toBe("matrix(0.707107,0.707107,-0.707107,0.707107,0,0)");
+      // A CSS rotation matrix is [cos, sin, -sin, cos], so the sine term carries
+      // the direction: negative is counter-clockwise, turning back against the
+      // upward travel of the menu rather than with it.
+      const attachGlyphSine = () =>
+        attach.evaluate((element) => {
+          const { transform } = getComputedStyle(element.querySelector("svg") as SVGElement);
+          return transform === "none"
+            ? 0
+            : Number(transform.slice(transform.indexOf("(") + 1).split(",")[1]);
+        });
+      await expect.poll(attachGlyphSine).toBeCloseTo(-Math.SQRT1_2, 3);
       await page.keyboard.press("Escape");
-      await expect.poll(attachGlyphTransform).toBe("none");
+      await expect.poll(attachGlyphSine).toBe(0);
       await incognito.click();
       await expect.poll(() => incognito.getAttribute("aria-checked")).toBe("true");
     });

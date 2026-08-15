@@ -2914,14 +2914,16 @@ button.chat-pr__diff {
    dropdown host, so every route out of the menu — reselect, outside click,
    Escape, item choice — unwinds it without any of them knowing about the icon.
    Both composers render this trigger through the same host, so one rule covers
-   the transcript and the new-session page. */
+   the transcript and the new-session page.
+   Counter-clockwise: the menu opens upward off this button, so the glyph turns
+   back against that travel and unwinds forward into it on close. */
 .agent-chat__attach-menu .agent-chat__input-btn--attach svg {
   transform-origin: center;
   transition: transform 165ms ease;
 }
 
 .agent-chat__attach-menu[open] .agent-chat__input-btn--attach svg {
-  transform: rotate(45deg);
+  transform: rotate(-45deg);
 }
 
 @media (prefers-reduced-motion: reduce) {
