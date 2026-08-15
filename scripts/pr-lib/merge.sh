@@ -484,7 +484,8 @@ merge_run() {
         elif [ "$existing_auto_method" = "SQUASH" ]; then
           echo "AUTO-MERGE ENABLED for PR #$pr at $PREP_HEAD_SHA."
           echo "GitHub will land it via squash when required checks and branch up-to-dateness are satisfied."
-          return 0
+          merge_submitted=true
+          merge_label="squash auto-merge"
         else
           echo "GitHub accepted the auto-merge command but did not report a squash auto-merge request."
           print_relevant_log_excerpt .local/merge-output.log
