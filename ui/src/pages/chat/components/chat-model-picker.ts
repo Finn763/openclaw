@@ -2,7 +2,11 @@ import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { icons } from "../../../components/icons.ts";
 import "../../../components/tooltip.ts";
-import { providerDisplayLabel } from "../../../components/provider-icon.ts";
+import {
+  hasProviderBrandIcon,
+  providerDisplayLabel,
+  renderProviderBrandIcon,
+} from "../../../components/provider-icon.ts";
 import { t } from "../../../i18n/index.ts";
 import {
   renderChatModelPickerOption,
@@ -300,6 +304,23 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
   ]
     .filter(Boolean)
     .join(" · ");
+  const triggerMeta = activeModelOption?.contextWindow
+    ? formatContextTokenCapacity(activeModelOption.contextWindow)
+    : "";
+  // Brand mark ahead of the model name, and only when one actually ships:
+  // hasProviderBrandIcon gates out the lettered fallback badge, so a provider
+  // without a mark renders nothing rather than a placeholder — the trigger's gap
+  // sits between boxes that exist, so nothing reserves space either. A status
+  // label replaces the model name outright, and a provider mark next to
+  // "Loading..." would claim an identity the trigger is not showing.
+  const triggerProviderIcon =
+    !params.triggerStatusLabel &&
+    activeModelOption &&
+    hasProviderBrandIcon(activeModelOption.provider)
+      ? renderProviderBrandIcon(activeModelOption.provider, {
+          className: "chat-controls__trigger-provider-icon",
+        })
+      : nothing;
   const providerGroups = new Map<string, ChatModelPickerOption[]>();
   for (const option of params.modelOptions) {
     const existing = providerGroups.get(option.provider);
@@ -415,6 +436,7 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
               </openclaw-tooltip>
             `
           : nothing}
+        ${triggerProviderIcon}
         <span class="chat-controls__inline-select-label">
           ${params.triggerStatusLabel ?? params.triggerModelLabel}
         </span>

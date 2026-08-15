@@ -5001,6 +5001,15 @@ button.chat-pr__diff {
   font-size: 9px;
 }
 
+/* The trigger's own brand mark is smaller than the 18px menu rows: it is an icon
+   inside a chip, so it takes the chip family's icon box and inherits the same
+   icon-to-label gap the session-mode chip uses. */
+.chat-controls__trigger-provider-icon {
+  width: var(--chat-composer-chip-icon, 14px);
+  height: var(--chat-composer-chip-icon, 14px);
+  flex: 0 0 var(--chat-composer-chip-icon, 14px);
+}
+
 .chat-controls__target-icon svg {
   width: 100%;
   height: 100%;
