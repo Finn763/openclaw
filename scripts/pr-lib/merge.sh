@@ -396,11 +396,21 @@ merge_run() {
 
     MERGE_ERR_MSG=$(cat .local/merge-output.log)
     if is_author_email_merge_error "$MERGE_ERR_MSG" && [ "${#reviewer_email_candidates[@]}" -ge 2 ]; then
+      local primary_merge_author_email="$selected_merge_author_email"
+      local primary_merge_error="$MERGE_ERR_MSG"
       selected_merge_author_email="${reviewer_email_candidates[1]}"
       echo "Retrying merge once with fallback author email: $selected_merge_author_email"
       if invoke_attributed_merge "$mode" "$selected_merge_author_email"; then
         return 0
       fi
+      local fallback_merge_error
+      fallback_merge_error=$(cat .local/merge-output.log)
+      {
+        printf 'Primary author-email attempt (%s):\n%s\n\n' \
+          "$primary_merge_author_email" "$primary_merge_error"
+        printf 'Fallback author-email attempt (%s):\n%s\n' \
+          "$selected_merge_author_email" "$fallback_merge_error"
+      } >.local/merge-output.log
       MERGE_ERR_MSG=$(cat .local/merge-output.log)
     fi
     return 1

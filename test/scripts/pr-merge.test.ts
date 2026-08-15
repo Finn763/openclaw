@@ -219,7 +219,7 @@ gh_route() {
         attempts=$((attempts + 1))
         printf '%s\n' "$attempts" > "$OPENCLAW_TEST_MERGE_ATTEMPTS"
         if [ "$attempts" -le "$OPENCLAW_TEST_AUTHOR_EMAIL_FAILURES" ]; then
-          echo 'GraphQL: author email is not associated with your account' >&2
+          echo "GraphQL: author email attempt $attempts is not associated with your account" >&2
           return 1
         fi
       fi
@@ -454,6 +454,21 @@ describePosix("scripts/pr merge-run", () => {
       "Retrying merge once with fallback author email: reviewer-fallback@example.com",
     );
     expect(result.stdout).toContain("merge author email: reviewer-fallback@example.com");
+  });
+
+  it("reports both author-email failures when the fallback also fails", () => {
+    const result = runMerge({ authorEmailFailures: 2, mergeStateStatus: "CLEAN" });
+
+    expect(result.status).toBe(1);
+    expect(result.mergeAttempts).toBe(2);
+    expect(result.stdout).toContain(
+      "Primary author-email attempt (reviewer@example.com):",
+    );
+    expect(result.stdout).toContain("author email attempt 1 is not associated");
+    expect(result.stdout).toContain(
+      "Fallback author-email attempt (reviewer-fallback@example.com):",
+    );
+    expect(result.stdout).toContain("author email attempt 2 is not associated");
   });
 
   it("omits a contributor trailer for a bot author", () => {
