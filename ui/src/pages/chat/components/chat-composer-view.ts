@@ -217,6 +217,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
       ${showComposerInput
         ? html`<div
             class="agent-chat__input ${props.offline ? "agent-chat__input--offline" : ""}"
+            data-composer-layout="multiline"
             @click=${(event: MouseEvent) => focusComposerFromChrome(event, canCompose)}
             @pointerdown=${(event: PointerEvent) => focusComposerFromChrome(event, canCompose)}
             ${ref(state.composerInputRef ?? undefined)}
@@ -224,10 +225,10 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
             ${slashMenuVisible ? renderSlashMenu(requestUpdate, props, visibleDraft) : nothing}
             ${skillMenuVisible ? renderSkillMenu(requestUpdate, props) : nothing}
             <!-- Everything that stacks above the editor lives in one flow region so
-                 the layout owner can ask a single question — "is anything docked
-                 above the text?" — instead of re-deriving that from every optional
-                 block. A non-zero height here pins the composer to multiline, which
-                 is why the absolutely positioned menus above stay outside it. -->
+                 attachments, replies and status all inset and wrap the same way
+                 instead of each optional block carrying its own placement. The
+                 absolutely positioned menus above stay outside it: they float over
+                 the surface rather than adding a row to it. -->
             <div class="agent-chat__composer-lede">
               ${props.offline
                 ? html`<div class="agent-chat__offline-hint" role="status" aria-live="polite">

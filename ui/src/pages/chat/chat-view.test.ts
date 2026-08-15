@@ -3240,9 +3240,6 @@ describe("chat composer sizing", () => {
       clientHeight: { configurable: true, get: () => clientHeight },
     });
 
-    // Measured growth is the multiline contract; an empty draft is the compact
-    // shape, whose height CSS owns outright.
-    textarea.value = "A draft";
     textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
 
     expect(textarea.style.height).toBe("42px");
@@ -3303,7 +3300,6 @@ describe("chat composer sizing", () => {
       scrollHeight: { configurable: true, get: () => scrollHeight },
       clientHeight: { configurable: true, get: () => clientHeight },
     });
-    textarea.value = "A draft";
     textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
     expect(textarea.style.height).toBe("42px");
     expect(textarea.style.overflowY).toBe("hidden");

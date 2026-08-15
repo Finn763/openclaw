@@ -453,7 +453,7 @@ function chatHtml(opts: ChatFixtureOptions = {}, mobileNavLayout = false) {
                   : ""
               }
               <div class="agent-chat__composer-shell">
-                <div class="agent-chat__input">
+                <div class="agent-chat__input" data-composer-layout="multiline">
                   ${
                     opts.slashMenu
                       ? `<div class="slash-menu" role="listbox" aria-label="Command suggestions">
@@ -1902,8 +1902,23 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       const footerInset = width <= 768 ? composerInset : 8;
       expect(geometry.footer?.paddingLeft).toBe(footerInset);
       expect(geometry.footer?.paddingRight).toBe(footerInset);
-      expect(geometry.footer?.paddingTop).toBe(width <= 768 ? composerInset / 2 : 8);
-      expect(geometry.footer?.paddingBottom).toBe(width <= 768 ? composerInset / 2 : 8);
+      // The action row's distance from the bottom edge is a margin, not padding:
+      // the row is pushed down by `margin-top: auto`, so its own bottom inset has
+      // to be outside the box or the auto margin would swallow it.
+      expect(geometry.footer?.paddingTop).toBe(width <= 768 ? composerInset / 2 : 0);
+      expect(geometry.footer?.paddingBottom).toBe(0);
+
+      // The resting shape is two stacked regions, not one line that may grow
+      // into two: a draft that fits on a single line still leaves the surface at
+      // its multiline floor, with the whole action row below the editor.
+      const [surface, editor, actionRow] = await Promise.all([
+        getRect(page, ".agent-chat__input"),
+        getRect(page, ".agent-chat__composer-combobox > textarea"),
+        getRect(page, ".agent-chat__composer-footer"),
+      ]);
+      expect(surface.height).toBeGreaterThanOrEqual(98);
+      expect(actionRow.top).toBeGreaterThanOrEqual(editor.bottom - 1);
+      expect(surface.bottom - actionRow.bottom).toBeGreaterThanOrEqual(composerInset / 2);
     } finally {
       await closeBrowserPage(page);
     }

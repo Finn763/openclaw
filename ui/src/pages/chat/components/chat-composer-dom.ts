@@ -125,109 +125,12 @@ function updateTextareaOverflow(el: HTMLTextAreaElement) {
   el.style.overflowY = el.scrollHeight > el.clientHeight ? "auto" : "hidden";
 }
 
-// Slack the one-line budget keeps in hand. It covers the surface padding and the
-// gaps between the footer groups — deliberately not read from CSS, so the layout
-// owner needs no copy of the stylesheet's geometry — plus enough room that the
-// caret never sits flush against the first control.
-const COMPOSER_SINGLE_LINE_RESERVE_PX = 32;
-// Collapsing back to one line must not chase the character that caused the last
-// expansion, so the wider layout is held briefly. Expansion is never delayed:
-// text that no longer fits has to wrap in the same frame it stops fitting.
-const COMPOSER_LAYOUT_COLLAPSE_LOCK_MS = 150;
-
-const composerLayoutCollapseLocks = new WeakMap<HTMLElement, number>();
-
-let composerTextMetricsContext: CanvasRenderingContext2D | null | undefined;
-
-function measureComposerTextWidth(el: HTMLTextAreaElement, text: string): number | null {
-  composerTextMetricsContext ??= document.createElement("canvas").getContext("2d");
-  if (!composerTextMetricsContext) {
-    return null;
-  }
-  const style = getComputedStyle(el);
-  composerTextMetricsContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  return composerTextMetricsContext.measureText(text).width;
-}
-
-// Distance from the first to the last laid-out child, so a group stretched by a
-// grid fr track still reports what it actually occupies rather than its column.
-function composerGroupContentWidth(group: Element | null): number {
-  if (!(group instanceof HTMLElement)) {
-    return 0;
-  }
-  const laidOut = [...group.children].filter(
-    (child): child is HTMLElement => child instanceof HTMLElement && child.offsetWidth > 0,
-  );
-  const first = laidOut[0];
-  const last = laidOut.at(-1);
-  if (!first || !last) {
-    return 0;
-  }
-  return last.getBoundingClientRect().right - first.getBoundingClientRect().left;
-}
-
-function composerFitsOneLine(
-  surface: HTMLElement,
-  lede: HTMLElement,
-  el: HTMLTextAreaElement,
-): boolean {
-  const draft = el.value;
-  if (draft.includes("\n")) {
-    return false;
-  }
-  // Anything docked above the editor — attachments, reply preview, dictation,
-  // camera, run status — owns the vertical layout outright.
-  if (lede.offsetHeight > 0) {
-    return false;
-  }
-  // An empty composer still has to earn the compact shape: on a narrow viewport
-  // the footer groups alone can leave no room for a caret, and collapsing there
-  // would squeeze the editor to nothing.
-  const textWidth = draft === "" ? 0 : measureComposerTextWidth(el, draft);
-  if (textWidth === null) {
-    return false;
-  }
-  const budget =
-    surface.clientWidth -
-    composerGroupContentWidth(surface.querySelector(".agent-chat__composer-lead")) -
-    composerGroupContentWidth(surface.querySelector(".agent-chat__composer-mid")) -
-    composerGroupContentWidth(surface.querySelector(".agent-chat__composer-trail"));
-  return textWidth + COMPOSER_SINGLE_LINE_RESERVE_PX <= budget;
-}
-
-/**
- * Records which shape the composer is in. The surface is the single owner of
- * that fact: CSS reads the attribute for every height, radius and flow rule, so
- * nothing downstream has to re-derive "is this composer one line or many".
- */
-export function updateComposerLayout(el: HTMLTextAreaElement): "single-line" | "multiline" {
-  const surface = el.closest<HTMLElement>(".agent-chat__input");
-  const lede = surface?.querySelector<HTMLElement>(".agent-chat__composer-lede");
-  // A surface with no lede region has not declared what can dock above its
-  // editor, so the first question this function asks — "is anything stacked on
-  // top of the text?" — has no answer there. Those composers keep the plain
-  // measured growth instead of being collapsed on a guess.
-  if (!surface || !lede) {
-    return "multiline";
-  }
-  const current = surface.dataset.composerLayout === "single-line" ? "single-line" : "multiline";
-  const next = composerFitsOneLine(surface, lede, el) ? "single-line" : "multiline";
-  if (next === current) {
-    return current;
-  }
-  const now = performance.now();
-  if (next === "single-line" && now < (composerLayoutCollapseLocks.get(surface) ?? 0)) {
-    return current;
-  }
-  composerLayoutCollapseLocks.set(surface, now + COMPOSER_LAYOUT_COLLAPSE_LOCK_MS);
-  surface.dataset.composerLayout = next;
-  return next;
-}
-
 export function adjustTextareaHeight(el: HTMLTextAreaElement) {
-  if (updateComposerLayout(el) === "single-line") {
-    // The single-line shape is a fixed CSS box; leaving an inline height behind
-    // would keep the surface at whatever the multiline pass last measured.
+  // A surface that declares the compact shape is a fixed CSS box: it holds one
+  // line whatever the draft is, so an inline height left by an earlier measured
+  // pass would silently outrank the stylesheet. Which shape a composer is in is
+  // declared in its markup, never inferred here from how much text it holds.
+  if (el.closest('[data-composer-layout="single-line"]')) {
     el.style.height = "";
     el.style.overflowY = "";
     return;

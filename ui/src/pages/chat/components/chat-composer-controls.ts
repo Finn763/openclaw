@@ -161,7 +161,12 @@ function renderComposerVoiceButton(props: ChatRunControlsProps) {
   // or replacing the button releases capture and cancels the active hold.
   return html`
     <span class="chat-talk-control">
+<<<<<<< HEAD
       <openclaw-tooltip .content=${tooltip}>
+=======
+      ${holding ? nothing : props.microphonePicker}
+      <openclaw-tooltip .content=${label}>
+>>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
         <button
           class=${active
             ? `chat-send-btn chat-send-btn--dictating${finalizing ? " chat-send-btn--dictation-finalizing" : ""}`
@@ -191,7 +196,6 @@ function renderComposerVoiceButton(props: ChatRunControlsProps) {
                 `}
         </button>
       </openclaw-tooltip>
-      ${holding ? nothing : props.microphonePicker}
     </span>
   `;
 }
@@ -246,6 +250,7 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
   // duplicate announcement.
   const voiceErrored = props.voiceStatus === "error";
   const voiceButton = renderComposerVoiceButton(props);
+<<<<<<< HEAD
   const sendAction = html`
     <openclaw-tooltip .content=${activeRunActionTooltip}>
       <button
@@ -290,10 +295,52 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
       </button>
     </openclaw-tooltip>
   `;
+=======
+  // Dictation and Talk are one affordance to the operator — a microphone — so
+  // the control shows whenever either route exists, and it always sits ahead of
+  // the primary action rather than standing in for it.
+  const voiceControl = props.dictation || props.onToggleVoice ? voiceButton : nothing;
+  // Send holds the trailing edge whatever the draft is. An empty draft disables
+  // it instead of removing it: a primary action that vanishes reads as a broken
+  // composer, and it takes with it the one place the surface says how a turn is
+  // committed. Only an abortable run replaces it, with stop.
+  const renderSendAction = (tooltip: string, description: string, label: string) => html`
+    <openclaw-tooltip .content=${tooltip}>
+      <button
+        class="chat-send-btn"
+        @pointerdown=${props.onPrimaryActionPointerDown}
+        @click=${storeDraftAndSend}
+        ?disabled=${!props.canSend || props.sending || !hasComposedContent}
+        aria-label=${description}
+      >
+        ${icons.arrowUp}
+        <span class="agent-chat__control-label">${label}</span>
+      </button>
+    </openclaw-tooltip>
+  `;
+  const sendAction = renderSendAction(
+    props.suggestionComposer
+      ? t("chat.sessionSuggestions.suggestMessage")
+      : props.isBusy
+        ? t("chat.runControls.queue")
+        : t("chat.runControls.send"),
+    props.suggestionComposer
+      ? t("chat.sessionSuggestions.suggestMessage")
+      : props.isBusy
+        ? t("chat.runControls.queueMessage")
+        : t("chat.runControls.sendMessage"),
+    props.suggestionComposer
+      ? t("chat.sessionSuggestions.suggest")
+      : props.isBusy
+        ? t("chat.runControls.queue")
+        : t("chat.runControls.send"),
+  );
+>>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
   return html`
     ${props.voiceActive && props.onToggleVoice
       ? html`
           <span class="chat-talk-control chat-talk-control--active">
+            ${props.microphonePicker}
             <openclaw-tooltip .content=${t("chat.composer.stopVoiceInput")}>
               <button
                 class="chat-send-btn chat-send-btn--voice-live${voiceErrored
@@ -311,7 +358,6 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
                 <span class="chat-send-btn__voice-stop-glyph">${icons.stop}</span>
               </button>
             </openclaw-tooltip>
-            ${props.microphonePicker}
           </span>
           ${voiceErrored
             ? nothing
@@ -355,6 +401,7 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
           ${abortAction}
         `
       : html`
+<<<<<<< HEAD
           ${props.dictation || props.onToggleVoice ? voiceButton : nothing}
           ${props.dictation?.active
             ? nothing
@@ -363,6 +410,21 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
               : props.canAbort
                 ? stopAction
                 : idleAction}
+=======
+          ${voiceControl}
+          ${props.canAbort
+            ? html`
+                ${hasComposedContent
+                  ? renderSendAction(
+                      activeRunActionLabel,
+                      activeRunActionDescription,
+                      activeRunActionLabel,
+                    )
+                  : nothing}
+                ${abortAction}
+              `
+            : sendAction}
+>>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
         `}
   `;
 }

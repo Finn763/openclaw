@@ -61,7 +61,7 @@ suite.define(() => {
     });
   });
 
-  it("keeps the model in the bottom bar, session settings in the header, and switches the primary action with input state", async () => {
+  it("keeps the model in the bottom bar, session settings in the header, and holds send beside the microphone in every input state", async () => {
     await suite.withPage({ viewport: { width: 1920, height: 1080 } }, async ({ page }) => {
       const gateway = await installMockGateway(page, {
         assistantName: "Rosita",
@@ -184,16 +184,26 @@ suite.define(() => {
       await expect
         .poll(() => page.getByRole("button", { name: "Start video talk" }).count())
         .toBe(0);
+      // The editor's row holds nothing but the text: attachments open from the
+      // leading end of the action row and voice sits with the primary action at
+      // its trailing end, so the whole bottom row is one band of controls.
       await expect
-        .poll(() =>
-          attach.evaluate((node) => node.closest(".agent-chat__composer-input-row") != null),
-        )
+        .poll(() => attach.evaluate((node) => node.closest(".agent-chat__composer-lead") != null))
         .toBe(true);
       await expect
-        .poll(() =>
-          voice.evaluate((node) => node.closest(".agent-chat__composer-input-row") != null),
-        )
+        .poll(() => voice.evaluate((node) => node.closest(".agent-chat__composer-trail") != null))
         .toBe(true);
+      // The device chevron is hidden at rest and grows out of the microphone's
+      // leading edge on approach, so the resting action row shows one circular
+      // mic and nothing beside it. It must claim no width while collapsed, or it
+      // would hold an empty gap in the row it is supposed to stay out of.
+      const pickerWidth = () =>
+        microphonePicker.evaluate((node) => node.getBoundingClientRect().width);
+      await expect.poll(pickerWidth).toBe(0);
+      await voice.hover();
+      await expect.poll(pickerWidth).toBeGreaterThanOrEqual(12);
+      await page.mouse.move(0, 0);
+      await expect.poll(pickerWidth).toBe(0);
       await expect
         .poll(() => model.evaluate((node) => node.closest(".agent-chat__composer-footer") != null))
         .toBe(true);
@@ -488,8 +498,26 @@ suite.define(() => {
       await expect
         .poll(() => page.getByRole("button", { name: "Start voice input" }).isVisible())
         .toBe(true);
+<<<<<<< HEAD
       await expect.poll(() => emptySend.isVisible()).toBe(true);
       await expect.poll(() => emptySend.isDisabled()).toBe(true);
+=======
+      // Send holds its place with nothing to send: it goes unavailable rather
+      // than disappearing, so the composer never looks like it lost the control
+      // that commits a turn.
+      const send = page.getByRole("button", { name: "Send message" });
+      await expect.poll(() => send.isVisible()).toBe(true);
+      await expect.poll(() => send.isDisabled()).toBe(true);
+      await expect
+        .poll(async () => {
+          const [voiceRect, sendRect] = await Promise.all([
+            voice.boundingBox(),
+            send.boundingBox(),
+          ]);
+          return voiceRect && sendRect ? sendRect.x - (voiceRect.x + voiceRect.width) : null;
+        })
+        .toBeGreaterThanOrEqual(-1);
+>>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
 
       await page.setViewportSize({ width: 393, height: 852 });
       await expect.poll(() => camera.count()).toBe(0);
@@ -587,10 +615,111 @@ suite.define(() => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await gateway.setOnline(false);
       await expect.poll(() => voice.isDisabled()).toBe(true);
+<<<<<<< HEAD
       await page.mouse.move(0, 0);
       await expect.poll(() => page.locator("wa-tooltip[open]").count()).toBe(0);
       await expect
         .poll(() => microphonePickerShell.evaluate((node) => node.getBoundingClientRect().width))
+=======
+      // The device chevron is a modifier on the microphone, not a second half of
+      // a split pill: it carries no ground of its own in any state, so an
+      // unavailable microphone cannot leave a tinted segment stranded beside it.
+      await expect
+        .poll(() => microphonePicker.evaluate((node) => getComputedStyle(node).backgroundColor))
+        .toBe("rgba(0, 0, 0, 0)");
+      await expect
+        .poll(() => microphonePicker.evaluate((node) => getComputedStyle(node).borderLeftWidth))
+        .toBe("0px");
+      const artifactDir = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
+      if (artifactDir) {
+        await composerShell.screenshot({
+          animations: "disabled",
+          path: `${artifactDir}/voice-picker-disabled-background.png`,
+        });
+      }
+    });
+  });
+
+  it("refreshes the configured usable catalog after advertised chat metadata", async () => {
+    await suite.withPage({ viewport: { width: 1280, height: 900 } }, async ({ page }) => {
+      const gateway = await installMockGateway(page, {
+        agentModel: "openai/gpt-5.3-codex-spark",
+        models: [
+          { id: "gpt-5.5", name: "GPT-5.5", provider: "openai", available: true },
+          {
+            id: "gpt-5.3-codex-spark",
+            name: "GPT-5.3 Codex Spark",
+            provider: "codex",
+            available: false,
+          },
+        ],
+        methodResponses: {
+          "chat.startup": {
+            agentsList: {
+              agents: [{ id: "main", name: "OpenClaw" }],
+              defaultId: "main",
+              mainKey: "main",
+              scope: "agent",
+            },
+            messages: [],
+            sessionId: "control-ui-e2e-session",
+            thinkingLevel: null,
+          },
+          "chat.metadata": {
+            commands: [],
+            models: [
+              { id: "gpt-5.5", name: "GPT-5.5", provider: "openai", available: true },
+              {
+                id: "gpt-5.3-codex-spark",
+                name: "GPT-5.3 Codex Spark",
+                provider: "codex",
+                available: false,
+              },
+            ],
+          },
+          "sessions.list": {
+            count: 1,
+            defaults: {
+              contextTokens: 200_000,
+              model: "gpt-5.3-codex-spark",
+              modelProvider: "openai",
+            },
+            path: "",
+            sessions: [
+              {
+                contextTokens: 200_000,
+                displayName: "Main",
+                hasActiveRun: false,
+                key: "main",
+                kind: "direct",
+                label: "Main",
+                model: "gpt-5.5",
+                modelProvider: "openai",
+                status: "done",
+                totalTokens: 0,
+                updatedAt: Date.now(),
+              },
+            ],
+            ts: Date.now(),
+          },
+        },
+      });
+
+      await page.goto(`${suite.server.baseUrl}chat`);
+      await gateway.waitForRequest("chat.metadata");
+      expect(await gateway.getRequests("models.list")).toHaveLength(0);
+
+      const composer = page.locator(".agent-chat__input");
+      const providers = composer.locator("[data-chat-model-provider]");
+      await expect
+        .poll(async () => (await providers.allTextContents()).map((label) => label.trim()))
+        .toEqual(["OpenAI"]);
+      await expect
+        .poll(() => composer.locator('[data-chat-model-provider-group="openai"]').textContent())
+        .toContain("GPT-5.5");
+      await expect
+        .poll(() => composer.locator('[data-chat-model-provider-group="codex"]').count())
+>>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
         .toBe(0);
       await expect.poll(() => voice.evaluate((node) => getComputedStyle(node).opacity)).toBe("0.4");
 
