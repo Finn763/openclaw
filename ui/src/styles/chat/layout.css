@@ -2768,8 +2768,10 @@ button.chat-pr__diff {
   align-items: center;
   flex: 0 0 auto;
   margin-inline: -3px;
-  color: var(--chat-composer-tertiary, var(--muted));
-  font-size: var(--chat-composer-chip-text, 13px);
+  color: var(--muted);
+  /* A step above the chip text: the middle dot is a small mark inside its own em
+     box, so at the label's size it reads as a speck rather than a separator. */
+  font-size: calc(var(--chat-composer-chip-text, 13px) + 1px);
   line-height: 1;
   pointer-events: none;
   user-select: none;
