@@ -3782,10 +3782,14 @@ button.chat-pr__diff {
 .chat-talk-control:hover .chat-talk-input-picker__trigger,
 .chat-talk-control:focus-within .chat-talk-input-picker__trigger,
 .chat-talk-input-picker[open] .chat-talk-input-picker__trigger {
-  /* Width alone, deliberately: a min-width here would be the used width from the
+  /* Wide enough to seat its glyph the way the microphone seats its own: at 16 the
+     chevron ended up a couple of pixels off the pill's leading edge while the mic
+     kept six on the other side, so the expanded control looked pushed against its
+     own frame.
+     Width alone, deliberately: a min-width here would be the used width from the
      first frame and the box would snap to full size while the transition was
      still running, which is the jump this reveal is meant not to have. */
-  width: 16px;
+  width: 22px;
   opacity: 1;
   transform: translateX(0);
   transition-delay: 0ms, 0ms, 70ms, 0ms;
