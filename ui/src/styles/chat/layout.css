@@ -2425,6 +2425,17 @@ button.chat-pr__diff {
   /* Footer control box. Smaller than the editor's own line box on purpose: the
      controls read as chrome beside the text, not as peers of it. */
   --chat-composer-control-size: 28px;
+  /* The labelled chips in the action row — model, reasoning, session mode — are
+     one control family, so their box, type and rhythm live here instead of each
+     chip restating its own. They are peers describing the next turn, and a
+     reader should not be able to tell which feature shipped which one. Consumers
+     outside the composer keep the same values as fallbacks; the mobile block
+     raises the whole family to touch size by rewriting these four. */
+  --chat-composer-chip-height: 30px;
+  --chat-composer-chip-gap: 6px;
+  --chat-composer-chip-padding-inline: 8px;
+  --chat-composer-chip-text: 13px;
+  --chat-composer-chip-icon: 14px;
   /* The editor is a reading and writing surface, not a compact form field, so it
      owns a 16px base instead of the shared control token, whose 14px base only
      reaches 16px through an iOS zoom floor — text that size by accident does not
@@ -2679,8 +2690,16 @@ button.chat-pr__diff {
   display: flex;
   position: relative;
   align-items: center;
-  gap: 6px;
+  gap: var(--chat-composer-chip-gap);
   min-width: 0;
+}
+
+/* Model and reasoning live in their own row inside this group, which carries a
+   tighter gap of its own elsewhere in the app. Inside the composer that made the
+   pair sit closer to each other than to the session-mode chip beside them, which
+   read as two components rather than three peers. */
+.agent-chat__composer-controls .chat-controls__model-settings {
+  gap: var(--chat-composer-chip-gap);
 }
 
 .agent-chat__composer-run-status {
@@ -4033,6 +4052,12 @@ button.chat-pr__diff {
     /* Touch targets, not chrome: the composer's own control rules all read this
        token, so raising it here resizes every button on the surface at once. */
     --chat-composer-control-size: 44px;
+    /* The labelled chips follow, as one family: raising the family tokens keeps
+       the session-mode chip the same size as the pickers it sits beside instead
+       of leaving a 24px chip stranded against 44px neighbours. */
+    --chat-composer-chip-height: 44px;
+    --chat-composer-chip-gap: 4px;
+    --chat-composer-chip-padding-inline: 4px;
   }
 
   .agent-chat__composer-input-row {
@@ -4133,14 +4158,12 @@ button.chat-pr__diff {
 
   /* The borderless trigger is 30px on desktop; keep a >=44px touch target
      inside the mobile composer row. */
+  /* Box, gap and inset now come from the family tokens above; this keeps only
+     what is specific to a trigger on a narrow row. */
   .agent-chat__input .agent-chat__composer-controls .chat-controls__inline-select-trigger {
     width: fit-content;
     max-width: 100%;
     min-width: 44px;
-    height: 44px;
-    min-height: 44px;
-    gap: 4px;
-    padding: 0 2px 0 4px;
   }
 
   .agent-chat__input .chat-controls__model-menu,
@@ -4670,16 +4693,20 @@ button.chat-pr__diff {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: var(--chat-composer-chip-gap, 6px);
   width: 100%;
-  height: 30px;
-  min-height: 30px;
-  padding: 0 6px 0 8px;
+  height: var(--chat-composer-chip-height, 30px);
+  min-height: var(--chat-composer-chip-height, 30px);
+  /* Symmetric on purpose: this trigger carries a label and an optional leading
+     icon, never a trailing one, so the old 6px trailing inset was unmatched
+     asymmetry that made the chip look narrower on its right than its siblings. */
+  padding-block: 0;
+  padding-inline: var(--chat-composer-chip-padding-inline, 8px);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--chat-composer-chip-text, 13px);
   line-height: 1.35;
   overflow: hidden;
   user-select: none;
@@ -5439,10 +5466,10 @@ button.chat-pr__diff {
 .chat-controls__fast-mode-icon,
 .chat-controls__effort-zap {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: var(--chat-composer-chip-icon, 14px);
+  height: var(--chat-composer-chip-icon, 14px);
   color: var(--accent);
-  flex: 0 0 14px;
+  flex: 0 0 var(--chat-composer-chip-icon, 14px);
 }
 
 .chat-controls__fast-mode-icon svg,

@@ -77,26 +77,33 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
 /* Sits after the model and reasoning pickers: the footer row reads as the
    settings for the next turn, and how the session is recorded is the last of
    them, not the first thing between "+" and the model. The model control claims
-   order 3 in chat/layout.css, so this follows it. */
+   order 3 in chat/layout.css, so this follows it.
+   Box, type and rhythm come from the composer's chip family tokens rather than
+   numbers of its own: this control is a peer of the pickers beside it, and it
+   used to announce itself as a different component — smaller text, shorter box,
+   pill corners and a muted foreground against their 13px squared-off chips. The
+   fallbacks keep it sane if it is ever rendered outside a composer. */
 .new-session-page__visibility {
   display: inline-flex;
   align-items: center;
   order: 4;
-  gap: 5px;
-  min-height: 24px;
-  padding: 2px 8px;
+  gap: var(--chat-composer-chip-gap, 6px);
+  min-height: var(--chat-composer-chip-height, 30px);
+  padding-block: 0;
+  padding-inline: var(--chat-composer-chip-padding-inline, 8px);
   border: 0;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--chat-composer-chip-text, 13px);
+  line-height: 1.35;
   cursor: var(--cursor-action);
 }
 
 .new-session-page__visibility:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
-  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text-strong);
 }
 
 /* Active mode must read as toggled-on even while hovered: hover on an
@@ -113,8 +120,8 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
 }
 
 .new-session-page__visibility svg {
-  width: 12px;
-  height: 12px;
+  width: var(--chat-composer-chip-icon, 14px);
+  height: var(--chat-composer-chip-icon, 14px);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7px;
@@ -769,12 +776,13 @@ wa-dropdown.new-session-page__start-menu {
     gap: 4px 2px;
   }
 
-  /* A new session has visibility pills instead of the chat settings cluster.
-     Keep those pills intrinsic and let the model picker use the remaining width. */
+  /* A new session has visibility chips instead of the chat settings cluster.
+     Keep those chips intrinsic and let the model picker use the remaining width;
+     spacing stays on the shared family token so the row keeps one rhythm as it
+     wraps. */
   .new-session-page__composer .agent-chat__composer-controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 2px;
   }
 
   .new-session-page__composer .agent-chat__input .chat-composer-model-control {
