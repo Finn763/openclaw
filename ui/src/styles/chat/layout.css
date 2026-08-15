@@ -3758,9 +3758,19 @@ button.chat-pr__diff {
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
+  /* Collapsed, the glyph is parked under the microphone and slides out from
+     beneath it; without that it appeared in place while the box widened, which
+     read as a stutter rather than a reveal. */
+  transform: translateX(6px);
+  /* Width carries the layout, so it takes the longer, decelerating curve and the
+     paint follows it: opacity waits out the first half of the movement so the
+     chevron fades in as it settles instead of flashing at full strength while
+     the box is still a sliver. Collapsing runs the reverse without that wait, so
+     the row never holds a half-drawn control. */
   transition:
-    width 140ms ease-out,
-    opacity 140ms ease-out,
+    width 190ms cubic-bezier(0.2, 0, 0, 1),
+    transform 190ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 120ms ease-out,
     color var(--duration-fast) ease;
 }
 
@@ -3772,9 +3782,13 @@ button.chat-pr__diff {
 .chat-talk-control:hover .chat-talk-input-picker__trigger,
 .chat-talk-control:focus-within .chat-talk-input-picker__trigger,
 .chat-talk-input-picker[open] .chat-talk-input-picker__trigger {
+  /* Width alone, deliberately: a min-width here would be the used width from the
+     first frame and the box would snap to full size while the transition was
+     still running, which is the jump this reveal is meant not to have. */
   width: 16px;
-  min-width: 16px;
   opacity: 1;
+  transform: translateX(0);
+  transition-delay: 0ms, 0ms, 70ms, 0ms;
   pointer-events: auto;
 }
 
