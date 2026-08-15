@@ -384,6 +384,12 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
         onTargetSelect: props.onModelPickerTargetSelect,
         onRequestUpdate: props.onRequestUpdate,
       })}
+      <!-- Model and reasoning describe one decision, so they read as one phrase
+           with a separator between them. It stays outside both triggers: each
+           keeps its own hover and click target, and the mark itself is
+           decorative, so it is hidden from assistive technology rather than
+           announced between two controls that already name themselves. -->
+      <span class="chat-controls__model-settings-separator" aria-hidden="true">·</span>
       ${renderChatEffortPicker({
         disabled: effortDisabled,
         disabledReason: props.effortMutationDisabledReason,

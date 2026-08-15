@@ -2704,11 +2704,35 @@ button.chat-pr__diff {
 }
 
 /* Model and reasoning live in their own row inside this group, which carries a
-   tighter gap of its own elsewhere in the app. Inside the composer the pair is
-   bound by its separator instead, so the pair keeps the family rhythm while the
-   mark between them is what makes it read as one phrase. */
+   tighter gap of its own elsewhere in the app. Inside the composer the pair sits
+   on the family rhythm like every other chip, and the mark between them is what
+   makes it read as one phrase rather than two separate settings. */
 .agent-chat__composer-controls .chat-controls__model-settings {
   gap: var(--chat-composer-chip-gap);
+}
+
+/* Only the composer binds the pair into a phrase; elsewhere the two pickers sit
+   in layouts that do not read as one, where the mark would be noise. */
+.chat-controls__model-settings-separator {
+  display: none;
+}
+
+/* Decorative binder between the two triggers. Non-interactive on purpose: it
+   carries no pointer target of its own, so neither picker's hover or click area
+   is narrowed by it, and it sits at the surface's muted step so the phrase reads
+   as label-mark-label rather than three equal words. The negative margin pulls
+   it into the inset the two chips already own, which is what makes the pair read
+   tighter than the space separating it from the chip beside it. */
+.agent-chat__composer-controls .chat-controls__model-settings-separator {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-inline: -3px;
+  color: var(--chat-composer-tertiary, var(--muted));
+  font-size: var(--chat-composer-chip-text, 13px);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 
 .agent-chat__composer-run-status {
