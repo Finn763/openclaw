@@ -420,6 +420,25 @@ suite.define(() => {
       await expect
         .poll(() => page.getByRole("button", { name: "Start voice input" }).isVisible())
         .toBe(true);
+      // Every other control here is a step of the surface itself, so colour is
+      // what marks the one committed action once there is something to send.
+      const brandFill = await page.evaluate(() => {
+        const probe = document.createElement("span");
+        probe.style.color = getComputedStyle(document.documentElement)
+          .getPropertyValue("--primary")
+          .trim();
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+        return resolved;
+      });
+      await expect
+        .poll(() =>
+          page
+            .getByRole("button", { name: "Send message" })
+            .evaluate((node) => getComputedStyle(node).backgroundColor),
+        )
+        .toBe(brandFill);
 
       await page.getByRole("button", { name: "Send message" }).click();
       const sendRequest = await gateway.waitForRequest("chat.send");
@@ -486,7 +505,16 @@ suite.define(() => {
       await textarea.fill("");
       const stop = page.getByRole("button", { name: "Stop generating" });
       await expect.poll(() => stop.isVisible()).toBe(true);
+<<<<<<< HEAD
       await textarea.press("Escape");
+=======
+      // Stop is deliberately left out of the brand fill: commit and interrupt
+      // share one slot, so they must not share one colour.
+      await expect
+        .poll(() => stop.evaluate((node) => getComputedStyle(node).backgroundColor))
+        .not.toBe(brandFill);
+      await stop.click();
+>>>>>>> 85407c31d8d (polish(ui): give the composer its own type scale and a brand send)
       const abortRequest = await gateway.waitForRequest("chat.abort");
       expect(abortRequest.params).toMatchObject({
         runId,

@@ -2425,9 +2425,16 @@ button.chat-pr__diff {
   /* Footer control box. Smaller than the editor's own line box on purpose: the
      controls read as chrome beside the text, not as peers of it. */
   --chat-composer-control-size: 28px;
+  /* The editor is a reading and writing surface, not a compact form field, so it
+     owns a 16px base instead of the shared control token, whose 14px base only
+     reaches 16px through an iOS zoom floor — text that size by accident does not
+     follow the operator's text scale until the scale passes 1.15, and it drops
+     the moment that floor moves. The max() keeps 16px as a hard floor. */
+  --chat-composer-editor-size: max(16px, calc(16px * var(--control-ui-text-scale)));
   /* One editor line. The single-line box centres a line of exactly this height,
-     and the multiline editor never gets shorter than one of them. */
-  --chat-composer-editor-line: 24px;
+     and the multiline editor never gets shorter than one of them. Derived, so a
+     scaled-up editor keeps its leading instead of crowding its own descenders. */
+  --chat-composer-editor-line: calc(var(--chat-composer-editor-size) * 1.5);
 
   position: relative;
   display: flex;
@@ -2608,7 +2615,7 @@ button.chat-pr__diff {
 }
 
 .agent-chat__composer-combobox > :is(textarea, input) {
-  --control-ui-touch-input-size: var(--control-ui-input-text-size);
+  --control-ui-touch-input-size: var(--chat-composer-editor-size);
 
   width: 100%;
   min-height: calc(var(--chat-composer-editor-line) + 8px);
@@ -2621,7 +2628,7 @@ button.chat-pr__diff {
   border: none;
   background: transparent;
   color: var(--text-strong);
-  font-size: var(--control-ui-input-text-size);
+  font-size: var(--chat-composer-editor-size);
   font-family: inherit;
   line-height: var(--chat-composer-editor-line);
   outline: none;
@@ -2899,6 +2906,28 @@ button.chat-pr__diff {
 .agent-chat__input :is(.agent-chat__input-btn, .chat-send-btn) svg {
   width: 16px;
   height: 16px;
+}
+
+/* The plus turns into a close mark while its menu is open, instead of a second
+   glyph swapping in: one shape rotating is what tells the operator the button
+   they pressed is the same button that dismisses. `[open]` is reflected by the
+   dropdown host, so every route out of the menu — reselect, outside click,
+   Escape, item choice — unwinds it without any of them knowing about the icon.
+   Both composers render this trigger through the same host, so one rule covers
+   the transcript and the new-session page. */
+.agent-chat__attach-menu .agent-chat__input-btn--attach svg {
+  transform-origin: center;
+  transition: transform 165ms ease;
+}
+
+.agent-chat__attach-menu[open] .agent-chat__input-btn--attach svg {
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-chat__attach-menu .agent-chat__input-btn--attach svg {
+    transition: none;
+  }
 }
 
 .agent-chat__control-label {
@@ -3432,22 +3461,25 @@ button.chat-pr__diff {
   cursor: not-allowed;
 }
 
-/* Send is the one high-contrast element on the surface: a light disc carrying a
-   dark glyph, inverted straight out of the surface's own two ends. Everything
-   else on the composer is a mix between them, so this reads as the single
-   committed action without needing an accent colour of its own. Losing
-   availability means losing that contrast, not gaining a new hue. */
+/* Send is the one committed action on the surface, so it carries the brand fill.
+   Everything else on the composer is a step of the surface itself, which makes
+   colour — not just contrast — the thing that marks the button that actually
+   sends. Losing availability drops it back to a step of the surface: an
+   unavailable send must not keep shouting in brand red. */
 .agent-chat__input .chat-send-btn {
   width: var(--chat-composer-control-size);
   min-width: var(--chat-composer-control-size);
   height: var(--chat-composer-control-size);
-  background: var(--text-strong);
-  color: var(--chat-composer-surface);
+  background: var(--primary);
+  color: var(--primary-foreground);
   box-shadow: none;
 }
 
+/* Hover steps the fill toward the surface's own far end rather than reaching for
+   --primary-hover, which several themes leave at the base value and would render
+   as no feedback at all. */
 .agent-chat__input .chat-send-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-strong) 88%, var(--chat-composer-surface));
+  background: color-mix(in srgb, var(--primary) 86%, var(--text-strong));
   box-shadow: none;
 }
 
@@ -3455,6 +3487,20 @@ button.chat-pr__diff {
   background: var(--chat-composer-hover);
   color: var(--chat-composer-tertiary);
   opacity: 1;
+}
+
+/* Stop keeps the neutral disc it already renders here. Its own soft-danger rule
+   is a single class and loses to the composer-scoped selector above, so the fill
+   has to be restated: pulling stop into the brand fill would make the two states
+   of one slot — commit and interrupt — read identically at a glance. */
+.agent-chat__input .chat-send-btn--stop {
+  background: var(--text-strong);
+  color: var(--chat-composer-surface);
+}
+
+.agent-chat__input .chat-send-btn--stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-strong) 88%, var(--chat-composer-surface));
+  color: var(--chat-composer-surface);
 }
 
 /* Voice keeps the quiet chrome treatment: it is a mode toggle beside send, not

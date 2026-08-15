@@ -61,19 +61,27 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
 }
 
 /* Draft block inside the centered welcome column; the welcome centers text,
-   so reset alignment for the controls and composer. */
+   so reset alignment for the controls and composer.
+   The top margin is a paragraph break, not a nudge: the tagline is the last line
+   of the hero and the scope chips are the first line of the form, so they must
+   not read as one stack. */
 .new-session-page__draft {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
-  margin-top: 6px;
+  margin-top: 22px;
   text-align: left;
 }
 
+/* Sits after the model and reasoning pickers: the footer row reads as the
+   settings for the next turn, and how the session is recorded is the last of
+   them, not the first thing between "+" and the model. The model control claims
+   order 3 in chat/layout.css, so this follows it. */
 .new-session-page__visibility {
   display: inline-flex;
   align-items: center;
+  order: 4;
   gap: 5px;
   min-height: 24px;
   padding: 2px 8px;
@@ -84,19 +92,11 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
   font: inherit;
   font-size: 11px;
   cursor: var(--cursor-action);
-  opacity: 0;
-  transition: opacity 120ms ease;
 }
 
 .new-session-page__visibility:hover:not(:disabled) {
   background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
   color: var(--text);
-}
-
-.new-session-page__composer:hover .new-session-page__visibility,
-.new-session-page__composer:focus-within .new-session-page__visibility,
-.new-session-page__visibility--active {
-  opacity: 1;
 }
 
 /* Active mode must read as toggled-on even while hovered: hover on an
