@@ -5087,6 +5087,16 @@ button.chat-pr__diff {
   flex: 0 0 var(--chat-composer-chip-icon, 14px);
 }
 
+/* On the composer the mark is set in the surface's own strong foreground rather
+   than the provider's brand colour. The menu rows keep the brand hues, where
+   colour is doing the work of telling providers apart; on the chip there is only
+   ever one, so a saturated mark is the loudest thing in a row of quiet chrome
+   and reads as a status light. Outranks the per-provider brand rules in
+   components.css by specificity, whichever order the two files resolve in. */
+.agent-chat__input .provider-brand-icon.chat-controls__trigger-provider-icon {
+  color: var(--text-strong);
+}
+
 .chat-controls__target-icon svg {
   width: 100%;
   height: 100%;
