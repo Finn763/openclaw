@@ -553,8 +553,42 @@ merge_run() {
   fi
 
   if [ "$state" != "MERGED" ]; then
-    echo "PR state is $state after waiting."
-    exit 1
+    if [ "$auto_merge_requested" = "true" ] && [ "$merge_submitted" = "true" ]; then
+      auto_meta=$(gh pr view "$pr" --json state,headRefOid,autoMergeRequest)
+      state=$(printf '%s\n' "$auto_meta" | jq -r .state)
+      auto_head_sha=$(printf '%s\n' "$auto_meta" | jq -r .headRefOid)
+      existing_auto_method=$(printf '%s\n' "$auto_meta" | jq -r '.autoMergeRequest.mergeMethod // ""')
+
+      if [ "$state" != "MERGED" ]; then
+        if [ "$auto_head_sha" != "$PREP_HEAD_SHA" ]; then
+          echo "PR head changed while waiting for auto-merge (expected $PREP_HEAD_SHA, got $auto_head_sha)."
+          exit 1
+        fi
+        if [ -z "$existing_auto_method" ]; then
+          echo "Queued auto-merge is no longer enabled, but the PR did not merge before the timeout."
+          exit 1
+        fi
+
+        echo "Queued auto-merge did not land before the timeout; disabling it before returning."
+        gh_plain pr merge "$pr" --disable-auto >.local/merge-output.log 2>&1 || true
+        auto_meta=$(gh pr view "$pr" --json state,headRefOid,autoMergeRequest)
+        state=$(printf '%s\n' "$auto_meta" | jq -r .state)
+        auto_head_sha=$(printf '%s\n' "$auto_meta" | jq -r .headRefOid)
+        existing_auto_method=$(printf '%s\n' "$auto_meta" | jq -r '.autoMergeRequest.mergeMethod // ""')
+        if [ "$state" != "MERGED" ]; then
+          if [ "$auto_head_sha" != "$PREP_HEAD_SHA" ] || [ -n "$existing_auto_method" ]; then
+            echo "Unable to prove the timed-out auto-merge request was cleared at the verified head."
+            print_relevant_log_excerpt .local/merge-output.log
+            exit 1
+          fi
+          echo "The timed-out auto-merge request was cleared safely; re-run merge-run to retry."
+          exit 1
+        fi
+      fi
+    else
+      echo "PR state is $state after waiting."
+      exit 1
+    fi
   fi
 
   local landed_sha

@@ -43,6 +43,7 @@ function runMerge(scenario: MergeScenario = {}) {
   const mergeAttempts = join(root, "merge-attempts");
   const lifecycle = join(root, "lifecycle.log");
   const rgCalls = join(root, "rg-calls.log");
+  const sideEffects = join(root, "side-effects.log");
   const statePolls = join(root, "state-polls");
   mkdirSync(bin, { recursive: true });
   mkdirSync(localDir, { recursive: true });
@@ -118,7 +119,9 @@ require_ready_review_recommendation() {
   fi
 }
 verify_prep_branch_matches_prepared_head() { :; }
-mark_pr_operation_side_effects_started() { :; }
+mark_pr_operation_side_effects_started() {
+  printf 'side-effects\n' >> "$OPENCLAW_TEST_SIDE_EFFECTS"
+}
 mainline_drift_requires_sync() { return 1; }
 print_relevant_log_excerpt() { cat "$1"; }
 repo_root() { printf '%s\\n' "$OPENCLAW_TEST_ROOT"; }
@@ -336,6 +339,7 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       OPENCLAW_TEST_REVIEW_RECOMMENDATION: scenario.recommendation ?? "ready",
       OPENCLAW_TEST_RG_CALLS: rgCalls,
       OPENCLAW_TEST_ROOT: root,
+      OPENCLAW_TEST_SIDE_EFFECTS: sideEffects,
       OPENCLAW_TEST_SCRIPTS_DIR: join(process.cwd(), "scripts"),
       OPENCLAW_TEST_STATE_POLLS: statePolls,
       OPENCLAW_TEST_STATE_POLLS_BEFORE_MERGE: String(scenario.statePollsBeforeMerge ?? 0),
@@ -357,6 +361,7 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       ? readFileSync(join(localDir, "merge-body.txt"), "utf8")
       : "",
     rgCalls: existsSync(rgCalls) ? readFileSync(rgCalls, "utf8") : "",
+    sideEffects: existsSync(sideEffects) ? readFileSync(sideEffects, "utf8") : "",
     statePolls: existsSync(statePolls) ? Number(readFileSync(statePolls, "utf8").trim()) : 0,
   };
 }
@@ -559,6 +564,18 @@ describePosix("scripts/pr merge-run", () => {
     expect(result.calls).toContain(`plain api repos/openclaw/openclaw/commits/${landedSha}`);
     expect(result.stdout).toContain("merge author email: 1234+altaywtf@users.noreply.github.com");
     expect(result.lifecycle).toContain("comment\nremote-cleanup\n");
+  });
+
+  it("clears a queued squash auto-merge that does not land before the timeout", () => {
+    const result = runMerge({ auto: true, statePollsBeforeMerge: 90 });
+
+    expect(result.status).toBe(1);
+    expect(result.statePolls).toBe(90);
+    expect(result.calls).toContain("plain pr merge 123 --disable-auto");
+    expect(result.stdout).toContain("did not land before the timeout; disabling it");
+    expect(result.stdout).toContain("timed-out auto-merge request was cleared safely");
+    expect(result.sideEffects).toBe("side-effects\n");
+    expect(result.lifecycle).toBe("");
   });
 
   it("falls back to the immediate merge when BEHIND is not the only obstacle", () => {
