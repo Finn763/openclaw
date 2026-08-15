@@ -232,3 +232,55 @@ describe("run-tsgo sparse guard", () => {
     });
   });
 });
+
+describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
+  function writeFakeTsgo(cwd: string, body: string) {
+    const binDir = path.join(cwd, "node_modules", ".bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeTsgo = path.join(binDir, "tsgo");
+    fs.writeFileSync(fakeTsgo, body, "utf8");
+    fs.chmodSync(fakeTsgo, 0o755);
+  }
+
+  function runFakeTsgo(cwd: string, timeoutMs: string) {
+    return spawnSync(
+      process.execPath,
+      [path.resolve("scripts/run-tsgo.mjs"), "-p", "tsconfig.extensions.json"],
+      {
+        cwd,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_TSGO_TIMEOUT_MS: timeoutMs,
+        },
+        // spawnSync blocks this thread, so vitest's own per-test budget can never
+        // fire; a regression here would hang the worker instead of failing.
+        timeout: 25_000,
+        killSignal: "SIGKILL",
+      },
+    );
+  }
+
+  it("kills a wedged tsgo that ignores SIGTERM instead of blocking its caller forever", () => {
+    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
+    // Mirrors the observed wedge: the checker refuses SIGTERM and never reports,
+    // so only a process-group SIGKILL frees the caller.
+    writeFakeTsgo(cwd, "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n");
+
+    const result = runFakeTsgo(cwd, "2000");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("killed the tsgo process tree");
+    expect(result.stderr.trim().split("\n").at(-1)).toBe("[tsgo] FAILED (exit 1)");
+  }, 30_000);
+
+  it("leaves a tsgo that finishes inside the watchdog bound alone", () => {
+    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
+    writeFakeTsgo(cwd, "#!/bin/sh\nexit 0\n");
+
+    const result = runFakeTsgo(cwd, "30000");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("killed the tsgo process tree");
+  }, 30_000);
+});

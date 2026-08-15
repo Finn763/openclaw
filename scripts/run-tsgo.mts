@@ -1,5 +1,4 @@
 // Runs tsgo through local resource policy and sparse-checkout guards.
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,13 +9,17 @@ import {
   resolveLocalCheckEnv,
   resolveRepoToolBinPath,
 } from "./lib/local-check-runtime.mts";
-import { createManagedCommandInvocation } from "./lib/managed-child-process.mts";
+import { runManagedCommand } from "./lib/managed-child-process.mts";
+import { readPositiveEnvInt } from "./lib/numeric-options.mjs";
 import {
   getSparseTsgoGuardError,
   shouldSkipSparseTsgoGuardError,
 } from "./lib/tsgo-sparse-guard.mts";
 
-function main(): void {
+/** Watchdog bound for one tsgo run; sized well above a healthy whole-program check. */
+const DEFAULT_TSGO_TIMEOUT_MS = 45 * 60 * 1000;
+
+async function main(): Promise<void> {
   const hostResources = {
     logicalCpuCount:
       typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length,
@@ -46,25 +49,28 @@ function main(): void {
   }
 
   ensureRepoToolNodeModulesLink(tsgoPath);
-  const tsgo = createManagedCommandInvocation({
-    args: finalArgs,
-    bin: tsgoPath,
-    env,
-  });
-  const result = spawnSync(tsgo.command, tsgo.args, {
-    stdio: "inherit",
-    env,
-    shell: tsgo.shell,
-    windowsVerbatimArguments: tsgo.windowsVerbatimArguments,
-  });
-
-  if (result.error) {
-    throw result.error;
+  const timeoutMs = readPositiveEnvInt("OPENCLAW_TSGO_TIMEOUT_MS", env, DEFAULT_TSGO_TIMEOUT_MS);
+  try {
+    // Managed run owns the whole tsgo process tree: on timeout it SIGKILLs the
+    // process group, because a wedged checker ignores SIGTERM and would otherwise
+    // block the caller forever on a compiler that will never report.
+    process.exitCode = await runManagedCommand({
+      bin: tsgoPath,
+      args: finalArgs,
+      env,
+      timeoutMs,
+    });
+  } catch (error) {
+    if ((error as { code?: string } | undefined)?.code !== "ETIMEDOUT") {
+      throw error;
+    }
+    console.error(
+      `[tsgo] no completion after ${timeoutMs}ms; killed the tsgo process tree. Raise OPENCLAW_TSGO_TIMEOUT_MS for intentionally longer builds.`,
+    );
+    process.exitCode = 1;
   }
-
-  process.exitCode = result.status ?? 1;
 }
 
 if (import.meta.main) {
-  main();
+  await main();
 }
