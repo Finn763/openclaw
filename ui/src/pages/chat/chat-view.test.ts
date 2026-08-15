@@ -1879,7 +1879,7 @@ describe("chat composer workbench", () => {
 
     const voiceButton = container.querySelector('button[aria-label="Start voice input"]');
     expect(voiceButton).not.toBeNull();
-    expect(voiceButton?.closest(".agent-chat__composer-input-row")).not.toBeNull();
+    expect(voiceButton?.closest(".agent-chat__composer-trail")).not.toBeNull();
     expect(container.querySelector('button[aria-label="Talk settings"]')).toBeNull();
     // The mic device picker is a caret on the voice button, not a separate settings button.
     const picker = container.querySelector('button[aria-label="Microphone input"]');
@@ -3240,6 +3240,9 @@ describe("chat composer sizing", () => {
       clientHeight: { configurable: true, get: () => clientHeight },
     });
 
+    // Measured growth is the multiline contract; an empty draft is the compact
+    // shape, whose height CSS owns outright.
+    textarea.value = "A draft";
     textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
 
     expect(textarea.style.height).toBe("42px");
@@ -3300,6 +3303,7 @@ describe("chat composer sizing", () => {
       scrollHeight: { configurable: true, get: () => scrollHeight },
       clientHeight: { configurable: true, get: () => clientHeight },
     });
+    textarea.value = "A draft";
     textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
     expect(textarea.style.height).toBe("42px");
     expect(textarea.style.overflowY).toBe("hidden");

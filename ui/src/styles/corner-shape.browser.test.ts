@@ -76,10 +76,10 @@ const CORNER_CASES: readonly CornerCase[] = [
     superelliptical: "17.5px",
   },
   {
-    circular: "10px",
+    circular: "20px",
     markup: '<div class="agent-chat__input">Composer</div>',
     selector: ".agent-chat__input",
-    superelliptical: "12.5px",
+    superelliptical: "25px",
   },
   {
     circular: "10px",
