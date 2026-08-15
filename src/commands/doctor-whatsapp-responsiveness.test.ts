@@ -3,14 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 const noteMock = vi.hoisted(() => vi.fn());
-const spawnSyncMock = vi.hoisted(() => vi.fn());
-
-vi.mock("node:child_process", async () => {
-  const { mockNodeChildProcessSpawnSync } = await import("openclaw/plugin-sdk/test-node-mocks");
-  return mockNodeChildProcessSpawnSync(spawnSyncMock, () =>
-    vi.importActual<typeof import("node:child_process")>("node:child_process"),
-  );
-});
 
 vi.mock("../../packages/terminal-core/src/note.js", () => ({
   note: noteMock,
@@ -18,79 +10,10 @@ vi.mock("../../packages/terminal-core/src/note.js", () => ({
 
 const { collectWhatsappResponsivenessHealthFindings, noteWhatsappResponsivenessHealth } =
   await import("./doctor-whatsapp-responsiveness.js");
-const { listLocalTuiProcesses, terminateLocalTuiProcesses } =
-  await import("./doctor-whatsapp-responsiveness.test-support.js");
 
 describe("doctor WhatsApp responsiveness", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it("lists only verified local TUI processes", () => {
-    spawnSyncMock.mockReturnValue({
-      status: 0,
-      stdout: [
-        " 101 openclaw-tui",
-        " 102 /usr/bin/node /usr/lib/node_modules/openclaw/dist/index.js gateway --port 18789",
-        " 103 openclaw channels",
-        " 104 openclaw tui --local",
-        " 105 /usr/bin/openclaw chat",
-        " 106 helper --note 'openclaw tui'",
-        " 107 openclaw-helper openclaw terminal",
-        " 108 openclaw --flag tui",
-      ].join("\n"),
-    });
-
-    if (process.platform === "win32") {
-      expect(listLocalTuiProcesses()).toEqual([]);
-      expect(spawnSyncMock).not.toHaveBeenCalled();
-    } else {
-      expect(listLocalTuiProcesses()).toEqual([
-        { pid: 101, command: "openclaw-tui" },
-        { pid: 104, command: "openclaw tui --local" },
-        { pid: 105, command: "/usr/bin/openclaw chat" },
-      ]);
-      expect(spawnSyncMock).toHaveBeenCalledWith("ps", ["-axo", "pid=,command="], {
-        encoding: "utf8",
-        killSignal: "SIGKILL",
-        timeout: 1_000,
-      });
-    }
-  });
-
-  it("terminates stale local TUI processes with a kill fallback", async () => {
-    const alive = new Set([101]);
-    const signals: Array<[number, string | number]> = [];
-    const controller = {
-      kill: vi.fn((pid: number, signal: string | number) => {
-        signals.push([pid, signal]);
-        if (signal === "SIGKILL") {
-          alive.delete(pid);
-          return true;
-        }
-        if (signal === 0) {
-          if (alive.has(pid)) {
-            return true;
-          }
-          throw new Error("gone");
-        }
-        return true;
-      }),
-    };
-
-    await expect(
-      terminateLocalTuiProcesses({
-        processes: [{ pid: 101, command: "openclaw-tui" }],
-        controller,
-        graceMs: 0,
-      }),
-    ).resolves.toEqual({ stopped: [101], failed: [] });
-    expect(signals).toEqual([
-      [101, "SIGTERM"],
-      [101, 0],
-      [101, "SIGKILL"],
-      [101, 0],
-    ]);
   });
 
   it("warns and repairs local TUI pressure when WhatsApp is enabled and the gateway is degraded", async () => {

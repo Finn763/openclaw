@@ -1,3 +1,9 @@
+import { theme } from "../../../packages/terminal-core/src/theme.js";
+import {
+  formatLocalTuiPidList,
+  listLocalTuiProcesses,
+  terminateLocalTuiProcesses,
+} from "../../infra/local-tui-processes.js";
 import type { DevUpdateTarget } from "../../infra/update-dev-target.js";
 import type { ResolvedGlobalInstallTarget } from "../../infra/update-global.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
@@ -32,6 +38,38 @@ import {
 } from "./update-command-service.js";
 
 const CLI_NAME = resolveCliName();
+
+async function stopLocalTuiClientsBeforeMutableUpdate(params: { jsonMode: boolean }) {
+  if (
+    (process.env.VITEST || process.env.NODE_ENV === "test") &&
+    process.env.OPENCLAW_ALLOW_TEST_LOCAL_TUI_PROCESS_MUTATION !== "1"
+  ) {
+    return;
+  }
+  const tuiProcesses = listLocalTuiProcesses();
+  if (tuiProcesses.length === 0) {
+    return;
+  }
+  const pids = formatLocalTuiPidList(tuiProcesses);
+  if (!params.jsonMode) {
+    defaultRuntime.log(
+      theme.muted(
+        `Closing local TUI clients before update so they do not load stale runtime chunks: ${pids}`,
+      ),
+    );
+  }
+  const stopped = await terminateLocalTuiProcesses({ processes: tuiProcesses });
+  if (!params.jsonMode) {
+    if (stopped.stopped.length > 0) {
+      defaultRuntime.log(theme.muted(`Stopped local TUI clients: ${stopped.stopped.join(", ")}`));
+    }
+    if (stopped.failed.length > 0) {
+      defaultRuntime.log(
+        theme.warn(`Could not stop local TUI clients: ${stopped.failed.join(", ")}`),
+      );
+    }
+  }
+}
 
 type MutableUpdateExecutionResult = {
   result: UpdateRunResult;
@@ -152,6 +190,8 @@ export async function executeMutableUpdate(params: {
       throw new UpdateCommandAbort();
     }
   };
+
+  await stopLocalTuiClientsBeforeMutableUpdate({ jsonMode: Boolean(params.opts.json) });
 
   if (params.updateInstallKind === "package") {
     try {
