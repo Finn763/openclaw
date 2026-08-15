@@ -15,12 +15,17 @@ type MergeScenario = {
   auto?: boolean;
   autoError?: string;
   autoResult?: "enabled" | "inconclusive" | "unavailable";
+  authorEmailFailures?: number;
   checks?: "fail" | "green" | "pending";
   commentEmpty?: boolean;
   commentFailures?: number;
+  commitMessage?: string;
   existingAutoMethod?: "" | "MERGE" | "REBASE" | "SQUASH";
+  landedAuthorEmail?: string;
+  mergeMethod?: "merge" | "rebase" | "squash";
   mergeStateStatus?: string;
   mergeable?: string;
+  prAuthor?: string;
   recommendation?: "ready" | "needs_work";
   reviewArtifacts?: "valid" | "invalid";
 };
@@ -34,6 +39,7 @@ function runMerge(scenario: MergeScenario = {}) {
   const bin = join(root, "bin");
   const commentAttempts = join(root, "comment-attempts");
   const commentBody = join(root, "comment-body");
+  const mergeAttempts = join(root, "merge-attempts");
   const lifecycle = join(root, "lifecycle.log");
   const rgCalls = join(root, "rg-calls.log");
   mkdirSync(bin, { recursive: true });
@@ -41,13 +47,15 @@ function runMerge(scenario: MergeScenario = {}) {
   writeFileSync(
     join(bin, "rg"),
     `#!/usr/bin/env node
-const { appendFileSync, readFileSync } = require("node:fs");
+const { appendFileSync, existsSync, readFileSync } = require("node:fs");
 const args = process.argv.slice(2);
 appendFileSync(process.env.OPENCLAW_TEST_RG_CALLS, JSON.stringify(args) + "\\n");
-const pattern = args.at(-2);
-const file = args.at(-1);
+const maybeFile = args.at(-1);
+const hasFile = maybeFile && existsSync(maybeFile);
+const pattern = args.at(hasFile ? -2 : -1);
+const input = hasFile ? readFileSync(maybeFile, "utf8") : readFileSync(0, "utf8");
 const flags = args.includes("-i") ? "i" : "";
-process.exit(new RegExp(pattern, flags).test(readFileSync(file, "utf8")) ? 0 : 1);
+process.exit(new RegExp(pattern, flags).test(input) ? 0 : 1);
 `,
   );
   chmodSync(join(bin, "rg"), 0o755);
@@ -125,6 +133,10 @@ git() {
     fi
     return 0
   fi
+  if [ "\${1-} \${2-}" = "config user.email" ]; then
+    printf 'reviewer-fallback@example.com\n'
+    return 0
+  fi
   return 0
 }
 node() {
@@ -149,6 +161,9 @@ gh_route() {
       ;;
     "pr view")
       case "$*" in
+        *"--json number,title,state,isDraft,author"*)
+          printf '%s\n' "$OPENCLAW_TEST_PR_META"
+          ;;
         *"--json state,isDraft"*)
           printf '%s\\n' '{"state":"OPEN","isDraft":false}'
           ;;
@@ -196,19 +211,29 @@ gh_route() {
           fi
           ;;
       esac
+      if [[ " $* " = *" --author-email "* ]]; then
+        local attempts=0
+        if [ -e "$OPENCLAW_TEST_MERGE_ATTEMPTS" ]; then
+          attempts=$(cat "$OPENCLAW_TEST_MERGE_ATTEMPTS")
+        fi
+        attempts=$((attempts + 1))
+        printf '%s\n' "$attempts" > "$OPENCLAW_TEST_MERGE_ATTEMPTS"
+        if [ "$attempts" -le "$OPENCLAW_TEST_AUTHOR_EMAIL_FAILURES" ]; then
+          echo 'GraphQL: author email is not associated with your account' >&2
+          return 1
+        fi
+      fi
       ;;
     "repo view") printf 'openclaw/openclaw\\n' ;;
     "api "*)
-      local api_arg
-      for api_arg in "$@"; do
-        case "$api_arg" in
-          repos/*/*/commits/*)
-            echo 'unexpected repository commit-resolution API probe' >&2
-            return 1
-            ;;
-        esac
-      done
       case "$*" in
+        "api user --jq .login") printf 'altaywtf\n' ;;
+        "api user --jq .id") printf '1234\n' ;;
+        *"api user --jq .email"*) printf 'reviewer@example.com\n' ;;
+        "api users/"*) printf '5678\n' ;;
+        *"repos/openclaw/openclaw/commits/$OPENCLAW_TEST_LANDED_SHA"*)
+          printf '%s\n' "$OPENCLAW_TEST_LANDED_COMMIT_JSON"
+          ;;
         *"issues/123/comments"*)
           local arg
           for arg in "$@"; do
@@ -255,6 +280,7 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       OPENCLAW_TEST_AUTO_REQUESTED: scenario.auto ? "true" : "false",
       OPENCLAW_TEST_AUTO_RESULT: scenario.autoResult ?? "enabled",
       OPENCLAW_TEST_AUTO_STATE: autoState,
+      OPENCLAW_TEST_AUTHOR_EMAIL_FAILURES: String(scenario.authorEmailFailures ?? 0),
       OPENCLAW_TEST_CHECKS_EXIT_STATUS: scenario.checks === "pending" ? "8" : "0",
       OPENCLAW_TEST_CHECKS_JSON: JSON.stringify(checks),
       OPENCLAW_TEST_COMMENT_ATTEMPTS: commentAttempts,
@@ -265,11 +291,34 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       OPENCLAW_TEST_DISABLED_AUTO_META: disabledAutoMeta,
       OPENCLAW_TEST_GH_CALLS: calls,
       OPENCLAW_TEST_LANDED_SHA: landedSha,
+      OPENCLAW_TEST_LANDED_COMMIT_JSON: JSON.stringify({
+        commit: {
+          author: {
+            email:
+              scenario.landedAuthorEmail ??
+              (scenario.authorEmailFailures
+                ? "reviewer-fallback@example.com"
+                : "reviewer@example.com"),
+          },
+          message:
+            scenario.commitMessage ??
+            `Fix Slack upload captions (#123)\n\nMerged via ${scenario.mergeMethod === "merge" ? "merge commit" : "squash"}.\n\nPrepared head SHA: ${headSha}\nCo-authored-by: contributor <5678+contributor@users.noreply.github.com>\nCo-authored-by: altaywtf <1234+altaywtf@users.noreply.github.com>\nReviewed-by: @altaywtf`,
+        },
+      }),
       OPENCLAW_TEST_LIFECYCLE: lifecycle,
+      OPENCLAW_TEST_MERGE_ATTEMPTS: mergeAttempts,
+      OPENCLAW_PR_MERGE_METHOD: scenario.mergeMethod ?? "squash",
       OPENCLAW_TEST_MERGE_SCRIPT: mergeScript,
       OPENCLAW_TEST_MERGE_STATE_STATUS: scenario.mergeStateStatus ?? "BEHIND",
       OPENCLAW_TEST_POST_AUTO_META: postAutoMeta,
       OPENCLAW_TEST_PRE_AUTO_META: preAutoMeta,
+      OPENCLAW_TEST_PR_META: JSON.stringify({
+        number: 123,
+        title: "Fix Slack upload captions",
+        state: "OPEN",
+        isDraft: false,
+        author: { login: scenario.prAuthor ?? "contributor" },
+      }),
       OPENCLAW_TEST_REVIEW_ARTIFACTS: scenario.reviewArtifacts ?? "valid",
       OPENCLAW_TEST_REVIEW_RECOMMENDATION: scenario.recommendation ?? "ready",
       OPENCLAW_TEST_RG_CALLS: rgCalls,
@@ -286,6 +335,12 @@ merge_run 123 "$OPENCLAW_TEST_AUTO_REQUESTED"
       : 0,
     commentBody: existsSync(commentBody) ? readFileSync(commentBody, "utf8") : "",
     lifecycle: existsSync(lifecycle) ? readFileSync(lifecycle, "utf8") : "",
+    mergeAttempts: existsSync(mergeAttempts)
+      ? Number(readFileSync(mergeAttempts, "utf8").trim())
+      : 0,
+    mergeBody: existsSync(join(localDir, "merge-body.txt"))
+      ? readFileSync(join(localDir, "merge-body.txt"), "utf8")
+      : "",
     rgCalls: existsSync(rgCalls) ? readFileSync(rgCalls, "utf8") : "",
   };
 }
@@ -336,19 +391,25 @@ describePosix("scripts/pr merge-run", () => {
     expect(result.calls).not.toContain("pr merge");
   });
 
-  it("keeps the default immediate pinned squash merge unchanged", () => {
+  it("lands the default pinned squash with verified reviewer and contributor attribution", () => {
     const result = runMerge({ mergeStateStatus: "CLEAN" });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.calls).toContain(`plain pr merge 123 --squash --match-head-commit ${headSha}`);
+    expect(result.calls).toContain(
+      `plain pr merge 123 --squash --match-head-commit ${headSha} --author-email reviewer@example.com --subject Fix Slack upload captions (#123) --body-file .local/merge-body.txt`,
+    );
     expect(result.calls).toContain(`scripts/watch-pr-ci.mjs 123 ${headSha} --completion ci-run`);
     expect(result.calls).toContain("plain pr checks 123 --required --json name,bucket,state");
-    expect(result.calls).toContain("path pr view 123 --json state,isDraft");
+    expect(result.calls).toContain("path pr view 123 --json number,title,state,isDraft,author");
     expect(result.calls).not.toContain("--required --watch");
     expect(result.calls).not.toContain("--auto");
-    expect(result.calls).not.toMatch(/^(?:path|plain) api .*\/commits\//mu);
+    expect(result.calls).toContain(`plain api repos/openclaw/openclaw/commits/${landedSha}`);
     expect(result.calls).not.toContain("--json commits");
     expect(result.stdout).toContain("merge-run complete for PR #123");
+    expect(result.stdout).toContain("merge author email: reviewer@example.com");
+    expect(result.mergeBody).toBe(
+      `Merged via squash.\n\nPrepared head SHA: ${headSha}\nCo-authored-by: contributor <5678+contributor@users.noreply.github.com>\nCo-authored-by: altaywtf <1234+altaywtf@users.noreply.github.com>\nReviewed-by: @altaywtf\n`,
+    );
     expect(result.stdout).toContain(
       "completion comment: https://github.com/openclaw/openclaw/pull/123#issuecomment-1",
     );
@@ -359,6 +420,62 @@ describePosix("scripts/pr merge-run", () => {
     expect(result.lifecycle).toBe(
       "comment\nremote-cleanup\nworktree-cleanup .worktrees/pr-123\nbranch-cleanup temp/pr-123\nbranch-cleanup pr-123\nbranch-cleanup pr-123-prep\n",
     );
+  });
+
+  it("fails closed when the landed commit is missing the reviewer trailer", () => {
+    const result = runMerge({
+      commitMessage: `Fix Slack upload captions (#123)\n\nCo-authored-by: contributor <5678+contributor@users.noreply.github.com>`,
+      mergeStateStatus: "CLEAN",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Missing reviewer co-author trailer");
+    expect(result.lifecycle).toBe("");
+  });
+
+  it("fails closed when GitHub lands the commit under another author email", () => {
+    const result = runMerge({
+      landedAuthorEmail: "someone-else@example.com",
+      mergeStateStatus: "CLEAN",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Landed commit author email mismatch");
+    expect(result.lifecycle).toBe("");
+  });
+
+  it("retries an author-email validation failure once with the next candidate", () => {
+    const result = runMerge({ authorEmailFailures: 1, mergeStateStatus: "CLEAN" });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.mergeAttempts).toBe(2);
+    expect(result.calls).toContain("--author-email reviewer-fallback@example.com");
+    expect(result.stdout).toContain(
+      "Retrying merge once with fallback author email: reviewer-fallback@example.com",
+    );
+    expect(result.stdout).toContain("merge author email: reviewer-fallback@example.com");
+  });
+
+  it("omits a contributor trailer for a bot author", () => {
+    const result = runMerge({
+      commitMessage: `Fix Slack upload captions (#123)\n\nCo-authored-by: altaywtf <1234+altaywtf@users.noreply.github.com>\nReviewed-by: @altaywtf`,
+      mergeStateStatus: "CLEAN",
+      prAuthor: "clawsweeper[bot]",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.mergeBody).not.toContain("Co-authored-by: clawsweeper[bot]");
+    expect(result.stdout).toContain("Skipping PR author co-author trailer check");
+  });
+
+  it("keeps rebase landing free of single-commit attribution flags", () => {
+    const result = runMerge({ mergeMethod: "rebase", mergeStateStatus: "CLEAN" });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.calls).toContain(`plain pr merge 123 --rebase --match-head-commit ${headSha}`);
+    expect(result.calls).not.toContain("--author-email");
+    expect(result.calls).not.toContain(`plain api repos/openclaw/openclaw/commits/${landedSha}`);
+    expect(result.stdout).toContain("merge attribution: n/a (rebase)");
   });
 
   it("retries transient structured comment failures exactly three times", () => {
@@ -393,7 +510,7 @@ describePosix("scripts/pr merge-run", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.calls).toContain(
-      `plain pr merge 123 --auto --squash --match-head-commit ${headSha}`,
+      `plain pr merge 123 --auto --squash --match-head-commit ${headSha} --author-email reviewer@example.com --subject Fix Slack upload captions (#123) --body-file .local/merge-body.txt`,
     );
     expect(result.calls.match(/^plain pr merge /gmu)).toHaveLength(1);
     expect(result.stdout).toContain("AUTO-MERGE ENABLED");

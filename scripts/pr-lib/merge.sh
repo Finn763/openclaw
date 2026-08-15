@@ -33,6 +33,18 @@ auto_merge_unavailable_error() {
     "$log_file"
 }
 
+commit_message_has_exact_line() {
+  local message="$1"
+  local expected="$2"
+  local line
+  while IFS= read -r line; do
+    if [ "$line" = "$expected" ]; then
+      return 0
+    fi
+  done <<< "$message"
+  return 1
+}
+
 mainline_drift_requires_sync() {
   local mainline_base="$1"
   local prepared_head_sha="$2"
@@ -242,7 +254,13 @@ merge_run() {
   source .local/prep.env
 
   local pr_meta_json
-  pr_meta_json=$(read_pr_view_json "$pr" "state,isDraft") || exit 1
+  pr_meta_json=$(read_pr_view_json "$pr" "number,title,state,isDraft,author") || exit 1
+  local pr_title
+  pr_title=$(printf '%s\n' "$pr_meta_json" | jq -r .title)
+  local pr_number
+  pr_number=$(printf '%s\n' "$pr_meta_json" | jq -r .number)
+  local contrib
+  contrib=$(printf '%s\n' "$pr_meta_json" | jq -r .author.login)
   local is_draft
   is_draft=$(printf '%s\n' "$pr_meta_json" | jq -r .isDraft)
   if [ "$is_draft" = "true" ]; then
@@ -306,6 +324,88 @@ merge_run() {
     exit 2
   fi
 
+  local attributed_merge=false
+  local reviewer=""
+  local reviewer_id=""
+  local reviewer_coauthor_email=""
+  local contrib_coauthor_email=""
+  local selected_merge_author_email=""
+  local reviewer_email_candidates=()
+  if [ "$merge_method" != "rebase" ]; then
+    attributed_merge=true
+    reviewer=$(gh_plain api user --jq .login)
+    reviewer_id=$(gh_plain api user --jq .id)
+    reviewer_coauthor_email="${reviewer_id}+${reviewer}@users.noreply.github.com"
+
+    if pr_contributor_allows_human_trailers "$contrib"; then
+      contrib_coauthor_email="${COAUTHOR_EMAIL:-}"
+      if [ -z "$contrib_coauthor_email" ] || [ "$contrib_coauthor_email" = "null" ]; then
+        if ! contrib_coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
+          echo "Unable to resolve a co-author email for PR author $contrib"
+          exit 1
+        fi
+      fi
+    fi
+
+    local reviewer_email_candidate
+    while IFS= read -r reviewer_email_candidate; do
+      [ -n "$reviewer_email_candidate" ] || continue
+      reviewer_email_candidates+=("$reviewer_email_candidate")
+    done < <(merge_author_email_candidates "$reviewer" "$reviewer_id")
+    if [ "${#reviewer_email_candidates[@]}" -eq 0 ]; then
+      echo "Unable to resolve a candidate merge author email for reviewer $reviewer"
+      exit 1
+    fi
+    selected_merge_author_email="${reviewer_email_candidates[0]}"
+
+    {
+      echo "Merged via $merge_label."
+      echo
+      echo "Prepared head SHA: $PREP_HEAD_SHA"
+      if [ -n "$contrib_coauthor_email" ]; then
+        echo "Co-authored-by: $contrib <$contrib_coauthor_email>"
+      fi
+      echo "Co-authored-by: $reviewer <$reviewer_coauthor_email>"
+      echo "Reviewed-by: @$reviewer"
+    } > .local/merge-body.txt
+  fi
+
+  local MERGE_ERR_MSG=""
+  invoke_attributed_merge() {
+    local mode="$1"
+    local email="$2"
+    local merge_args=(pr merge "$pr")
+    if [ "$mode" = "auto" ]; then
+      merge_args+=(--auto)
+    fi
+    merge_args+=(
+      "$merge_flag"
+      --match-head-commit "$PREP_HEAD_SHA"
+      --author-email "$email"
+      --subject "$pr_title (#$pr_number)"
+      --body-file .local/merge-body.txt
+    )
+    gh_plain "${merge_args[@]}" >.local/merge-output.log 2>&1
+  }
+
+  run_attributed_merge() {
+    local mode="$1"
+    if invoke_attributed_merge "$mode" "$selected_merge_author_email"; then
+      return 0
+    fi
+
+    MERGE_ERR_MSG=$(cat .local/merge-output.log)
+    if is_author_email_merge_error "$MERGE_ERR_MSG" && [ "${#reviewer_email_candidates[@]}" -ge 2 ]; then
+      selected_merge_author_email="${reviewer_email_candidates[1]}"
+      echo "Retrying merge once with fallback author email: $selected_merge_author_email"
+      if invoke_attributed_merge "$mode" "$selected_merge_author_email"; then
+        return 0
+      fi
+      MERGE_ERR_MSG=$(cat .local/merge-output.log)
+    fi
+    return 1
+  }
+
   local merge_submitted=false
   local state=""
   # Auto-merge is only a post-verification landing strategy. Keep every
@@ -359,11 +459,7 @@ merge_run() {
     else
       # GitHub's EnablePullRequestAutoMergeInput contract keeps expectedHeadOid
       # as the head that must match to allow the eventual merge.
-      if gh_plain pr merge "$pr" \
-        --auto \
-        --squash \
-        --match-head-commit "$PREP_HEAD_SHA" \
-        >.local/merge-output.log 2>&1
+      if run_attributed_merge auto
       then
         auto_meta=$(read_pr_view_json "$pr" "state,headRefOid,mergeable,mergeStateStatus,autoMergeRequest") || exit 1
         auto_head_sha=$(printf '%s\n' "$auto_meta" | jq -r .headRefOid)
@@ -415,7 +511,12 @@ merge_run() {
   fi
 
   if [ "$merge_submitted" != "true" ]; then
-    if ! gh_plain pr merge "$pr" \
+    if [ "$attributed_merge" = "true" ]; then
+      if ! run_attributed_merge immediate; then
+        print_relevant_log_excerpt .local/merge-output.log
+        exit 1
+      fi
+    elif ! gh_plain pr merge "$pr" \
       "$merge_flag" \
       --match-head-commit "$PREP_HEAD_SHA" \
       >.local/merge-output.log 2>&1
@@ -453,6 +554,37 @@ merge_run() {
   fi
   local repo_nwo
   repo_nwo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+  if [ "$attributed_merge" = "true" ]; then
+    local landed_commit_json
+    if ! landed_commit_json=$(gh_plain api "repos/$repo_nwo/commits/$landed_sha"); then
+      echo "Landed commit is not resolvable via repository commit endpoint: $landed_sha"
+      exit 1
+    fi
+    local landed_author_email
+    landed_author_email=$(printf '%s\n' "$landed_commit_json" | jq -r '.commit.author.email // ""')
+    if [ "$landed_author_email" != "$selected_merge_author_email" ]; then
+      echo "Landed commit author email mismatch (expected $selected_merge_author_email, got ${landed_author_email:-missing})."
+      exit 1
+    fi
+    local commit_body
+    commit_body=$(printf '%s\n' "$landed_commit_json" | jq -r .commit.message)
+    local expected_trailer
+    if [ -n "$contrib_coauthor_email" ]; then
+      expected_trailer="Co-authored-by: $contrib <$contrib_coauthor_email>"
+      commit_message_has_exact_line "$commit_body" "$expected_trailer" || {
+        echo "Missing PR author co-author trailer"
+        exit 1
+      }
+    else
+      echo "Skipping PR author co-author trailer check for bot/app author $contrib."
+    fi
+    expected_trailer="Co-authored-by: $reviewer <$reviewer_coauthor_email>"
+    commit_message_has_exact_line "$commit_body" "$expected_trailer" || {
+      echo "Missing reviewer co-author trailer"
+      exit 1
+    }
+  fi
 
   local landed_sha_url="https://github.com/$repo_nwo/commit/$landed_sha"
   local prep_sha_url="https://github.com/$repo_nwo/pull/$pr/commits/$PREP_HEAD_SHA"
@@ -501,6 +633,11 @@ merge_run() {
 
   echo "merge-run complete for PR #$pr"
   echo "landed commit: $landed_sha"
+  if [ "$attributed_merge" = "true" ]; then
+    echo "merge author email: $selected_merge_author_email"
+  else
+    echo "merge attribution: n/a (rebase)"
+  fi
   echo "completion comment: $comment_url"
   echo "$pr_url"
 }
