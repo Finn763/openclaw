@@ -2397,12 +2397,37 @@ button.chat-pr__diff {
   }
 }
 
+/* One surface, no internal rules. Separation inside the composer is carried by
+   luminance alone — a slightly lifted control/dropdown ground against the page
+   canvas — so the frame never stacks a strong border, an inner divider and a
+   heavy shadow on top of each other. Every foreground step below is a mix
+   toward that same surface, which keeps the ramp correct in light themes too,
+   where --text-strong is dark rather than near-white. */
 .agent-chat__input {
   --chat-box-inset: 8px;
   /* Height of every control on the composer's input row. The row bottom-aligns
      so it can follow a growing textarea, which only reads as one axis while all
      its children share this box. */
   --chat-composer-control-height: 36px;
+  --chat-composer-surface: var(--popover);
+  --chat-composer-secondary: color-mix(
+    in srgb,
+    var(--text-strong) 65%,
+    var(--chat-composer-surface)
+  );
+  --chat-composer-tertiary: color-mix(
+    in srgb,
+    var(--text-strong) 48%,
+    var(--chat-composer-surface)
+  );
+  --chat-composer-hairline: color-mix(in srgb, var(--text-strong) 16%, transparent);
+  --chat-composer-hover: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  /* Footer control box. Smaller than the editor's own line box on purpose: the
+     controls read as chrome beside the text, not as peers of it. */
+  --chat-composer-control-size: 28px;
+  /* One editor line. The single-line box centres a line of exactly this height,
+     and the multiline editor never gets shorter than one of them. */
+  --chat-composer-editor-line: 24px;
 
   position: relative;
   display: flex;
@@ -2410,10 +2435,14 @@ button.chat-pr__diff {
   min-width: 0;
   margin: 0;
   padding: 0;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  background: var(--chat-composer-surface);
+  border: 1px solid var(--chat-composer-hairline);
+  /* Multiline is the resting shape, so it owns the bare-selector radius; the
+     scale token is the shared curvature signal, never a local redeclaration. */
+  border-radius: calc(20px * var(--openclaw-corner-radius-scale));
+  /* Deliberately lighter than --shadow-sm: with the border and the luminance
+     step already doing the separating, a heavier drop reads as a second frame. */
+  box-shadow: 0 4px 16px rgb(0 0 0 / 5%);
   flex-shrink: 0;
   transition:
     border-color var(--duration-fast) ease,
@@ -2482,6 +2511,81 @@ button.chat-pr__diff {
   }
 }
 
+/* Everything docked above the editor. Its measured height is what pins the
+   composer to the multiline shape (see updateComposerLayout in
+   chat-composer-dom.ts), so it must stay a flow box with nothing in it when
+   there is nothing to show — no minimum height, no padding of its own. */
+.agent-chat__composer-lede {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Single line: the footer stops being a row of its own and its three groups
+   join the editor on one baseline, so the whole composer is one pill. `order`
+   puts the leading group ahead of the editor without moving it in the DOM,
+   where it has to stay after the editor for the multiline grid. */
+/* No gap here on purpose. The lede stays a measurable flow box even when it has
+   nothing docked in it — that measurement is what lets the composer expand
+   again the moment an attachment arrives — so a container gap would reserve
+   space for an empty region. The groups below carry their own inline spacing
+   instead. */
+.agent-chat__input[data-composer-layout="single-line"] {
+  flex-direction: row;
+  align-items: center;
+  padding: 4px;
+}
+
+/* Pills are excluded from the shared superellipse on purpose: the shape
+   flattens a fully rounded end. Doubling the class outranks the shared
+   opt-in rule in base.css without reaching for !important. */
+.agent-chat__input.agent-chat__input[data-composer-layout="single-line"] {
+  border-radius: var(--radius-full);
+  corner-shape: round;
+}
+
+/* The editor is the one thing on this row that may not be squeezed away: the
+   middle group shrinks first, and below this floor the layout owner has already
+   switched the whole surface to the vertical shape. */
+.agent-chat__input[data-composer-layout="single-line"] .agent-chat__composer-input-row {
+  flex: 1 1 auto;
+  order: 1;
+  align-items: center;
+  min-width: 6ch;
+  padding: 0 4px;
+}
+
+.agent-chat__input[data-composer-layout="single-line"] .agent-chat__composer-footer {
+  display: contents;
+}
+
+.agent-chat__input[data-composer-layout="single-line"] .agent-chat__composer-lead {
+  order: 0;
+}
+
+.agent-chat__input[data-composer-layout="single-line"] .agent-chat__composer-mid {
+  order: 2;
+  flex: 0 1 auto;
+  padding-inline-start: 4px;
+}
+
+.agent-chat__input[data-composer-layout="single-line"] .agent-chat__composer-trail {
+  order: 3;
+  flex: 0 0 auto;
+  padding-inline-start: 4px;
+}
+
+.agent-chat__input[data-composer-layout="single-line"]
+  .agent-chat__composer-combobox
+  > :is(textarea, input) {
+  height: var(--chat-composer-control-height);
+  min-height: var(--chat-composer-control-height);
+  max-height: var(--chat-composer-control-height);
+  padding-block: calc((var(--chat-composer-control-height) - var(--chat-composer-editor-line)) / 2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .agent-chat__composer-combobox {
   position: relative;
   display: flex;
@@ -2494,17 +2598,19 @@ button.chat-pr__diff {
   --control-ui-touch-input-size: var(--control-ui-input-text-size);
 
   width: 100%;
-  min-height: var(--chat-composer-control-height);
-  max-height: calc(7em + 24px);
+  min-height: calc(var(--chat-composer-editor-line) + 8px);
+  /* The editor grows upward against the viewport, not against a line count:
+     past this the surface stops moving and the draft scrolls inside it. */
+  max-height: 25dvh;
   resize: none;
-  padding: var(--chat-box-inset);
-  padding-left: calc(var(--chat-box-inset) - 4px);
+  padding-block: 4px;
+  padding-inline: 0;
   border: none;
   background: transparent;
-  color: var(--text);
-  font-size: var(--control-ui-text-md);
+  color: var(--text-strong);
+  font-size: var(--control-ui-input-text-size);
   font-family: inherit;
-  line-height: 1.4;
+  line-height: var(--chat-composer-editor-line);
   outline: none;
   box-sizing: border-box;
 }
@@ -2514,7 +2620,7 @@ button.chat-pr__diff {
 }
 
 .agent-chat__composer-combobox > :is(textarea, input)::placeholder {
-  color: var(--muted);
+  color: var(--chat-composer-tertiary);
 }
 
 /* One ellipsized line while empty: long agent names otherwise wrap the
@@ -2546,14 +2652,14 @@ button.chat-pr__diff {
   margin: 0;
 }
 
-/* Keep settings, split view, and run status together while the model picker
-   uses the remaining footer space. */
+/* Keep settings, split view, and run status together in the footer's middle
+   track. The track is sized to content, so this group shrinks before it ever
+   pushes mic and send off the right edge. */
 .agent-chat__composer-controls {
   display: flex;
   position: relative;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -2609,19 +2715,15 @@ button.chat-pr__diff {
   overflow-wrap: anywhere;
 }
 
+/* The editor's own row. It holds nothing but the text now — the buttons that
+   used to flank it moved into the footer — so it exists only to own the
+   multiline inset and to be the flex item that grows. */
 .agent-chat__composer-input-row {
   display: flex;
   align-items: flex-end;
   gap: 4px;
   min-width: 0;
-  padding: var(--chat-box-inset);
-}
-
-/* The row aligns on its bottom edge, so a child shorter than the control height
-   would centre below everything else. Owning the box here keeps that a property
-   of the row rather than something each new child has to remember. */
-.agent-chat__composer-input-row > * {
-  min-height: var(--chat-composer-control-height);
+  padding: 4px 12px 0;
 }
 
 .agent-chat__disabled-reason {
@@ -2669,24 +2771,58 @@ button.chat-pr__diff {
   color: var(--muted);
 }
 
+/* Three fixed tracks, so a group that renders nothing this update cannot pull
+   the others sideways: permissions left, model/effort in the middle, and the
+   trailing track takes the slack so mic and send stay pinned to the right edge
+   while the editor grows above. No top border — the surface separates by
+   luminance, not by a rule across its own middle. */
 .agent-chat__composer-footer {
-  display: flex;
+  display: grid;
+  /* Every track may shrink below its content: a crowded middle group has to
+     give way rather than push mic and send past the right edge. */
+  grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
   align-items: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  gap: 8px;
-  min-height: 44px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
-  /* Split the inset evenly so the settings chip sits centered between the
-     divider and the card edge instead of hugging the divider. */
-  padding: calc(var(--chat-box-inset) / 2) var(--chat-box-inset);
+  column-gap: 5px;
+  min-height: var(--chat-composer-control-size);
+  padding: 8px;
+}
+
+.agent-chat__composer-lead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  grid-column: 1;
+  min-width: 0;
+}
+
+/* Model, effort and the context reading are one group: they all describe how
+   the next turn will run, so they stay adjacent instead of being split across
+   the surface by the send button's track. */
+.agent-chat__composer-mid {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 2;
+  min-width: 0;
+}
+
+.agent-chat__composer-trail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  grid-column: 3;
+  min-width: 0;
 }
 
 .agent-chat__composer-meta {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .agent-chat__composer-actions {
@@ -2712,6 +2848,23 @@ button.chat-pr__diff {
   transition: all var(--duration-fast) ease;
 }
 
+/* Inside the composer the icon buttons are chrome on a shared surface: square
+   28px boxes, no fill at rest, and a wash that is a step of the surface rather
+   than a separate hover token. */
+.agent-chat__input .agent-chat__input-btn {
+  min-width: var(--chat-composer-control-size);
+  width: var(--chat-composer-control-size);
+  height: var(--chat-composer-control-size);
+  padding: 0;
+  border-radius: var(--radius-full);
+  color: var(--chat-composer-secondary);
+}
+
+.agent-chat__input .agent-chat__input-btn:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--chat-composer-hover);
+}
+
 .agent-chat__input-btn svg {
   width: 18px;
   height: 18px;
@@ -2720,6 +2873,12 @@ button.chat-pr__diff {
   stroke-width: 1.5px;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Icons draw at 16 regardless of the 20-unit viewBox some of them carry. */
+.agent-chat__input :is(.agent-chat__input-btn, .chat-send-btn) svg {
+  width: 16px;
+  height: 16px;
 }
 
 .agent-chat__control-label {
@@ -3253,8 +3412,46 @@ button.chat-pr__diff {
   cursor: not-allowed;
 }
 
-/* The composer mic progresses transparent idle -> subtle hover -> full accent
-   recording; Talk-session controls retain the louder accent treatment. */
+/* Send is the one high-contrast element on the surface: a light disc carrying a
+   dark glyph, inverted straight out of the surface's own two ends. Everything
+   else on the composer is a mix between them, so this reads as the single
+   committed action without needing an accent colour of its own. Losing
+   availability means losing that contrast, not gaining a new hue. */
+.agent-chat__input .chat-send-btn {
+  width: var(--chat-composer-control-size);
+  min-width: var(--chat-composer-control-size);
+  height: var(--chat-composer-control-size);
+  background: var(--text-strong);
+  color: var(--chat-composer-surface);
+  box-shadow: none;
+}
+
+.agent-chat__input .chat-send-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-strong) 88%, var(--chat-composer-surface));
+  box-shadow: none;
+}
+
+.agent-chat__input .chat-send-btn:disabled {
+  background: var(--chat-composer-hover);
+  color: var(--chat-composer-tertiary);
+  opacity: 1;
+}
+
+/* Voice keeps the quiet chrome treatment: it is a mode toggle beside send, not
+   a second primary action. */
+.agent-chat__input .chat-send-btn--voice {
+  background: transparent;
+  color: var(--chat-composer-secondary);
+}
+
+.agent-chat__input .chat-send-btn--voice:hover:not(:disabled) {
+  background: var(--chat-composer-hover);
+  color: var(--text-strong);
+}
+
+/* Idle voice fill stays muted so the idle -> hover -> recording progression
+   escalates (10% -> 18% -> live meter + breathing glow); a full-strength idle
+   fill makes recording state indistinguishable at a glance. */
 .chat-send-btn--voice {
   background: var(--chat-voice-background, color-mix(in srgb, var(--accent) 10%, transparent));
   color: var(--chat-voice-color, var(--accent));
@@ -3652,43 +3849,17 @@ button.chat-pr__diff {
   box-shadow: none;
 }
 
-@media (min-width: 1600px) {
-  .agent-chat__composer-combobox > :is(textarea, input) {
-    max-height: calc(7em + 12px);
-  }
-
-  .agent-chat__composer-footer {
-    min-height: 28px;
-  }
-
-  .agent-chat__composer-footer .agent-chat__input-btn {
-    min-width: 28px;
-    height: 28px;
-    padding-inline: 6px;
-  }
-
-  .agent-chat__composer-input-row .agent-chat__input-btn {
-    min-width: 36px;
-    width: 36px;
-    height: 36px;
-    padding-inline: 0;
-  }
-}
-
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
   .agent-chat__input {
     --chat-box-inset: 4px;
     --chat-composer-control-height: 44px;
+    /* Touch targets, not chrome: the composer's own control rules all read this
+       token, so raising it here resizes every button on the surface at once. */
+    --chat-composer-control-size: 44px;
   }
 
   .agent-chat__composer-input-row {
     gap: 0;
-  }
-
-  .agent-chat__composer-input-row .agent-chat__input-btn--attach {
-    width: 36px;
-    min-width: 36px;
-    height: var(--chat-composer-control-height);
   }
 
   .agent-chat__composer-combobox {
@@ -3697,17 +3868,14 @@ button.chat-pr__diff {
 
   .agent-chat__composer-combobox > :is(textarea, input) {
     flex: 1 1 auto;
-    min-height: var(--chat-composer-control-height);
-    max-height: calc(7em + var(--chat-box-inset) + var(--chat-box-inset));
     padding-top: 10px;
     padding-bottom: 10px;
-    font-size: var(--control-ui-input-text-size);
   }
 
-  .agent-chat__composer-actions {
-    flex-direction: column;
-    gap: 4px;
-    margin-left: var(--chat-box-inset);
+  /* Touch controls already carry their own 44px of height, so the footer keeps
+     only an optical inset around them instead of the desktop breathing room. */
+  .agent-chat__composer-footer {
+    padding: calc(var(--chat-box-inset) / 2) var(--chat-box-inset);
   }
 
   .agent-chat__composer-actions:has(> .chat-talk-control:not(.chat-talk-control--active)) {
@@ -3715,10 +3883,8 @@ button.chat-pr__diff {
   }
 
   .agent-chat__composer-controls {
-    order: 0;
     display: flex;
     justify-content: flex-end;
-    flex: 1 1 0;
     width: auto;
     margin-left: 0;
     gap: 0;
@@ -3832,7 +3998,7 @@ button.chat-pr__diff {
     position: sticky;
     bottom: 0;
     z-index: 3;
-    background: var(--card);
+    background: var(--chat-composer-surface);
   }
 
   .agent-chat__composer-combobox > :is(textarea, input) {
@@ -5337,8 +5503,7 @@ button.chat-pr__diff {
   }
 
   .agent-chat__composer-footer {
-    flex-wrap: nowrap;
-    gap: 3px;
+    column-gap: 3px;
     min-height: 44px;
   }
 
