@@ -5124,13 +5124,15 @@ button.chat-pr__diff {
   flex: 0 0 var(--chat-composer-chip-icon, 14px);
 }
 
-/* On the composer the mark is set in the surface's own strong foreground rather
-   than the provider's brand colour. The menu rows keep the brand hues, where
-   colour is doing the work of telling providers apart; on the chip there is only
-   ever one, so a saturated mark is the loudest thing in a row of quiet chrome
-   and reads as a status light. Outranks the per-provider brand rules in
-   components.css by specificity, whichever order the two files resolve in. */
-.agent-chat__input .provider-brand-icon.chat-controls__trigger-provider-icon {
+/* OpenAI's knot ships under the "codex" asset slug and carries a saturated green
+   that reads as a status light next to quiet chrome, so on the chip it takes the
+   surface's own strong foreground instead. Scoped to that one mark on purpose:
+   every other provider keeps its brand hue here, and the menu rows keep theirs
+   throughout, where colour is doing the work of telling providers apart.
+   Outranks the per-provider rules in components.css by specificity, whichever
+   order the two files resolve in. */
+.agent-chat__input
+  .provider-brand-icon[data-provider-icon="codex"].chat-controls__trigger-provider-icon {
   color: var(--text-strong);
 }
 
