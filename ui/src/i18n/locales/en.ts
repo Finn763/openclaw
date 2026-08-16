@@ -831,6 +831,8 @@ export const en: TranslationMap = {
     draft: "Draft",
     draftDescription: "Keep this session to yourself until you publish it",
     messagePlaceholder: "What should this session work on?",
+    dictate: "Hold to dictate",
+    dictationHoldToSpeak: "Hold the microphone to dictate, then release to insert what you said.",
     readingAttachment: "Reading attachment",
     start: "Start session",
     startInTerminal: "Start in terminal",

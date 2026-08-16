@@ -480,3 +480,80 @@ describe("new-session composer attachment drops", () => {
     expect(disabledTextareaDrop.defaultPrevented).toBe(true);
   });
 });
+
+describe("new-session composer dictation insertion", () => {
+  function draftTextarea(composer: HTMLElement, value: string, start: number, end = start) {
+    const textarea = composer.querySelector<HTMLTextAreaElement>("textarea");
+    if (!textarea) {
+      throw new Error("Expected composer textarea");
+    }
+    textarea.value = value;
+    textarea.selectionStart = start;
+    textarea.selectionEnd = end;
+    return textarea;
+  }
+
+  it("inserts at the caret the writer left, not where the caret ended up", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship it" });
+    const textarea = draftTextarea(composer, "ship it", 4);
+
+    // Pressing the microphone blurs the draft, so the caret is read then rather
+    // than when the transcript comes back and the caret has moved.
+    textareaController.captureSelection();
+    textarea.selectionStart = textarea.value.length;
+    textarea.selectionEnd = textarea.value.length;
+
+    expect(textareaController.insertTranscript("please")).toBe("ship please it");
+    expect(textarea.value).toBe("ship please it");
+  });
+
+  it("replaces the range the writer had highlighted", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship the thing" });
+    draftTextarea(composer, "ship the thing", 5, 14);
+    textareaController.captureSelection();
+
+    expect(textareaController.insertTranscript("it now")).toBe("ship it now");
+  });
+
+  it("appends when no caret was captured", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship" });
+    draftTextarea(composer, "ship", 0);
+
+    expect(textareaController.insertTranscript("it")).toBe("ship it");
+  });
+
+  it("reads uncommitted keystrokes from the draft rather than the committed value", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship" });
+    // The writer kept typing after the last commit upward; the element holds it.
+    draftTextarea(composer, "ship the", 8);
+    textareaController.captureSelection();
+
+    expect(textareaController.insertTranscript("thing")).toBe("ship the thing");
+  });
+
+  it("reports nothing to insert for a blank transcript so the draft is left alone", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship it" });
+    const textarea = draftTextarea(composer, "ship it", 7);
+    textareaController.captureSelection();
+
+    expect(textareaController.insertTranscript("   ")).toBeNull();
+    expect(textarea.value).toBe("ship it");
+  });
+
+  it("spends a captured caret once, so a later transcript appends instead of reusing it", () => {
+    const { composer, textareaController } = renderComposer({ message: "ship it" });
+    draftTextarea(composer, "ship it", 0);
+    textareaController.captureSelection();
+
+    expect(textareaController.insertTranscript("please")).toBe("please ship it");
+    expect(textareaController.insertTranscript("now")).toBe("please ship it now");
+  });
+
+  it("has nothing to insert into once the draft is gone", () => {
+    const { textareaController } = renderComposer({ message: "ship it" });
+    textareaController.captureSelection();
+    textareaController.disconnect();
+
+    expect(textareaController.insertTranscript("it")).toBeNull();
+  });
+});

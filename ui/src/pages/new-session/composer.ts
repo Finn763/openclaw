@@ -19,6 +19,7 @@ import {
   observeTextareaOverflow,
   scheduleTextareaHeightAdjustment,
 } from "../chat/components/chat-composer-dom.ts";
+import { insertComposerDictation } from "../chat/composer-dictation.ts";
 import type { NewSessionAttachmentDraft } from "./attachment-draft.ts";
 import type { NewSessionVisibility } from "./create-params.ts";
 import type { NewSessionModelControl } from "./model-control.ts";
@@ -42,6 +43,7 @@ type NewSessionComposerOptions = {
   };
   submitting: boolean;
   textareaController: NewSessionComposerTextareaController;
+  voiceControl?: TemplateResult;
   messageLocked?: boolean;
   visibility?: NewSessionVisibility;
   draftAvailable?: boolean;
@@ -116,6 +118,7 @@ function renderStartControl(options: NewSessionComposerOptions) {
 
 export class NewSessionComposerTextareaController {
   private textarea: HTMLTextAreaElement | null = null;
+  private capturedSelection: { start: number; end: number } | null = null;
 
   readonly ref = (element?: Element) => {
     const nextTextarea = element instanceof HTMLTextAreaElement ? element : null;
@@ -135,6 +138,52 @@ export class NewSessionComposerTextareaController {
     if (this.textarea?.isConnected && this.textarea.value !== message) {
       scheduleTextareaHeightAdjustment(this.textarea);
     }
+  }
+
+  /**
+   * Remembers where the caret was before another control takes focus. Pressing
+   * the microphone blurs the draft, so the caret has to be read while it still
+   * belongs to the writer rather than when the transcript arrives.
+   */
+  captureSelection() {
+    const target = this.textarea;
+    this.capturedSelection = target
+      ? { start: target.selectionStart, end: target.selectionEnd }
+      : null;
+  }
+
+  /**
+   * Writes a transcript into the draft at the remembered caret and returns the
+   * new draft, or null when there is nothing to insert.
+   *
+   * The element is the draft here, not a copy of it: it holds keystrokes that
+   * have not been committed upward yet, so reading the committed value instead
+   * would insert into a stale draft and drop them. It is written directly too,
+   * so the box grows with the speech before the next render commits.
+   */
+  insertTranscript(transcript: string): string | null {
+    const target = this.textarea;
+    if (!target) {
+      return null;
+    }
+    const value = target.value;
+    const selection = this.capturedSelection ?? { start: value.length, end: value.length };
+    this.capturedSelection = null;
+    const insertion = insertComposerDictation(value, transcript, selection.start, selection.end);
+    if (insertion.value === value) {
+      return null;
+    }
+    target.value = insertion.value;
+    adjustTextareaHeight(target);
+    queueMicrotask(() => {
+      if (!target.isConnected) {
+        return;
+      }
+      target.focus({ preventScroll: true });
+      target.selectionStart = insertion.caret;
+      target.selectionEnd = insertion.caret;
+    });
+    return insertion.value;
   }
 
   disconnect() {
@@ -269,7 +318,9 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
             </div>
           </div>
           <div class="agent-chat__composer-trail">
-            <div class="agent-chat__composer-actions">${renderStartControl(options)}</div>
+            <div class="agent-chat__composer-actions">
+              ${options.voiceControl ?? nothing}${renderStartControl(options)}
+            </div>
           </div>
         </div>
         ${options.blockedSubmitNotice
@@ -297,6 +348,7 @@ export function renderNewSessionDraftComposer(options: {
   draftAvailable?: boolean;
   modelControl: NewSessionModelControl;
   textareaController: NewSessionComposerTextareaController;
+  voiceControl?: TemplateResult;
   requiresModifier: boolean;
   submitDisabledReason?: string;
   blockedSubmitNotice?: string;
@@ -337,6 +389,7 @@ export function renderNewSessionDraftComposer(options: {
     terminalAction: options.terminalAction,
     submitting: options.submitting,
     textareaController: options.textareaController,
+    voiceControl: options.voiceControl,
     messageLocked: options.messageLocked,
     onAttachmentsChange: (attachments) => {
       if (!options.submitting && !options.messageLocked) {

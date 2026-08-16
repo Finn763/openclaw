@@ -3688,12 +3688,6 @@ button.chat-pr__diff {
   display: inline-flex;
 }
 
-<<<<<<< HEAD
-.chat-talk-control .chat-send-btn {
-  border-radius: var(--radius-full) 0 0 var(--radius-full);
-}
-
-=======
 /* The chevron is a modifier on the microphone, not a control of its own, so it
    stays out of the resting composer entirely and grows out of the mic's leading
    edge on approach. Width is what animates, not opacity alone: the action row is
@@ -3703,7 +3697,6 @@ button.chat-pr__diff {
    the menu the host projects is never clipped by its own hidden state.
    Stretch instead of a fixed height so it always matches the voice button,
    including the 44px mobile bump. */
->>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
 .chat-talk-input-picker {
   display: inline-flex;
   align-self: stretch;
@@ -3732,23 +3725,6 @@ button.chat-pr__diff {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-<<<<<<< HEAD
-  min-width: 20px;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid var(--chat-picker-border, var(--border));
-  border-radius: 0 var(--radius-full) var(--radius-full) 0;
-  background: var(--chat-picker-background, transparent);
-  color: var(--chat-picker-color, var(--muted));
-  transition: background var(--duration-fast) ease;
-}
-
-.chat-talk-input-picker__trigger:hover,
-.chat-talk-input-picker[open] .chat-talk-input-picker__trigger {
-  background: var(--chat-picker-hover-background, var(--bg-hover));
-  color: var(--chat-picker-hover-color, var(--text));
-=======
   width: 0;
   min-width: 0;
   height: 100%;
@@ -3819,7 +3795,6 @@ button.chat-pr__diff {
    cannot usefully answer. */
 .chat-talk-control:has(.chat-send-btn:disabled) .chat-talk-input-picker__trigger {
   color: var(--chat-composer-tertiary, var(--muted));
->>>>>>> 6f4b5a22ec0 (polish(ui): dock the composer action row under a multiline editor)
 }
 
 .chat-talk-input-picker__trigger:focus-visible {
