@@ -1,41 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  listLocalTuiProcesses,
-  parseLocalTuiProcessLine,
-  terminateLocalTuiProcesses,
-} from "./local-tui-processes.js";
+import { listLocalTuiProcesses, terminateLocalTuiProcesses } from "./local-tui-processes.js";
 
 describe("local TUI processes", () => {
-  it("parses only verified local TUI command lines", () => {
-    expect(parseLocalTuiProcessLine(" 101 openclaw-tui", 999)).toEqual({
-      pid: 101,
-      command: "openclaw-tui",
-    });
-    expect(parseLocalTuiProcessLine(" 104 openclaw tui --local", 999)).toEqual({
-      pid: 104,
-      command: "openclaw tui --local",
-    });
-    expect(parseLocalTuiProcessLine(" 105 /usr/bin/openclaw chat", 999)).toEqual({
-      pid: 105,
-      command: "/usr/bin/openclaw chat",
-    });
-    expect(
-      parseLocalTuiProcessLine(
-        " 106 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs terminal",
-        999,
-      ),
-    ).toEqual({
-      pid: 106,
-      command: "/usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs terminal",
-    });
-    expect(parseLocalTuiProcessLine(" 102 openclaw gateway --port 18789", 999)).toBeNull();
-    expect(parseLocalTuiProcessLine(" 103 helper --note 'openclaw tui'", 999)).toBeNull();
-    expect(parseLocalTuiProcessLine(" 107 openclaw-helper openclaw terminal", 999)).toBeNull();
-    expect(parseLocalTuiProcessLine(" 108 openclaw --flag tui", 999)).toBeNull();
-    expect(parseLocalTuiProcessLine(" 999 openclaw tui", 999)).toBeNull();
-  });
-
-  it("lists local TUI processes from ps output", () => {
+  it("lists only verified local TUI processes from ps output", () => {
     const spawnSync = vi.fn().mockReturnValue({
       status: 0,
       stdout: [
@@ -45,6 +12,10 @@ describe("local TUI processes", () => {
         " 104 openclaw tui --local",
         " 105 /usr/bin/openclaw chat",
         " 106 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs tui",
+        " 107 helper --note 'openclaw tui'",
+        " 108 openclaw-helper openclaw terminal",
+        " 109 openclaw --flag tui",
+        " 999 openclaw tui",
       ].join("\n"),
     });
 

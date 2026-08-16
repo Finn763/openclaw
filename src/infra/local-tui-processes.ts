@@ -30,7 +30,7 @@ function normalizeExecutableName(value: string | undefined): string {
   return path.basename(value ?? "").replace(/\.exe$/iu, "");
 }
 
-export function isLocalTuiCommand(command: string): boolean {
+function isLocalTuiCommand(command: string): boolean {
   const argv = tokenizeCommandLine(command);
   const executable = normalizeExecutableName(argv[0]);
   if (executable === "openclaw-tui") {
@@ -46,7 +46,7 @@ export function isLocalTuiCommand(command: string): boolean {
   );
 }
 
-export function parseLocalTuiProcessLine(line: string, currentPid = process.pid) {
+function parseLocalTuiProcessLine(line: string, currentPid = process.pid) {
   const match = line.match(/^\s*(\d+)\s+(.+)$/);
   if (!match) {
     return null;
