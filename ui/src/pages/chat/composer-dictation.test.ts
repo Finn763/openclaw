@@ -598,9 +598,11 @@ describe("ComposerDictationController", () => {
     target.dispatchEvent(pointer("pointerdown"));
     await vi.advanceTimersByTimeAsync(250);
 
+    // Names the missing piece and where to fix it: this failure is a
+    // configuration gap the operator has to close, not something a retry clears.
     await waitForFast(() =>
       expect(onError).toHaveBeenCalledWith(
-        "No transcription provider is configured for dictation.",
+        "No transcription provider is configured for dictation. Choose one in Settings to dictate.",
       ),
     );
     expect(getUserMedia).not.toHaveBeenCalled();
