@@ -233,36 +233,6 @@ const WEATHER_TOOL = [
   },
 ] as const;
 
-const STREAM_FAILURE_CASES = [
-  {
-    name: "a reserved client tool",
-    createError: () => createClientToolNameConflictError(["read"]),
-    tools: [{ type: "function", name: "read" }],
-    expectedCode: "invalid_request_error",
-    expectedMessage: "invalid tool configuration",
-  },
-  {
-    name: "a mapped provider failure",
-    createError: () =>
-      new FailoverError("The provider rejected the request.", {
-        reason: "format",
-        status: 400,
-        code: "decimal_above_max_value",
-        rawError: "Invalid top_p: expected a value less than or equal to 1.",
-      }),
-    tools: [],
-    expectedCode: "invalid_request_error",
-    expectedMessage: "Invalid top_p",
-  },
-  {
-    name: "an unmapped provider failure",
-    createError: () => new Error("provider failed"),
-    tools: [],
-    expectedCode: "api_error",
-    expectedMessage: "internal error",
-  },
-] as const;
-
 function buildUrlInputMessage(params: {
   kind: "input_file" | "input_image";
   url: string;
@@ -1857,9 +1827,15 @@ describe("OpenResponses HTTP API (e2e)", () => {
               logprobs: [
                 {
                   token: "Checking",
-                  bytes: null,
+                  bytes: [67, 104, 101, 99, 107, 105, 110, 103],
                   logprob: -0.25,
-                  top_logprobs: [{ token: "Checking", bytes: null, logprob: -0.25 }],
+                  top_logprobs: [
+                    {
+                      token: "Checking",
+                      bytes: [67, 104, 101, 99, 107, 105, 110, 103],
+                      logprob: -0.25,
+                    },
+                  ],
                 },
               ],
             },
