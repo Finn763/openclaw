@@ -36,7 +36,14 @@ export function isLocalTuiCommand(command: string): boolean {
   if (executable === "openclaw-tui") {
     return true;
   }
-  return executable === "openclaw" && LOCAL_TUI_SUBCOMMANDS.has(argv[1] ?? "");
+  if (executable === "openclaw") {
+    return LOCAL_TUI_SUBCOMMANDS.has(argv[1] ?? "");
+  }
+  return (
+    executable === "node" &&
+    normalizeExecutableName(argv[1]) === "openclaw.mjs" &&
+    LOCAL_TUI_SUBCOMMANDS.has(argv[2] ?? "")
+  );
 }
 
 export function parseLocalTuiProcessLine(line: string, currentPid = process.pid) {

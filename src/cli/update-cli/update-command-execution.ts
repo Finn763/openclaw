@@ -63,11 +63,12 @@ async function stopLocalTuiClientsBeforeMutableUpdate(params: { jsonMode: boolea
     if (stopped.stopped.length > 0) {
       defaultRuntime.log(theme.muted(`Stopped local TUI clients: ${stopped.stopped.join(", ")}`));
     }
-    if (stopped.failed.length > 0) {
-      defaultRuntime.log(
-        theme.warn(`Could not stop local TUI clients: ${stopped.failed.join(", ")}`),
-      );
-    }
+  }
+  if (stopped.failed.length > 0) {
+    defaultRuntime.error(
+      `Update refused: could not stop local TUI clients ${stopped.failed.join(", ")}. Close them and retry the update.`,
+    );
+    throw new UpdateCommandAbort();
   }
 }
 
@@ -105,7 +106,6 @@ export async function executeMutableUpdate(params: {
 }): Promise<MutableUpdateExecutionResult | null> {
   let preManagedServiceStop: PreManagedServiceStop | undefined;
   let ownedManagedUpdateContext: OwnedManagedUpdateContext | undefined;
-  let schemaRefusalAfterStop = false;
   const gitMutationRoots =
     params.updateInstallKind === "git"
       ? params.switchToGit
@@ -190,8 +190,8 @@ export async function executeMutableUpdate(params: {
       throw new UpdateCommandAbort();
     }
   };
-
-  await stopLocalTuiClientsBeforeMutableUpdate({ jsonMode: Boolean(params.opts.json) });
+  const stopLocalTuiClientsBeforeMutation = () =>
+    stopLocalTuiClientsBeforeMutableUpdate({ jsonMode: Boolean(params.opts.json) });
 
   if (params.updateInstallKind === "package") {
     try {
@@ -212,7 +212,6 @@ export async function executeMutableUpdate(params: {
         )
       : { incompatible: [], indeterminate: [] };
   if (hasSchemaRefusal(postStopPackageSchemaPreflight)) {
-    schemaRefusalAfterStop = true;
     defaultRuntime.error(formatSchemaRefusalLines(postStopPackageSchemaPreflight).join("\n"));
   }
 
@@ -251,6 +250,7 @@ export async function executeMutableUpdate(params: {
               nodeRunner: params.packageUpdateNodeRunner,
               installEnv: params.packageInstallEnv,
               installTarget: params.packageInstallTarget,
+              beforeMutation: stopLocalTuiClientsBeforeMutation,
             })
           : await updateGitInstall({
               root: params.root,
@@ -272,9 +272,7 @@ export async function executeMutableUpdate(params: {
                       shouldRestart: params.shouldRestart,
                       stopManagedService: stopManagedServiceBeforeMutableUpdate,
                       getPreManagedServiceStop: () => preManagedServiceStop,
-                      markSchemaRefusalAfterStop: () => {
-                        schemaRefusalAfterStop = true;
-                      },
+                      beforeMutation: stopLocalTuiClientsBeforeMutation,
                     })
                   : undefined,
               allowGatewayServiceRepair: false,
@@ -283,18 +281,16 @@ export async function executeMutableUpdate(params: {
   } catch (err) {
     params.stop();
     if (err instanceof UpdateCommandAbort) {
-      if (schemaRefusalAfterStop) {
-        if (preManagedServiceStop?.stopped === true) {
-          await maybeResumeWindowsTaskAutoStartAfterPackageUpdate(preManagedServiceStop).catch(
-            () => undefined,
-          );
-          await maybeRestartServiceAfterFailedMutableUpdate({
-            preManagedServiceStop,
-            jsonMode: Boolean(params.opts.json),
-          });
-        }
-        defaultRuntime.exit(1);
+      if (preManagedServiceStop?.stopped === true) {
+        await maybeResumeWindowsTaskAutoStartAfterPackageUpdate(preManagedServiceStop).catch(
+          () => undefined,
+        );
+        await maybeRestartServiceAfterFailedMutableUpdate({
+          preManagedServiceStop,
+          jsonMode: Boolean(params.opts.json),
+        });
       }
+      defaultRuntime.exit(1);
       return null;
     }
     try {

@@ -19,8 +19,17 @@ describe("local TUI processes", () => {
       pid: 105,
       command: "/usr/bin/openclaw chat",
     });
+    expect(
+      parseLocalTuiProcessLine(
+        " 106 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs terminal",
+        999,
+      ),
+    ).toEqual({
+      pid: 106,
+      command: "/usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs terminal",
+    });
     expect(parseLocalTuiProcessLine(" 102 openclaw gateway --port 18789", 999)).toBeNull();
-    expect(parseLocalTuiProcessLine(" 106 helper --note 'openclaw tui'", 999)).toBeNull();
+    expect(parseLocalTuiProcessLine(" 103 helper --note 'openclaw tui'", 999)).toBeNull();
     expect(parseLocalTuiProcessLine(" 107 openclaw-helper openclaw terminal", 999)).toBeNull();
     expect(parseLocalTuiProcessLine(" 108 openclaw --flag tui", 999)).toBeNull();
     expect(parseLocalTuiProcessLine(" 999 openclaw tui", 999)).toBeNull();
@@ -35,6 +44,7 @@ describe("local TUI processes", () => {
         " 102 /usr/bin/node /usr/lib/node_modules/openclaw/dist/index.js gateway --port 18789",
         " 104 openclaw tui --local",
         " 105 /usr/bin/openclaw chat",
+        " 106 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs tui",
       ].join("\n"),
     });
 
@@ -48,6 +58,10 @@ describe("local TUI processes", () => {
       { pid: 101, command: "openclaw-tui" },
       { pid: 104, command: "openclaw tui --local" },
       { pid: 105, command: "/usr/bin/openclaw chat" },
+      {
+        pid: 106,
+        command: "/usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs tui",
+      },
     ]);
     expect(spawnSync).toHaveBeenCalledWith("ps", ["-axo", "pid=,command="], {
       encoding: "utf8",
@@ -96,5 +110,19 @@ describe("local TUI processes", () => {
       [101, "SIGKILL"],
       [101, 0],
     ]);
+  });
+
+  it("reports local TUI processes that survive the kill fallback", async () => {
+    const controller = {
+      kill: vi.fn(() => true),
+    };
+
+    await expect(
+      terminateLocalTuiProcesses({
+        processes: [{ pid: 101, command: "openclaw-tui" }],
+        controller,
+        graceMs: 0,
+      }),
+    ).resolves.toEqual({ stopped: [], failed: [101] });
   });
 });
