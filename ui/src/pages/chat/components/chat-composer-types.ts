@@ -10,13 +10,10 @@ import type { ControlUiFollowUpMode } from "../../../lib/chat/follow-up-mode.ts"
 import type { ProviderUsageDisplayProps } from "../../../lib/provider-quota-summary.ts";
 import type { SessionToolOverrides } from "../../../lib/sessions/patch.ts";
 import type { ComposerDictationController } from "../composer-dictation.ts";
+import type { ComposerMicrophonePicker } from "../composer-microphone-picker.ts";
 import type { ChatInputHistoryKeyInput, ChatInputHistoryKeyResult } from "../input-history.ts";
 import type { RealtimeTalkConversationEntry } from "../realtime-talk-conversation.ts";
-import type {
-  RealtimeTalkCameraDevice,
-  RealtimeTalkDeviceIssue,
-  RealtimeTalkInputDevice,
-} from "../realtime-talk-input.ts";
+import type { RealtimeTalkCameraDevice } from "../realtime-talk-input.ts";
 import type { RealtimeTalkLevelSignal } from "../realtime-talk-level.ts";
 import type { RealtimeTalkStatus } from "../realtime-talk.ts";
 import type { ChatRunUiStatus } from "../run-lifecycle.ts";
@@ -185,13 +182,7 @@ export type ChatComposerState = {
   restoreComposerFocus: boolean;
   composerInput: HTMLElement | null;
   composerTextarea: HTMLTextAreaElement | null;
-  microphonePickerOpen: boolean;
-  microphonePickerLoading: boolean;
-  microphoneDevices: RealtimeTalkInputDevice[];
-  microphoneIssue: RealtimeTalkDeviceIssue | null;
-  /** Unsubscribe for the devicechange watch; non-null only while the picker is open. */
-  microphoneDeviceWatch: (() => void) | null;
-  microphoneDiscoveryRequest: number;
+  microphonePicker: ComposerMicrophonePicker | null;
   capabilityMenuOpen: boolean;
   capabilityMenuView: ChatComposerPlusMenuView;
   // Stable Lit refs: inline arrows would change identity per render and force

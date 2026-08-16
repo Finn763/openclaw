@@ -5,7 +5,7 @@ import "../../../components/tooltip.ts";
 import { t } from "../../../i18n/index.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
 import { ComposerDictationController, insertComposerDictation } from "../composer-dictation.ts";
-import { discoverRealtimeTalkInputs, observeRealtimeTalkDevices } from "../realtime-talk-input.ts";
+import { ComposerMicrophonePicker } from "../composer-microphone-picker.ts";
 import { isLargePastedTextAttachment } from "./chat-attachments.ts";
 import { renderContextNotice } from "./chat-composer-context.ts";
 import { renderMicrophonePicker, type ChatRunControlsProps } from "./chat-composer-controls.ts";
@@ -41,7 +41,6 @@ import {
   hasTerminalRunStatus,
   isCurrentSessionSubmittedProgress,
   markComposerInputIntent,
-  releaseMicrophoneDeviceWatch,
   suppressStaleSubmittedDraftReplay,
 } from "./chat-composer-state.ts";
 import type { ChatComposerProps } from "./chat-composer-types.ts";
@@ -361,72 +360,23 @@ export function renderChatComposer(props: ChatComposerProps) {
     }
     props.onToggleRealtimeTalk?.();
   };
-  const discoverMicrophones = () => {
-    state.microphonePickerLoading = true;
-    state.microphoneIssue = null;
-    const request = ++state.microphoneDiscoveryRequest;
-    requestUpdate();
-    // Permission-requesting discovery on every pass, including device changes:
-    // a microphone that just appeared has hidden labels until the probe runs,
-    // and the probe only prompts while the picker is the surface in front of
-    // the user.
-    void discoverRealtimeTalkInputs(true)
-      .then((result) => {
-        if (request !== state.microphoneDiscoveryRequest) {
-          return;
-        }
-        state.microphoneDevices = result.devices;
-        state.microphoneIssue = result.issue;
-      })
-      .catch(() => {
-        if (request !== state.microphoneDiscoveryRequest) {
-          return;
-        }
-        state.microphoneDevices = [];
-        state.microphoneIssue = "failed";
-      })
-      .finally(() => {
-        if (request !== state.microphoneDiscoveryRequest) {
-          return;
-        }
-        state.microphonePickerLoading = false;
-        requestUpdate();
-      });
-  };
-  const openMicrophonePicker = () => {
-    if (state.microphonePickerOpen) {
-      return;
-    }
-    state.microphonePickerOpen = true;
-    state.microphoneDeviceWatch ??= observeRealtimeTalkDevices(discoverMicrophones);
-    discoverMicrophones();
-  };
-  const closeMicrophonePicker = () => {
-    if (!state.microphonePickerOpen) {
-      return;
-    }
-    releaseMicrophoneDeviceWatch(state);
-    state.microphonePickerOpen = false;
-    requestUpdate();
-  };
-  const selectMicrophone = (deviceId: string) => {
-    patchSettings({ realtimeTalkInputDeviceId: deviceId.trim() || undefined });
-    releaseMicrophoneDeviceWatch(state);
-    state.microphonePickerOpen = false;
-    requestUpdate();
-  };
+  state.microphonePicker ??= new ComposerMicrophonePicker(requestUpdate);
+  const devicePicker = state.microphonePicker;
   const selectedMicrophoneId = loadSettings().realtimeTalkInputDeviceId?.trim() ?? "";
   const microphonePicker = props.onToggleRealtimeTalk
     ? renderMicrophonePicker({
-        devices: state.microphoneDevices,
-        loading: state.microphonePickerLoading,
-        open: state.microphonePickerOpen,
+        devices: devicePicker.devices,
+        loading: devicePicker.loading,
+        open: devicePicker.open,
         selectedDeviceId: selectedMicrophoneId,
         voiceActive: Boolean(props.realtimeTalkActive),
-        issue: state.microphoneIssue,
-        onOpen: openMicrophonePicker,
-        onClose: closeMicrophonePicker,
-        onSelect: selectMicrophone,
+        issue: devicePicker.issue,
+        onOpen: devicePicker.handleOpen,
+        onClose: devicePicker.handleClose,
+        onSelect: (deviceId: string) => {
+          patchSettings({ realtimeTalkInputDeviceId: deviceId.trim() || undefined });
+          devicePicker.handleClose();
+        },
       })
     : nothing;
   const dictationOptions = {
