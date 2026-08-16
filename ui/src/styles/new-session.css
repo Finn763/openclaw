@@ -119,7 +119,12 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
   cursor: default;
 }
 
+/* The mark has to be a block: left inline it sits on the label's baseline, which
+   parks it about 2px above the row's axis while every sibling control is centred
+   on its own box. Blocking it lets the wrapper collapse to the icon so the
+   button's `align-items: center` puts it on the same line as the label. */
 .new-session-page__visibility svg {
+  display: block;
   width: var(--chat-composer-chip-icon, 14px);
   height: var(--chat-composer-chip-icon, 14px);
   fill: none;

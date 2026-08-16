@@ -2925,8 +2925,10 @@ button.chat-pr__diff {
 /* Optical, not geometric: every box in this row already shares one centre line,
    but the percentage's ink sits about a pixel below its own, so the reading
    looks dropped next to the chips. A transform moves the paint without touching
-   the layout the rest of the row is aligned against. */
-.agent-chat__input .context-ring {
+   the layout the rest of the row is aligned against. Only the reading is off —
+   the dial next to it is already on the row's axis, so nudging their shared
+   parent would take the dial a pixel above it. */
+.agent-chat__input .context-ring__pct {
   transform: translateY(-1px);
 }
 
