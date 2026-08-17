@@ -96,7 +96,7 @@ export function renderChatPermissionPicker(params: {
         type="button"
         class="chat-controls__inline-select-trigger chat-controls__permission-trigger ${params.disabled
           ? "chat-controls__inline-select-trigger--disabled"
-          : ""}"
+          : ""} ${params.mode ? "" : "chat-controls__permission-trigger--default"}"
         data-chat-permission-select="true"
         data-chat-select-value=${params.mode ?? ""}
         aria-label=${`${t("chat.permissionControls.label")}: ${modeLabel(params.mode)}`}

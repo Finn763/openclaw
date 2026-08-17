@@ -4928,6 +4928,10 @@ button.chat-pr__diff {
   color: var(--muted);
 }
 
+.agent-chat__input .chat-controls__permission-trigger--default {
+  color: var(--chat-composer-secondary);
+}
+
 .chat-controls__permission-option-state {
   display: inline-flex;
   align-items: center;
@@ -5655,8 +5659,8 @@ button.chat-pr__diff {
 }
 
 .chat-controls__effort-trigger--fast {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: color-mix(in srgb, var(--accent) 72%, var(--text));
+  background: transparent;
+  color: var(--text);
 }
 
 .chat-controls__reasoning-option {
