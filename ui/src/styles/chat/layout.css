@@ -2777,10 +2777,6 @@ button.chat-pr__diff {
      box, so at the label's size it reads as a speck rather than a separator. */
   font-size: calc(var(--chat-composer-chip-text, 13px) + 1px);
   line-height: 1;
-  /* Optical, not geometric: the box already shares the row's centre line, but a
-     middle dot is painted low inside its own em box, so it reads as dropped
-     between two labels. The transform moves only the paint. */
-  transform: translateY(-1px);
   pointer-events: none;
   user-select: none;
 }
@@ -2924,14 +2920,8 @@ button.chat-pr__diff {
   min-width: 0;
 }
 
-/* Optical, not geometric: every box in this row already shares one centre line,
-   but the percentage's ink sits about a pixel below its own, so the reading
-   looks dropped next to the chips. A transform moves the paint without touching
-   the layout the rest of the row is aligned against. Only the reading is off —
-   the dial next to it is already on the row's axis, so nudging their shared
-   parent would take the dial a pixel above it. */
-.agent-chat__input .context-ring__pct {
-  transform: translateY(-1px);
+.agent-chat__composer-footer svg {
+  display: block;
 }
 
 .agent-chat__composer-trail {
