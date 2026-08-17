@@ -296,10 +296,9 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
   // the control shows whenever either route exists, and it always sits ahead of
   // the primary action rather than standing in for it.
   const voiceControl = props.dictation || props.onToggleVoice ? voiceButton : nothing;
-  // Send holds the trailing edge whatever the draft is. An empty draft disables
-  // it instead of removing it: a primary action that vanishes reads as a broken
-  // composer, and it takes with it the one place the surface says how a turn is
-  // committed. Only an abortable run replaces it, with stop.
+  // Send holds the trailing edge whatever the draft is. During an active run the
+  // same slot shows stop while empty, then becomes the follow-up action as soon
+  // as the operator composes content; two competing primary buttons never render.
   const renderSendAction = (tooltip: string, description: string, label: string) => html`
     <openclaw-tooltip .content=${tooltip}>
       <button
@@ -387,8 +386,11 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
           ${voiceControl}
           ${props.dictation?.active
             ? nothing
-            : html`${props.canAbort && hasComposedContent ? sendAction : nothing}
-                ${props.canAbort ? abortAction : sendAction}`}
+            : props.canAbort
+              ? hasComposedContent
+                ? sendAction
+                : abortAction
+              : sendAction}
         `}
   `;
 }
