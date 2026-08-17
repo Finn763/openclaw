@@ -1678,10 +1678,12 @@ button.chat-reply-preview--message:disabled {
   color: var(--muted);
 }
 .agent-chat__composer-shell {
+  --chat-composer-shell-gap: 6px;
+
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: end;
-  gap: 6px;
+  gap: var(--chat-composer-shell-gap);
   width: calc(100% - 36px);
   max-width: var(--chat-thread-max-width, 48rem);
   margin: 8px auto 14px;
@@ -2403,6 +2405,11 @@ button.chat-pr__diff {
    heavy shadow on top of each other. Every foreground step below is a mix
    toward that same surface, which keeps the ramp correct in light themes too,
    where --text-strong is dark rather than near-white. */
+.agent-chat__composer-shell,
+.agent-chat__input {
+  --chat-composer-surface: var(--popover);
+}
+
 .agent-chat__input {
   --chat-box-inset: 8px;
   /* Height of every control on the composer's input row. The row bottom-aligns
@@ -3265,6 +3272,66 @@ button.chat-pr__diff {
   align-items: center;
   gap: 8px;
   color: var(--text);
+}
+
+.agent-chat__composer-error {
+  --chat-composer-alert-underlap: 28px;
+
+  position: relative;
+  z-index: 0;
+  box-sizing: border-box;
+  min-height: calc(36px + var(--chat-composer-alert-underlap));
+  margin: 0 0 calc(0px - var(--chat-composer-shell-gap) - var(--chat-composer-alert-underlap));
+  padding: 8px 10px calc(8px + var(--chat-composer-alert-underlap)) 14px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, var(--chat-composer-surface));
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  font-size: var(--control-ui-text-sm);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme-mode="light"] .agent-chat__composer-error {
+  background: color-mix(in srgb, var(--danger) 14%, var(--chat-composer-surface));
+}
+
+.agent-chat__composer-shell > .agent-chat__composer-error {
+  border-radius: calc(20px * var(--openclaw-corner-radius-scale))
+    calc(20px * var(--openclaw-corner-radius-scale)) 0 0;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  .agent-chat__composer-shell > .agent-chat__composer-error {
+    corner-shape: superellipse(1.5);
+  }
+}
+
+.agent-chat__composer-error + .agent-chat__input {
+  z-index: 1;
+}
+
+.agent-chat__composer-error-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--danger);
+}
+
+.agent-chat__composer-error-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.agent-chat__composer-error .callout__dismiss {
+  margin: -4px -4px -4px 0;
+  border-radius: var(--radius-full);
+  opacity: 0.72;
+}
+
+.agent-chat__composer-error .callout__dismiss:hover {
+  background: transparent;
+  opacity: 1;
 }
 
 .agent-chat__talk-status-text {
@@ -4134,6 +4201,12 @@ button.chat-pr__diff {
 
   .agent-chat__composer-input-row {
     gap: 0;
+  }
+
+  .agent-chat__composer-error .callout__dismiss {
+    width: 44px;
+    height: 44px;
+    margin-block: -8px;
   }
 
   .agent-chat__composer-combobox {

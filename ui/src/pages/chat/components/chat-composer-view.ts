@@ -156,6 +156,15 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
     props.toolOverrides,
     t("chat.composer.menu.webSearch"),
   ).join(", ");
+  const voiceError = showComposerInput
+    ? renderChatVoiceError({
+        status: props.realtimeTalkCameraError ? "error" : props.realtimeTalkStatus,
+        detail: props.realtimeTalkDetail,
+        onDismissError: props.realtimeTalkCameraError
+          ? undefined
+          : props.onDismissRealtimeTalkError,
+      })
+    : nothing;
 
   return html`
     ${renderChatQueue({
@@ -215,7 +224,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
             </div>
           `
         : nothing}
-      ${disabledBanner}
+      ${disabledBanner} ${voiceError}
       ${showComposerInput
         ? html`<div
             class="agent-chat__input ${props.offline ? "agent-chat__input--offline" : ""}"
@@ -311,13 +320,6 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
               </div>
 
               ${renderChatAttachmentInputs({ ...props, disabled: !canCompose })}
-              ${renderChatVoiceError({
-                status: props.realtimeTalkCameraError ? "error" : props.realtimeTalkStatus,
-                detail: props.realtimeTalkDetail,
-                onDismissError: props.realtimeTalkCameraError
-                  ? undefined
-                  : props.onDismissRealtimeTalkError,
-              })}
               ${props.realtimeTalkVideoStream
                 ? html`
                     <div class="agent-chat__video-preview">
