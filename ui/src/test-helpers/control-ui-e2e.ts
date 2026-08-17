@@ -1336,6 +1336,7 @@ function installControlUiMockGateway(
       "model",
       "thinkingLevel",
       "fastMode",
+      "permissionMode",
       "label",
       "category",
       "icon",
