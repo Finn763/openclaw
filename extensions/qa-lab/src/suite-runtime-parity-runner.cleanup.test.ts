@@ -63,6 +63,27 @@ vi.mock("openclaw/plugin-sdk/agent-harness", () => ({
 vi.mock("openclaw/plugin-sdk/ssrf-runtime", () => ({
   fetchWithSsrFGuard: mocks.fetchWithSsrFGuard,
 }));
+vi.mock("./crabline-transport.js", () => ({
+  createQaCrablineTransportAdapter: vi.fn(async () => ({
+    id: "telegram",
+    label: "Crabline Telegram",
+    accountId: "sut",
+    requiredPluginIds: [],
+    supportedActions: [],
+    sendInbound: vi.fn(async () => {}),
+    createGatewayConfig: () => ({}),
+    waitReady: vi.fn(async () => {}),
+    buildAgentDelivery: ({ target }: { target: string }) => ({
+      channel: "telegram",
+      to: target,
+      replyChannel: "telegram",
+      replyTo: target,
+    }),
+    handleAction: vi.fn(async () => {}),
+    createReportNotes: () => [],
+    cleanup: vi.fn(async () => {}),
+  })),
+}));
 vi.mock("./gateway-child.js", () => ({
   startQaGatewayChild: mocks.startQaGatewayChild,
 }));
@@ -254,7 +275,14 @@ describe("runtime parity suite transport cleanup", () => {
   });
 
   it("prints one generic completion after real nested standard cells and parent cleanup", async () => {
+    mocks.writeQaSuiteArtifacts.mockClear();
     const scenario = makeQaSuiteTestScenario("runtime-cleanup");
+    const selection = {
+      capabilityMatrixPath: "crabline-fake-provider-capabilities.json",
+      channel: "telegram",
+      channelDriver: "crabline",
+      smokeArtifactPath: "crabline-fake-provider-smoke.json",
+    } as const;
     const parentLab = createCleanupTestLab();
     const openClawLab = createCleanupTestLab();
     const codexLab = createCleanupTestLab();
@@ -300,6 +328,8 @@ describe("runtime parity suite transport cleanup", () => {
         startedAt: new Date("2026-08-04T00:00:00.000Z"),
         providerMode: "mock-openai",
         transportId: "qa-channel",
+        channelId: "telegram",
+        channelDriverSelection: selection,
         primaryModel: "mock-openai/test-model",
         alternateModel: "mock-openai/test-model-alt",
         fastMode: true,
@@ -317,6 +347,15 @@ describe("runtime parity suite transport cleanup", () => {
         .filter((line) => line.startsWith("[qa-suite] run complete"));
       expect(completionLines).toEqual(["[qa-suite] run complete"]);
       expect(runScenario).toHaveBeenCalledTimes(2);
+      expect(mocks.writeQaSuiteArtifacts).toHaveBeenCalledTimes(3);
+      for (const [cellArtifacts] of mocks.writeQaSuiteArtifacts.mock.calls.slice(0, -1)) {
+        expect(cellArtifacts.channelDriverSelection).toBeUndefined();
+      }
+      expect(mocks.writeQaSuiteArtifacts.mock.calls.at(-1)?.[0]).toMatchObject({
+        channel: "telegram",
+        channelDriver: "crabline",
+        channelDriverSelection: selection,
+      });
       expect(openClawLab.stop).toHaveBeenCalledOnce();
       expect(codexLab.stop).toHaveBeenCalledOnce();
       expect(parentLab.stop).toHaveBeenCalledOnce();
