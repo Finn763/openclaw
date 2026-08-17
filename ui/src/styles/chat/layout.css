@@ -3827,6 +3827,16 @@ button.chat-pr__diff {
   pointer-events: auto;
 }
 
+@media (hover: none) {
+  .chat-talk-input-picker__trigger {
+    width: 22px;
+    opacity: 1;
+    transform: translateX(0);
+    transition-delay: 0ms, 0ms, 70ms, 0ms;
+    pointer-events: auto;
+  }
+}
+
 .chat-talk-input-picker__trigger:hover,
 .chat-talk-input-picker[open] .chat-talk-input-picker__trigger {
   color: var(--text-strong);
@@ -3968,7 +3978,7 @@ button.chat-pr__diff {
   user-select: none;
 }
 
-.chat-send-btn--dictating {
+.chat-send-btn.chat-send-btn--dictating {
   width: auto;
   min-width: 76px;
   gap: 8px;
@@ -4080,7 +4090,7 @@ button.chat-pr__diff {
    (vs the danger stop square) is what disambiguates the two controls when a
    run is abortable while recording; the stop glyph only crossfades in on
    hover/focus so the resting state stays a pure waveform. */
-.chat-send-btn--voice-live {
+.chat-send-btn.chat-send-btn--voice-live {
   position: relative;
   width: auto;
   min-width: 64px;
@@ -4091,7 +4101,7 @@ button.chat-pr__diff {
   box-shadow: none;
 }
 
-.chat-send-btn--voice-live::after {
+.chat-send-btn.chat-send-btn--voice-live::after {
   content: "";
   position: absolute;
   inset: -1px;
@@ -4102,7 +4112,7 @@ button.chat-pr__diff {
   pointer-events: none;
 }
 
-.chat-send-btn--voice-live:hover:not(:disabled) {
+.chat-send-btn.chat-send-btn--voice-live:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   box-shadow: none;
 }
@@ -4150,11 +4160,11 @@ button.chat-pr__diff {
 
 /* Errored Talk session: the meter is gone, so the stop glyph stays visible
    and the glow calms down; the alert row above owns the error message. */
-.chat-send-btn--voice-error .chat-send-btn__voice-stop-glyph {
+.chat-send-btn.chat-send-btn--voice-error .chat-send-btn__voice-stop-glyph {
   opacity: 1;
 }
 
-.chat-send-btn--voice-error::after {
+.chat-send-btn.chat-send-btn--voice-error::after {
   animation: none;
   opacity: 0.25;
 }
@@ -5861,7 +5871,7 @@ button.chat-pr__diff {
 
   /* Keep the live voice pill wide enough for its 7-bar meter; the generic
      44px square above would crush it at phone widths. */
-  .chat-send-btn--voice-live {
+  .chat-send-btn.chat-send-btn--voice-live {
     width: auto;
     min-width: 64px;
   }

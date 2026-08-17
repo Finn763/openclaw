@@ -61,7 +61,13 @@ type MicrophonePickerProps = {
  * keeps the microphone expanded after the pointer has moved on. Deferred to the
  * next task because the dropdown restores focus as part of closing.
  */
-function releaseMicrophonePickerFocus(dropdown: EventTarget | null): void {
+function releaseMicrophonePickerFocus(
+  dropdown: EventTarget | null,
+  item: HTMLElement,
+): void {
+  if (item.matches(":focus-visible")) {
+    return;
+  }
   if (!(dropdown instanceof HTMLElement)) {
     return;
   }
@@ -100,13 +106,13 @@ export function renderMicrophonePicker(props: MicrophonePickerProps) {
       .open=${props.open}
       @wa-show=${props.onOpen}
       @wa-hide=${props.onClose}
-      @wa-select=${(event: CustomEvent<{ item: { value?: string } }>) => {
+      @wa-select=${(event: CustomEvent<{ item: HTMLElement & { value?: string } }>) => {
         props.onSelect(event.detail.item.value ?? "");
         // The dropdown hands focus back to its trigger on close, but this trigger
         // only exists while the control is hovered or keyboard-focused. Left
         // focused it holds the microphone open with the pointer nowhere near it,
         // so the choice is made and the control returns to rest.
-        releaseMicrophonePickerFocus(event.currentTarget);
+        releaseMicrophonePickerFocus(event.currentTarget, event.detail.item);
       }}
     >
       <button
