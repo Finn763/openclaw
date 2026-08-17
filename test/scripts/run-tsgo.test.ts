@@ -242,32 +242,57 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
     fs.chmodSync(fakeTsgo, 0o755);
   }
 
+  // The fake compiler is a grandchild in its own process group, so spawnSync's
+  // killSignal never reaches it. Its recorded pid is the only handle the harness
+  // has to tear the tree down when the outer timeout fires on a pre-fix run.
+  function reapFakeTsgo(cwd: string) {
+    const pidFile = path.join(cwd, "fake-tsgo.pid");
+    if (!fs.existsSync(pidFile)) {
+      return;
+    }
+    const pid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 1) {
+      return;
+    }
+    for (const target of [-pid, pid]) {
+      try {
+        process.kill(target, "SIGKILL");
+      } catch {
+        // Already reaped by the watchdog under test.
+      }
+    }
+  }
+
   function runFakeTsgo(cwd: string, timeoutMs: string | undefined) {
     const { OPENCLAW_TSGO_TIMEOUT_MS: _unset, ...baseEnv } = process.env;
-    return spawnSync(
-      process.execPath,
-      [path.resolve("scripts/run-tsgo.mjs"), "-p", "tsconfig.extensions.json"],
-      {
-        cwd,
-        encoding: "utf8",
-        env:
-          timeoutMs === undefined ? baseEnv : { ...baseEnv, OPENCLAW_TSGO_TIMEOUT_MS: timeoutMs },
-        // spawnSync blocks this thread, so vitest's own per-test budget can never
-        // fire; a regression here would hang the worker instead of failing.
-        timeout: 25_000,
-        killSignal: "SIGKILL",
-      },
-    );
+    try {
+      return spawnSync(
+        process.execPath,
+        [path.resolve("scripts/run-tsgo.mjs"), "-p", "tsconfig.extensions.json"],
+        {
+          cwd,
+          encoding: "utf8",
+          env:
+            timeoutMs === undefined ? baseEnv : { ...baseEnv, OPENCLAW_TSGO_TIMEOUT_MS: timeoutMs },
+          // spawnSync blocks this thread, so vitest's own per-test budget can never
+          // fire; a regression here would hang the worker instead of failing.
+          timeout: 25_000,
+          killSignal: "SIGKILL",
+        },
+      );
+    } finally {
+      reapFakeTsgo(cwd);
+    }
   }
 
   it("kills a wedged tsgo that ignores SIGTERM instead of blocking its caller forever", () => {
     const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
     // Mirrors the observed wedge: the checker refuses SIGTERM and never reports,
-    // so only a process-group SIGKILL frees the caller. The bounded loop is the
-    // harness backstop: a pre-fix or failing run must not leak this tree.
+    // so only a process-group SIGKILL frees the caller. It records its pid so the
+    // harness can reap the tree, and self-exits as a last-resort backstop.
     writeFakeTsgo(
       cwd,
-      "#!/bin/sh\ntrap '' TERM\ni=0\nwhile [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done\n",
+      '#!/bin/sh\necho $$ > "$(dirname "$0")/../../fake-tsgo.pid"\ntrap \'\' TERM\ni=0\nwhile [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done\n',
     );
 
     const result = runFakeTsgo(cwd, "2000");
