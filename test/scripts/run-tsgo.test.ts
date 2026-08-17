@@ -277,7 +277,7 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
     expect(result.stderr.trim().split("\n").at(-1)).toBe("[tsgo] FAILED (exit 1)");
   }, 30_000);
 
-  it("arms no watchdog until an operator opts in", () => {
+  it("leaves a healthy run alone under the default deadline", () => {
     const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
     writeFakeTsgo(cwd, "#!/bin/sh\nsleep 2\nexit 0\n");
 
