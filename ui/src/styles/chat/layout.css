@@ -2483,6 +2483,10 @@ button.chat-pr__diff {
     box-shadow var(--duration-fast) ease;
 }
 
+:root[data-theme-mode="dark"] .agent-chat__input {
+  --chat-composer-hairline: color-mix(in srgb, var(--text-strong) 12%, transparent);
+}
+
 /* Focus is a neutral state, not an accent/status signal. This mix clears 3:1
    against the composer surface in both claw themes.
    The ring is drawn inside the surface and the resting drop shadow is repeated
