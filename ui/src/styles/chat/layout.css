@@ -2484,7 +2484,7 @@ button.chat-pr__diff {
 }
 
 :root[data-theme-mode="dark"] .agent-chat__input {
-  --chat-composer-hairline: color-mix(in srgb, var(--text-strong) 12%, transparent);
+  --chat-composer-hairline: color-mix(in srgb, var(--text-strong) 9%, transparent);
 }
 
 /* Focus is a neutral state, not an accent/status signal. This mix clears 3:1
