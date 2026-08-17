@@ -48,13 +48,19 @@ const mocks = vi.hoisted(() => ({
     getProcessRssBytes: () => null,
     stop: vi.fn(async () => {}),
   })),
-  writeQaSuiteArtifacts: vi.fn(async () => ({
-    evidence: { kind: "test" },
-    evidencePath: "/qa-output/qa-evidence.json",
-    report: "",
-    reportPath: "/qa-output/qa-suite-report.md",
-    summaryPath: "/qa-output/qa-suite-summary.json",
-  })),
+  writeQaSuiteArtifacts: vi.fn(
+    async (_params: {
+      channel?: string | null;
+      channelDriver?: string | null;
+      channelDriverSelection?: unknown;
+    }) => ({
+      evidence: { kind: "test" },
+      evidencePath: "/qa-output/qa-evidence.json",
+      report: "",
+      reportPath: "/qa-output/qa-suite-report.md",
+      summaryPath: "/qa-output/qa-suite-summary.json",
+    }),
+  ),
 }));
 
 vi.mock("openclaw/plugin-sdk/agent-harness", () => ({
