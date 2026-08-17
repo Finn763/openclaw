@@ -293,10 +293,6 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                       </div>
                     `
                   : nothing}
-                ${renderChatPlanChecklist(props.planStatus, {
-                  active: showAbortableUi,
-                  variant: "bar",
-                })}
                 ${renderSessionProgressCard(props.progressCard, "composer")}
                 ${renderFallbackIndicator(props.fallbackStatus)}
                 ${renderCompactionIndicator(props.compactionStatus)}
