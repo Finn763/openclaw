@@ -242,6 +242,7 @@ export type ChatProps = ChatTaskSuggestionTrayProps &
     onChatScroll?: (event: Event) => void;
     basePath?: string;
     composerControls?: TemplateResult | typeof nothing;
+    composerLeadControl?: TemplateResult | typeof nothing;
     replyTarget?: ChatReplyTarget | null;
     onClearReply?: () => void;
     onSetReply?: (target: ChatReplyTarget) => void;
@@ -418,6 +419,7 @@ export function renderChat(props: ChatProps) {
     typingActors: props.typingActors,
     onTypingChange: props.onTypingChange,
     composerControls: props.composerControls,
+    composerLeadControl: props.composerLeadControl,
     getDraft: props.getDraft,
     onDraftChange: props.onDraftChange,
     onRequestUpdate: requestUpdate,

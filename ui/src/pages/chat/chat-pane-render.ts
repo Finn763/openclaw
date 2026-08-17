@@ -37,6 +37,7 @@ import {
   createChatPaneSessionActionCallbacks,
   readChatPaneMutationAccess,
   renderChatPaneComposerControls,
+  renderChatPaneComposerPermissionControl,
 } from "./chat-pane-session-controls.ts";
 import {
   renderSidebarRegion,
@@ -442,9 +443,15 @@ export class ChatPane extends ChatPaneBrowserAnnotationRender {
             agentDefaultModel,
             modelAccess: mutationAccess.model,
             effortAccess: mutationAccess.effort,
+            onModelSetup: () => this.context.navigate("model-setup"),
+          }),
+      composerLeadControl: catalogKey
+        ? nothing
+        : renderChatPaneComposerPermissionControl({
+            state,
+            selectedSession,
             permissionAccess: mutationAccess.permission,
             canSelectFull: hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null),
-            onModelSetup: () => this.context.navigate("model-setup"),
           }),
       backgroundTasks: catalogKey ? undefined : backgroundTasks,
       taskSuggestions: this.taskSuggestions,

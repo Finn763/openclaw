@@ -52,8 +52,8 @@ export function renderChatPaneComposerControls(params: {
   agentDefaultModel: string | undefined;
   modelAccess: SessionMethodAccess;
   effortAccess: SessionMethodAccess;
-  permissionAccess: SessionMethodAccess;
-  canSelectFull: boolean;
+  permissionAccess?: SessionMethodAccess;
+  canSelectFull?: boolean;
   onModelSetup: () => void;
 }) {
   const {
@@ -116,33 +116,50 @@ export function renderChatPaneComposerControls(params: {
             ? switchChatThinkingLevel(state, next, targetSessionKey)
             : Promise.resolve(false),
       })}
-      ${renderChatPermissionPicker({
-        canSelectFull,
-        disabled: !permissionAccess.allowed,
-        disabledReason: permissionAccess.allowed ? undefined : permissionAccess.reason,
-        mode: selectedSession?.permissionMode,
-        sessionRoot: selectedSession?.sessionRoot,
-        onSelect: async (permissionMode) => {
-          if (!permissionAccess.allowed) {
-            return;
-          }
-          try {
-            state.chatError = null;
-            await state.sessions.patch(
-              state.sessionKey,
-              { permissionMode },
-              scopedAgentParamsForSession(state, state.sessionKey),
-            );
-          } catch (error) {
-            state.chatError = t("chat.permissionControls.updateFailed", {
-              error: String(error),
-            });
-            state.requestUpdate?.();
-          }
-        },
-      })}
+      ${permissionAccess
+        ? renderChatPaneComposerPermissionControl({
+            state,
+            selectedSession,
+            permissionAccess,
+            canSelectFull: canSelectFull === true,
+          })
+        : ""}
     </div>
   `;
+}
+
+export function renderChatPaneComposerPermissionControl(params: {
+  state: ChatPageHost;
+  selectedSession: GatewaySessionRow | undefined;
+  permissionAccess: SessionMethodAccess;
+  canSelectFull: boolean;
+}) {
+  const { state, selectedSession, permissionAccess, canSelectFull } = params;
+  return renderChatPermissionPicker({
+    canSelectFull,
+    disabled: !permissionAccess.allowed,
+    disabledReason: permissionAccess.allowed ? undefined : permissionAccess.reason,
+    mode: selectedSession?.permissionMode,
+    sessionRoot: selectedSession?.sessionRoot,
+    onSelect: async (permissionMode) => {
+      if (!permissionAccess.allowed) {
+        return;
+      }
+      try {
+        state.chatError = null;
+        await state.sessions.patch(
+          state.sessionKey,
+          { permissionMode },
+          scopedAgentParamsForSession(state, state.sessionKey),
+        );
+      } catch (error) {
+        state.chatError = t("chat.permissionControls.updateFailed", {
+          error: String(error),
+        });
+        state.requestUpdate?.();
+      }
+    },
+  });
 }
 
 export function createChatPaneSessionActionCallbacks(params: {

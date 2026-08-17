@@ -301,7 +301,7 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
         </div>
         <div class="agent-chat__composer-footer">
           <div class="agent-chat__composer-lead">${renderChatAttachmentMenu(attachmentProps)}</div>
-          <div class="agent-chat__composer-mid">
+          <div class="agent-chat__composer-trail">
             <div class="agent-chat__composer-controls">
               ${options.modelControl && options.modelControl !== nothing
                 ? html`<div class="chat-composer-model-control">${options.modelControl}</div>`
@@ -316,8 +316,6 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
                   })
                 : nothing}
             </div>
-          </div>
-          <div class="agent-chat__composer-trail">
             <div class="agent-chat__composer-actions">
               ${options.voiceControl ?? nothing}${renderStartControl(options)}
             </div>

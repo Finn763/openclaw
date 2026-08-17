@@ -46,6 +46,7 @@ type ChatComposerViewContext = {
   visibleDraft: string;
   contextNotice: TemplateResult | typeof nothing;
   composerControls: TemplateResult | typeof nothing;
+  composerLeadControl: TemplateResult | typeof nothing;
   runStatusAnnouncement: string;
   requestUpdate: () => void;
   sendShortcut: "enter" | "modifier-enter";
@@ -81,6 +82,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
     visibleDraft,
     contextNotice,
     composerControls,
+    composerLeadControl,
     runStatusAnnouncement,
     requestUpdate,
     sendShortcut,
@@ -466,6 +468,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                   onEnsureToolAccess: props.capabilityMenu?.onEnsureToolAccess,
                   onOpenToolAccess: props.capabilityMenu?.onOpenToolAccess,
                 })}
+                ${composerLeadControl}
                 ${props.queuedEdit?.editingId
                   ? html`
                       <span class="agent-chat__composer-edit" role="status">
@@ -485,7 +488,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                     `
                   : nothing}
               </div>
-              <div class="agent-chat__composer-mid">
+              <div class="agent-chat__composer-trail">
                 ${composerControls !== nothing
                   ? html`
                       <div class="agent-chat__composer-controls">
@@ -540,8 +543,6 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                     `
                   : nothing}
                 <div class="agent-chat__composer-meta">${contextNotice}</div>
-              </div>
-              <div class="agent-chat__composer-trail">
                 <div class="agent-chat__composer-actions">
                   ${renderChatPrimaryActions(runControlsProps)}
                 </div>

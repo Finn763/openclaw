@@ -114,6 +114,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     },
   );
   const composerControls = props.composerControls ?? nothing;
+  const composerLeadControl = props.composerLeadControl ?? nothing;
   const assistantName = props.assistantName || "OpenClaw";
   const inProgressLabel = props.waitingApproval
     ? t("chat.waitingForApproval")
@@ -498,6 +499,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     visibleDraft,
     contextNotice,
     composerControls,
+    composerLeadControl,
     runStatusAnnouncement,
     requestUpdate,
     sendShortcut,

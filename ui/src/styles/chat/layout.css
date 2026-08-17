@@ -2889,21 +2889,19 @@ button.chat-pr__diff {
   color: var(--muted);
 }
 
-/* Three fixed tracks, so a group that renders nothing this update cannot pull
-   the others sideways. Everything that describes the next turn — permissions,
-   model, effort, context — reads left to right from the leading edge, and the
-   two controls that fire it, mic and send, are alone at the trailing edge. The
-   slack belongs to that trailing track: giving it to the middle instead would
-   let a crowded descriptor group be squeezed below the width its own pickers
-   need. No top border — the surface separates by luminance, not by a rule
-   across its own middle. `margin-top: auto` is what docks the row: the editor
+/* Two fixed sides keep turn access beside the add button while model, effort,
+   context and action controls read together from the trailing edge. The slack
+   belongs to that trailing track so its crowded descriptor group can shrink
+   without pushing mic and send past the right edge. No top border — the surface
+   separates by luminance, not by a rule across its own middle. `margin-top: auto`
+   is what docks the row: the editor
    keeps the top of the surface and this row keeps the bottom, however tall the
    surface gets. */
 .agent-chat__composer-footer {
   display: grid;
-  /* Every track may shrink below its content: a crowded middle group has to
+  /* Every track may shrink below its content: a crowded trailing group has to
      give way rather than push mic and send past the right edge. */
-  grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   align-items: center;
   flex-shrink: 0;
   box-sizing: border-box;
@@ -2932,23 +2930,12 @@ button.chat-pr__diff {
   transform: translateY(-1px);
 }
 
-/* Model, effort and the context reading are one group: they all describe how
-   the next turn will run, so they stay adjacent and continue the leading group
-   rather than being split across the surface by the send button's track. */
-.agent-chat__composer-mid {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  grid-column: 2;
-  min-width: 0;
-}
-
 .agent-chat__composer-trail {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  grid-column: 3;
+  grid-column: 2;
   min-width: 0;
 }
 
