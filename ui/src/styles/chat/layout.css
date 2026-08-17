@@ -4794,6 +4794,10 @@ button.chat-pr__diff {
   user-select: none;
 }
 
+.agent-chat__input .chat-controls__inline-select-trigger {
+  border-radius: var(--radius-full);
+}
+
 .chat-controls__inline-select-trigger:hover,
 .chat-controls__inline-select[open] > .chat-controls__inline-select-trigger {
   background: color-mix(in srgb, var(--text) 7%, transparent);
