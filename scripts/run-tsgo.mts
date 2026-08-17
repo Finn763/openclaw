@@ -16,8 +16,6 @@ import {
   shouldSkipSparseTsgoGuardError,
 } from "./lib/tsgo-sparse-guard.mts";
 
-/** Watchdog bound for one tsgo run; sized well above a healthy whole-program check. */
-const DEFAULT_TSGO_TIMEOUT_MS = 45 * 60 * 1000;
 /** Node's timer ceiling: a longer delay silently becomes 1ms, so a raised override must saturate. */
 const MAX_TSGO_TIMEOUT_MS = 2_147_483_647;
 
@@ -51,10 +49,14 @@ async function main(): Promise<void> {
   }
 
   ensureRepoToolNodeModulesLink(tsgoPath);
-  const timeoutMs = Math.min(
-    readPositiveEnvInt("OPENCLAW_TSGO_TIMEOUT_MS", env, DEFAULT_TSGO_TIMEOUT_MS),
-    MAX_TSGO_TIMEOUT_MS,
-  );
+  // Opt-in deadline: no supported duration contract covers every host and project,
+  // so an unset value keeps the pre-existing unbounded wait rather than guessing one.
+  const timeoutMs = env.OPENCLAW_TSGO_TIMEOUT_MS?.trim()
+    ? Math.min(
+        readPositiveEnvInt("OPENCLAW_TSGO_TIMEOUT_MS", env, MAX_TSGO_TIMEOUT_MS),
+        MAX_TSGO_TIMEOUT_MS,
+      )
+    : undefined;
   try {
     // Managed run owns the whole tsgo process tree: on timeout it SIGKILLs the
     // process group, because a wedged checker ignores SIGTERM and would otherwise

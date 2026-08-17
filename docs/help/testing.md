@@ -694,6 +694,11 @@ Native dependency policy:
       after 5 minutes with no stdout or stderr output. Set
       `OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS=0` to disable the watchdog for
       an intentionally silent investigation.
+    - `scripts/run-tsgo.mjs` waits indefinitely by default. Set
+      `OPENCLAW_TSGO_TIMEOUT_MS` to bound a run on hosts where a wedged
+      compiler would otherwise block its caller forever; on expiry the whole
+      tsgo process tree is killed and the run fails. Values above Node's
+      timer ceiling saturate instead of collapsing to a 1ms deadline.
 
   </Accordion>
 
