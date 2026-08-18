@@ -45,9 +45,10 @@ describe("prepared model runtime plugin metadata ownership", () => {
         expect(prepareOwnedPluginLoadContext(input, process.env, registry, gatewaySnapshot)).toBe(
           gatewaySnapshot,
         );
-        expect(getPreparedPluginRuntimeLoadContext(registry)?.metadataSnapshot).toBe(
-          gatewaySnapshot,
-        );
+        expect(getPreparedPluginRuntimeLoadContext(registry)).toMatchObject({
+          metadataSnapshot: gatewaySnapshot,
+          preferBuiltPluginArtifacts: true,
+        });
         expect(
           withPreparedPluginGenerationScope({ input, pluginGeneration }, (snapshot) => snapshot),
         ).toBe(gatewaySnapshot);
