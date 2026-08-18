@@ -182,6 +182,7 @@ describe("agent runtime plugin registries", () => {
     expect(hoisted.loadPluginRegistryHandle).toHaveBeenCalledWith(
       expect.objectContaining({
         channelPluginLoadIntent: "full",
+        preferBuiltPluginArtifacts: true,
       }),
     );
   });
