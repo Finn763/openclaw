@@ -9368,6 +9368,7 @@ public struct SessionsCreateResult: Codable, Sendable {
     public let key: String
     public let sessionid: String?
     public let entry: [String: AnyCodable]?
+    public let session: SessionRow?
     public let runstarted: Bool?
     public let runid: String?
     public let messageseq: Int?
@@ -9379,6 +9380,7 @@ public struct SessionsCreateResult: Codable, Sendable {
         key: String,
         sessionid: String? = nil,
         entry: [String: AnyCodable]? = nil,
+        session: SessionRow? = nil,
         runstarted: Bool? = nil,
         runid: String? = nil,
         messageseq: Int? = nil,
@@ -9389,6 +9391,7 @@ public struct SessionsCreateResult: Codable, Sendable {
         self.key = key
         self.sessionid = sessionid
         self.entry = entry
+        self.session = session
         self.runstarted = runstarted
         self.runid = runid
         self.messageseq = messageseq
@@ -9401,6 +9404,7 @@ public struct SessionsCreateResult: Codable, Sendable {
         case key
         case sessionid = "sessionId"
         case entry
+        case session
         case runstarted = "runStarted"
         case runid = "runId"
         case messageseq = "messageSeq"
