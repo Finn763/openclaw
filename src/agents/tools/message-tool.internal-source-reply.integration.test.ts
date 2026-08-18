@@ -33,6 +33,12 @@ describe("WebChat message tool internal source reply", () => {
       target: "current-run",
       sourceReplyDeliveryMode: "message_tool_only",
       sourceReplySink: "internal-ui",
+      sourceReplyRoute: "current-source",
+      messageDelivery: {
+        status: "settled",
+        partialDelivery: false,
+        createdThreadIds: [],
+      },
       sourceReply: { text: "Visible progress from the message tool." },
     });
 

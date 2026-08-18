@@ -77,8 +77,14 @@ describe("runMessageAction send validation", () => {
       deliveryStatus: "sent",
       channel: "webchat",
       target: "current-run",
+      sourceReplyRoute: "current-source",
       sourceReplyDeliveryMode: "message_tool_only",
       sourceReplySink: "internal-ui",
+      messageDelivery: {
+        status: "settled",
+        partialDelivery: false,
+        createdThreadIds: [],
+      },
       sourceReply: {
         text: "hello from codex",
       },

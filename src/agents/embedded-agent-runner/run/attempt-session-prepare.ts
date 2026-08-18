@@ -50,7 +50,7 @@ import { resolveExistingAttemptTranscriptState } from "./attempt-transcript-help
 import type { EmbeddedAttemptTranscriptLifecycle } from "./attempt-transcript-lifecycle.js";
 import { createUserTranscriptContextRegistry } from "./attempt-user-transcript-context-registry.js";
 import { installCodeModeRepairHook } from "./code-mode-repair.js";
-import { installMessageToolOnlyTerminalHook } from "./message-tool-terminal.js";
+import { installMessageToolTerminalHook } from "./message-tool-terminal.js";
 import { reconcilePrePersistedCurrentUserTurn } from "./pre-persisted-user-turn.js";
 import { resolveSessionBoundaryPromptCacheKey } from "./session-boundary-prompt-cache-key.js";
 import { notifyToolActivity } from "./tool-activity-heartbeat.js";
@@ -225,7 +225,7 @@ export async function prepareEmbeddedAttemptAgentSession(input: {
   const markSourceReplyDelivered = () => {
     didDeliverSourceReplyViaMessageTool = true;
   };
-  installMessageToolOnlyTerminalHook({
+  installMessageToolTerminalHook({
     agent: activeSession.agent,
     sourceReplyDeliveryMode: attempt.sourceReplyDeliveryMode,
     onDeliveredSourceReply: markSourceReplyDelivered,

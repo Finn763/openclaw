@@ -243,8 +243,18 @@ async function handleInternalSourceReplySendAction(
     deliveryStatus: dryRun ? "dry_run" : "sent",
     channel: INTERNAL_MESSAGE_CHANNEL,
     target: "current-run",
+    sourceReplyRoute: "current-source" as const,
     sourceReplyDeliveryMode: input.sourceReplyDeliveryMode,
-    ...(dryRun ? {} : { sourceReplySink: "internal-ui" as const }),
+    ...(dryRun
+      ? {}
+      : {
+          sourceReplySink: "internal-ui" as const,
+          messageDelivery: {
+            status: "settled" as const,
+            partialDelivery: false as const,
+            createdThreadIds: [],
+          },
+        }),
     sourceReply: sourceReply.payload,
     ...(sourceReply.message ? { message: sourceReply.message } : {}),
     ...(sourceReply.mediaUrl ? { mediaUrl: sourceReply.mediaUrl } : {}),
@@ -266,31 +276,29 @@ async function handleInternalSourceReplySendAction(
   );
 }
 
-function buildInternalSourceReplyToolResult(payload: {
+type InternalSourceReplyToolDetails = {
   status: string;
   deliveryStatus: string;
   channel: ChannelId;
   target: string;
+  sourceReplyRoute: "current-source";
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   sourceReplySink?: "internal-ui";
+  messageDelivery?: {
+    status: "settled";
+    partialDelivery: false;
+    createdThreadIds: string[];
+  };
   sourceReply: ReplyPayload;
   message?: string;
   mediaUrl?: string;
   mediaUrls?: string[];
   dryRun: boolean;
-}): AgentToolResult<{
-  status: string;
-  deliveryStatus: string;
-  channel: ChannelId;
-  target: string;
-  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
-  sourceReplySink?: "internal-ui";
-  sourceReply: ReplyPayload;
-  message?: string;
-  mediaUrl?: string;
-  mediaUrls?: string[];
-  dryRun: boolean;
-}> {
+};
+
+function buildInternalSourceReplyToolResult(
+  payload: InternalSourceReplyToolDetails,
+): AgentToolResult<InternalSourceReplyToolDetails> {
   const action = payload.dryRun ? "Prepared" : "Sent";
   const sink = payload.sourceReplySink ? ` via ${payload.sourceReplySink}` : "";
   return {
@@ -300,21 +308,7 @@ function buildInternalSourceReplyToolResult(payload: {
         text: `${action} visible reply to the current source conversation${sink}.`,
       },
     ],
-    details: {
-      status: payload.status,
-      deliveryStatus: payload.deliveryStatus,
-      channel: payload.channel,
-      target: payload.target,
-      ...(payload.sourceReplyDeliveryMode
-        ? { sourceReplyDeliveryMode: payload.sourceReplyDeliveryMode }
-        : {}),
-      ...(payload.sourceReplySink ? { sourceReplySink: payload.sourceReplySink } : {}),
-      sourceReply: payload.sourceReply,
-      ...(payload.message ? { message: payload.message } : {}),
-      ...(payload.mediaUrl ? { mediaUrl: payload.mediaUrl } : {}),
-      ...(payload.mediaUrls?.length ? { mediaUrls: payload.mediaUrls } : {}),
-      dryRun: payload.dryRun,
-    },
+    details: payload,
   };
 }
 

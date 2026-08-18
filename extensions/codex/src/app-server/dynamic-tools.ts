@@ -867,9 +867,12 @@ export function createCodexDynamicToolBridge(params: {
           !resultIsError &&
           (rawResult.terminate === true || result.terminate === true);
         const confirmedSourceReply =
-          params.hookContext?.sourceReplyDeliveryMode === "message_tool_only" &&
           toolName === "message" &&
-          (toolConfirmedSourceReply || deliveredSourceReply || receiptConfirmedSourceReply);
+          // Internal UI receipts are current-source facts even when the outer run
+          // otherwise uses automatic final replies; completed sends end this turn.
+          (deliveredSourceReply ||
+            (params.hookContext?.sourceReplyDeliveryMode === "message_tool_only" &&
+              (toolConfirmedSourceReply || receiptConfirmedSourceReply)));
         const sourceReplyFinal = confirmedSourceReply ? executedArgs.final !== false : undefined;
         collectToolTelemetry({
           toolName,

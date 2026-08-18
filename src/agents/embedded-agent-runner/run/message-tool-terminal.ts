@@ -50,15 +50,12 @@ function isDeliveredMessageToolOnlySourceReply(params: {
   });
 }
 
-/** Installs an after-tool hook that records source reply delivery evidence. */
-export function installMessageToolOnlyTerminalHook(params: {
+/** Installs an after-tool hook that records and settles completed source replies. */
+export function installMessageToolTerminalHook(params: {
   agent: Agent;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   onDeliveredSourceReply?: () => void;
 }): void {
-  if (params.sourceReplyDeliveryMode !== "message_tool_only") {
-    return;
-  }
   const previousAfterToolCall = params.agent.afterToolCall?.bind(params.agent);
   params.agent.afterToolCall = async (context, signal) => {
     const hookResult = await previousAfterToolCall?.(context, signal);
