@@ -245,13 +245,18 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
   // The fake compiler is a grandchild in its own process group, so spawnSync's
   // killSignal never reaches it. Its recorded pid is the only handle the harness
   // has to tear the tree down when the outer timeout fires on a pre-fix run.
-  function reapFakeTsgo(cwd: string) {
+  function readFakeTsgoPid(cwd: string) {
     const pidFile = path.join(cwd, "fake-tsgo.pid");
     if (!fs.existsSync(pidFile)) {
-      return;
+      return undefined;
     }
     const pid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 1) {
+    return Number.isInteger(pid) && pid > 1 ? pid : undefined;
+  }
+
+  function reapFakeTsgo(cwd: string) {
+    const pid = readFakeTsgoPid(cwd);
+    if (pid === undefined) {
       return;
     }
     for (const target of [-pid, pid]) {
@@ -263,7 +268,11 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
     }
   }
 
-  function runFakeTsgo(cwd: string, timeoutMs: string | undefined) {
+  function runFakeTsgo(
+    cwd: string,
+    timeoutMs: string | undefined,
+    onBeforeReap?: (pid: number | undefined) => void,
+  ) {
     const { OPENCLAW_TSGO_TIMEOUT_MS: _unset, ...baseEnv } = process.env;
     try {
       return spawnSync(
@@ -281,9 +290,27 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
         },
       );
     } finally {
+      onBeforeReap?.(readFakeTsgoPid(cwd));
       reapFakeTsgo(cwd);
     }
   }
+
+  it.each([{ bound: "0" }, { bound: "abc" }])(
+    "explains a rejected OPENCLAW_TSGO_TIMEOUT_MS of $bound instead of crashing",
+    ({ bound }) => {
+      const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
+      writeFakeTsgo(cwd, "#!/bin/sh\nexit 0\n");
+
+      const result = runFakeTsgo(cwd, bound);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("must be plain decimal digits");
+      expect(result.stderr).toContain("cannot be disabled");
+      expect(result.stderr).not.toContain("at readPositiveEnvInt");
+      expect(result.stderr.trim().split("\n").at(-1)).toBe("[tsgo] FAILED (exit 1)");
+    },
+    30_000,
+  );
 
   it("kills a wedged tsgo that ignores SIGTERM instead of blocking its caller forever", () => {
     const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
@@ -295,40 +322,43 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
       '#!/bin/sh\necho $$ > "$(dirname "$0")/../../fake-tsgo.pid"\ntrap \'\' TERM\ni=0\nwhile [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done\n',
     );
 
-    const result = runFakeTsgo(cwd, "2000");
+    const pidBeforeReap = { value: undefined as number | undefined };
+    const result = runFakeTsgo(cwd, "2000", (running) => {
+      pidBeforeReap.value = running;
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("killed the tsgo process tree");
+    // Printing the message is not the contract; the tree actually being gone is.
+    expect(pidBeforeReap.value).toBeDefined();
+    expect(() => process.kill(pidBeforeReap.value as number, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
     expect(result.stderr.trim().split("\n").at(-1)).toBe("[tsgo] FAILED (exit 1)");
   }, 30_000);
 
-  it("leaves a healthy run alone under the default deadline", () => {
-    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
-    writeFakeTsgo(cwd, "#!/bin/sh\nsleep 2\nexit 0\n");
+  // Every bound that must leave a completing compiler alone. The ceiling case is the
+  // regression that matters: without saturation Node collapses the delay to 1ms and
+  // would kill this sleeping child immediately.
+  it.each([
+    { bound: undefined, name: "the default deadline", body: "#!/bin/sh\nsleep 2\nexit 0\n" },
+    { bound: "30000", name: "an explicit bound", body: "#!/bin/sh\nexit 0\n" },
+    {
+      bound: "2147483648",
+      name: "an override past Node's timer ceiling",
+      body: "#!/bin/sh\nsleep 1\nexit 0\n",
+    },
+  ])(
+    "leaves a completing tsgo alone under $name",
+    ({ bound, body }) => {
+      const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
+      writeFakeTsgo(cwd, body);
 
-    const result = runFakeTsgo(cwd, undefined);
+      const result = runFakeTsgo(cwd, bound);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("killed the tsgo process tree");
-  }, 30_000);
-
-  it("leaves a tsgo that finishes inside the watchdog bound alone", () => {
-    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
-    writeFakeTsgo(cwd, "#!/bin/sh\nexit 0\n");
-
-    const result = runFakeTsgo(cwd, "30000");
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("killed the tsgo process tree");
-  }, 30_000);
-
-  it("saturates an override past Node's timer ceiling instead of arming a 1ms watchdog", () => {
-    const cwd = createTempDir("openclaw-run-tsgo-watchdog-");
-    writeFakeTsgo(cwd, "#!/bin/sh\nsleep 1\nexit 0\n");
-
-    const result = runFakeTsgo(cwd, "2147483648");
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("killed the tsgo process tree");
-  }, 30_000);
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("killed the tsgo process tree");
+    },
+    30_000,
+  );
 });

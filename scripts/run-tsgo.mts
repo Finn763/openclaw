@@ -22,8 +22,11 @@ import {
  * would otherwise never report. Raise OPENCLAW_TSGO_TIMEOUT_MS for slower hosts.
  */
 const DEFAULT_TSGO_TIMEOUT_MS = 30 * 60 * 1000;
-/** Node's timer ceiling: a longer delay silently becomes 1ms, so a raised override must saturate. */
-const MAX_TSGO_TIMEOUT_MS = 2_147_483_647;
+// Declared locally, as sibling scripts do, rather than imported from packages/:
+// a static import there resolves before the sparse-checkout guard can report a
+// missing project, turning a clean skip into ERR_MODULE_NOT_FOUND. Mirrors
+// normalization-core's MAX_TIMER_TIMEOUT_MS.
+const MAX_TIMER_TIMEOUT_MS = 2_147_000_000;
 
 async function main(): Promise<void> {
   const hostResources = {
@@ -55,10 +58,21 @@ async function main(): Promise<void> {
   }
 
   ensureRepoToolNodeModulesLink(tsgoPath);
-  const timeoutMs = Math.min(
-    readPositiveEnvInt("OPENCLAW_TSGO_TIMEOUT_MS", env, DEFAULT_TSGO_TIMEOUT_MS),
-    MAX_TSGO_TIMEOUT_MS,
-  );
+  let timeoutMs: number;
+  try {
+    timeoutMs = Math.min(
+      readPositiveEnvInt("OPENCLAW_TSGO_TIMEOUT_MS", env, DEFAULT_TSGO_TIMEOUT_MS),
+      MAX_TIMER_TIMEOUT_MS,
+    );
+  } catch {
+    // main() is top-level awaited, so an escaping parse error would surface as a raw
+    // module rejection with no guidance about the variable that caused it.
+    console.error(
+      `[tsgo] OPENCLAW_TSGO_TIMEOUT_MS must be plain decimal digits with no leading zero, sign, exponent, or decimal point, between 1 and ${Number.MAX_SAFE_INTEGER}; got ${env.OPENCLAW_TSGO_TIMEOUT_MS}. The watchdog cannot be disabled; raise the value instead.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   try {
     // Managed run owns the whole tsgo process tree: on timeout it SIGKILLs the
     // process group, because a wedged checker ignores SIGTERM and would otherwise

@@ -699,7 +699,12 @@ Native dependency policy:
       Hosted tsgo lanes finish in 1-2 minutes; raise
       `OPENCLAW_TSGO_TIMEOUT_MS` on a slower host. On expiry the whole tsgo
       process tree is killed and the run fails. Values above Node's timer
-      ceiling saturate instead of collapsing to a 1ms deadline.
+      ceiling saturate at it instead of collapsing to a 1ms deadline; `0`, a
+      negative, a fraction, or anything above `Number.MAX_SAFE_INTEGER` is
+      rejected and fails the run. Surrounding whitespace is trimmed first;
+      the remaining value must use plain decimal digits without leading zeros,
+      so values such as `1e5` or `007` are rejected. This watchdog cannot be
+      disabled.
 
   </Accordion>
 
