@@ -468,9 +468,12 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         }
       }
     };
-    const resolveRunSessionExecutionOwner = (
+    const resolveRunSessionExecutionOwner = async (
       params: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0],
-    ): { ownerPluginId?: string; nativeActionEvidence: "callback" | "unsupported" } => {
+    ): Promise<{
+      ownerPluginId?: string;
+      nativeActionEvidence: "callback" | "unsupported";
+    }> => {
       const target = params.sessionTarget;
       const targetSessionKey = normalizeOptionalString(target?.sessionKey);
       const directSessionKey = normalizeOptionalString(params.sessionKey);
@@ -541,6 +544,24 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           ? resolveLockedSessionHarnessRegistration(sessionKey, entry, "run")
           : undefined;
       const ownerPluginId = locked?.ownerPluginId;
+      const resolveNativeActionEvidence = async (): Promise<"callback" | "unsupported"> => {
+        if (!entry || !sessionKey) {
+          return "callback";
+        }
+        if (entry.acpSessionBinding) {
+          return "unsupported";
+        }
+        // ACP finalization clears the initialization fence. Read the exact durable
+        // owner row lazily or completed native sessions would look callback-capable.
+        const { readAcpSessionMetaForEntry } = await import("../acp/runtime/session-meta.js");
+        return readAcpSessionMetaForEntry({
+          sessionKey,
+          ...(ownershipAgentId ? { agentId: ownershipAgentId } : {}),
+          entry,
+        })
+          ? "unsupported"
+          : "callback";
+      };
       if (locked && entry && sessionKey && ownerPluginId !== pluginId) {
         const registration = "registration" in locked ? locked.registration : undefined;
         if (!registration) {
@@ -570,7 +591,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         }
         return {
           ownerPluginId,
-          nativeActionEvidence: entry.acpSessionBinding ? "unsupported" : "callback",
+          nativeActionEvidence: await resolveNativeActionEvidence(),
         };
       }
       assertSessionIdentitiesOwned({
@@ -582,7 +603,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         storePath: ownershipStorePath,
       });
       return {
-        nativeActionEvidence: entry?.acpSessionBinding ? "unsupported" : "callback",
+        nativeActionEvidence: await resolveNativeActionEvidence(),
       };
     };
     const assertGatewaySessionRequestOwned = (
@@ -960,7 +981,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           const runEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] = async (params) => {
             const runParams = { ...params, skillWorkshopCollectionReconcile: undefined };
             return await runWithPluginScope(async () => {
-              const executionOwner = resolveRunSessionExecutionOwner(runParams);
+              const executionOwner = await resolveRunSessionExecutionOwner(runParams);
               return await withPluginRuntimeNativeActionEvidence(
                 executionOwner.nativeActionEvidence,
                 async () => {
