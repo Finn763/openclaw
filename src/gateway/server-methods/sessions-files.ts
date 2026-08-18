@@ -26,6 +26,7 @@ import { FsSafeError } from "../../infra/fs-safe.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
+import { getOrCreatePromise } from "../../shared/lazy-promise.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import {
   readSessionTranscriptVisibleMessageDeltaCore,
@@ -85,6 +86,7 @@ const MAX_PREVIEW_BYTES = WORKSPACE_PREVIEW_MAX_BYTES;
 const MAX_BROWSER_ENTRIES = 250;
 const MAX_SEARCH_ENTRIES = 500;
 const MAX_SEARCH_VISITED_ENTRIES = 5_000;
+const gitCheckoutStatusProbes = new Map<string, Promise<boolean>>();
 const TOUCHED_FILES_CACHE_LIMIT = 16;
 const TOUCHED_FILES_DELTA_MAX_MESSAGES = 1_000;
 const TOUCHED_FILES_DELTA_MAX_BYTES = 1_000_000;
@@ -739,6 +741,26 @@ async function loadSessionFiles(params: {
   };
 }
 
+async function loadGitCheckoutStatus(diffCwd: string | undefined): Promise<boolean | undefined> {
+  if (!diffCwd) {
+    return undefined;
+  }
+  const cacheKey = path.resolve(diffCwd);
+  return await getOrCreatePromise(
+    gitCheckoutStatusProbes,
+    cacheKey,
+    async () => {
+      try {
+        const result = await runGit(cacheKey, ["rev-parse", "--show-toplevel"]);
+        return result.code === 0 && Boolean(result.stdout.trim());
+      } catch {
+        return false;
+      }
+    },
+    { evictOnSettled: true },
+  );
+}
+
 async function buildListResult(params: {
   sessionKey: string;
   agentId?: string;
@@ -752,15 +774,7 @@ async function buildListResult(params: {
 }> {
   const loaded = await loadSessionFiles(params);
   const root = loaded.root;
-  let gitCheckout: boolean | undefined;
-  if (loaded.diffCwd) {
-    try {
-      const result = await runGit(loaded.diffCwd, ["rev-parse", "--show-toplevel"]);
-      gitCheckout = result.code === 0 && Boolean(result.stdout.trim());
-    } catch {
-      gitCheckout = false;
-    }
-  }
+  const gitCheckout = await loadGitCheckoutStatus(loaded.diffCwd);
   const workspaceFiles = root
     ? loaded.files.filter((file) =>
         Boolean(resolveTouchedFilePath({ root, fileRoot: loaded.fileRoot, filePath: file.path })),
