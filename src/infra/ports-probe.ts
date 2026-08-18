@@ -1,6 +1,6 @@
 // Probes local ports and reports listener availability.
 import net from "node:net";
-import { isErrno } from "./errors.js";
+import { isErrno, toErrorObject } from "./errors.js";
 import type { PortUsageStatus } from "./ports-types.js";
 
 const PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"];
@@ -39,7 +39,7 @@ export async function tryListenOnPort(params: ListenOnPortParams): Promise<numbe
     const clearAbort = () => params.signal?.removeEventListener("abort", onAbort);
     const onAbort = () => {
       clearAbort();
-      reject(params.signal?.reason);
+      reject(toErrorObject(params.signal?.reason, "Port probe aborted"));
     };
     params.signal?.addEventListener("abort", onAbort, { once: true });
     const tester = net

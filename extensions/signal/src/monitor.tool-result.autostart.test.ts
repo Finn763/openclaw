@@ -195,7 +195,11 @@ describe("monitorSignalProvider autostart", () => {
       ({ abortSignal }: { abortSignal: AbortSignal }) =>
         new Promise<void>((_resolve, reject) => {
           probeStarted?.();
-          abortSignal.addEventListener("abort", () => reject(abortSignal.reason), { once: true });
+          abortSignal.addEventListener(
+            "abort",
+            () => reject(toLintErrorObject(abortSignal.reason, "Non-Error rejection")),
+            { once: true },
+          );
         }),
     );
 
@@ -233,7 +237,11 @@ describe("monitorSignalProvider autostart", () => {
     assertSignalDaemonEndpointAvailableMock.mockImplementationOnce(
       ({ abortSignal }: { abortSignal: AbortSignal }) =>
         new Promise<void>((_resolve, reject) => {
-          abortSignal.addEventListener("abort", () => reject(abortSignal.reason), { once: true });
+          abortSignal.addEventListener(
+            "abort",
+            () => reject(toLintErrorObject(abortSignal.reason, "Non-Error rejection")),
+            { once: true },
+          );
         }),
     );
 
