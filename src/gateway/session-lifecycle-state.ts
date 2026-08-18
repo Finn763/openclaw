@@ -43,7 +43,14 @@ type LifecycleEventLike = Pick<AgentEventPayload, "ts" | "sessionId"> & {
 
 type LifecycleSessionShape = Pick<
   GatewaySessionRow,
-  "updatedAt" | "status" | "lastRunError" | "startedAt" | "endedAt" | "runtimeMs" | "abortedLastRun"
+  | "updatedAt"
+  | "status"
+  | "lastRunError"
+  | "lastRunId"
+  | "startedAt"
+  | "endedAt"
+  | "runtimeMs"
+  | "abortedLastRun"
 >;
 
 type PersistedLifecycleSessionShape = Pick<
@@ -51,6 +58,7 @@ type PersistedLifecycleSessionShape = Pick<
   | "updatedAt"
   | "status"
   | "lastRunError"
+  | "lastRunId"
   | "startedAt"
   | "endedAt"
   | "runtimeMs"
@@ -227,9 +235,9 @@ function derivePersistedSessionLifecyclePatch(params: {
   return {
     ...projection.patch,
     ...(phase === "start"
-      ? { lifecycleRunId: runId }
+      ? { lifecycleRunId: runId, lastRunId: undefined }
       : projection.patch.status && projection.patch.status !== "running"
-        ? { lifecycleRunId: undefined }
+        ? { lifecycleRunId: undefined, lastRunId: runId }
         : {}),
   };
 }

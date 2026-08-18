@@ -201,6 +201,7 @@ describe("session lifecycle state", () => {
         runtimeMs: 2_000,
       });
       expect(completed.lifecycleRunId).toBeUndefined();
+      expect(completed.lastRunId).toBe("run-b");
     },
   );
 
@@ -238,6 +239,7 @@ describe("session lifecycle state", () => {
         status: "running",
         startedAt: 900,
         lifecycleRunId: "old-run",
+        lastRunId: "old-run",
       },
       {
         ts: 2_000,
@@ -247,6 +249,7 @@ describe("session lifecycle state", () => {
     );
 
     expect(started.lifecycleRunId).toBeUndefined();
+    expect(started.lastRunId).toBeUndefined();
   });
 
   it.each([
