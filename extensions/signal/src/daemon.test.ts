@@ -72,7 +72,7 @@ describe("spawnSignalDaemon", () => {
           httpPort: address.port,
         }),
       ).rejects.toThrow(
-        `Signal managed native endpoint 127.0.0.1:${address.port} is unavailable: Port ${address.port} is already in use. Stop the conflicting service or configure this Signal account with a different transport.httpPort.`,
+        `Signal managed native endpoint 127.0.0.1:${address.port} is unavailable: Port ${address.port} is already in use. Stop the conflicting service, configure this Signal account with a different transport.httpPort, or use external-native for an intentionally operator-managed daemon.`,
       );
       expect(listener.listening).toBe(true);
     } finally {

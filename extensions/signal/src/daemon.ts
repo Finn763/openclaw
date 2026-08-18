@@ -69,7 +69,7 @@ export async function assertSignalDaemonEndpointAvailable(params: {
     }
     const endpoint = formatSignalDaemonEndpoint(params.httpHost, params.httpPort);
     throw new Error(
-      `Signal managed native endpoint ${endpoint} is unavailable: ${formatErrorMessage(error)} Stop the conflicting service or configure this Signal account with a different transport.httpPort.`,
+      `Signal managed native endpoint ${endpoint} is unavailable: ${formatErrorMessage(error)} Stop the conflicting service, configure this Signal account with a different transport.httpPort, or use external-native for an intentionally operator-managed daemon.`,
       {
         cause: error,
       },
