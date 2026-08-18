@@ -2360,6 +2360,31 @@ describe("createCodexDynamicToolBridge", () => {
     ]);
   });
 
+  it("keeps automatic external current-source replies nonterminal", async () => {
+    const bridge = createBridgeWithToolResult(
+      "message",
+      textToolResult("Sent.", {
+        ok: true,
+        sourceReplyRoute: "current-source",
+        messageDelivery: {
+          status: "settled",
+          partialDelivery: false,
+          createdThreadIds: [],
+        },
+      }),
+      { sourceReplyDeliveryMode: "automatic" },
+    );
+
+    const result = await handleMessageToolCall(bridge, {
+      action: "thread-reply",
+      threadId: "thread-1",
+      message: "first update",
+    });
+
+    expect(result.terminate).toBeUndefined();
+    expect(bridge.telemetry.didDeliverSourceReplyViaMessageTool).toBe(true);
+  });
+
   it("treats omitted source-reply finality as terminal", async () => {
     const bridge = createBridgeWithToolResult(
       "message",

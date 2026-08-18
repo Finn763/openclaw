@@ -8,7 +8,7 @@ import { buildEmbeddedRunPayloads } from "../embedded-agent-runner/run/payloads.
 import { createMessageTool } from "./message-tool-execution.js";
 
 describe("WebChat message tool internal source reply", () => {
-  it("projects a real targetless send and preserves the automatic final reply", async () => {
+  it("projects targetless progress and preserves the automatic final reply", async () => {
     const tool = createMessageTool({
       config: { agents: { entries: { main: { default: true } } } },
       currentChannelProvider: "webchat",
@@ -27,6 +27,7 @@ describe("WebChat message tool internal source reply", () => {
     const toolResult = await tool.execute("message-call", {
       action: "send",
       message: "Visible progress from the message tool.",
+      final: false,
     });
     expect(toolResult.details).toMatchObject({
       channel: "webchat",

@@ -20,21 +20,17 @@ function argsRecordForToolCall(context: AfterToolCallContext): Record<string, un
     : {};
 }
 
-/**
- * Determines whether a `message.send` tool call delivered a visible source reply
- * in message-tool-only delivery mode. Only implicit-route, non-dry-run,
- * delivered sends qualify; explicit routes and errors are not source replies.
- */
-function isDeliveredMessageToolOnlySourceReply(params: {
+/** A completed source reply ends the turn only for message-tool-only delivery
+ * or the internal UI sink; external current-source receipts remain nonterminal. */
+function isTerminalMessageToolSourceReply(params: {
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   context: AfterToolCallContext;
   hookResult?: AfterToolCallResult;
 }): boolean {
-  const deliveryFact = readEmbeddedMessageDeliveryFact(
-    readToolResultDetails(params.context.result)?.messageDelivery,
-  );
+  const resultDetails = readToolResultDetails(params.context.result);
+  const deliveryFact = readEmbeddedMessageDeliveryFact(resultDetails?.messageDelivery);
   const isError = params.hookResult?.isError ?? params.context.isError;
-  return isDeliveredMessageToolOnlySourceReplyResult({
+  const delivered = isDeliveredMessageToolOnlySourceReplyResult({
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
     toolName: params.context.toolCall.name,
     args: argsRecordForToolCall(params.context),
@@ -48,6 +44,12 @@ function isDeliveredMessageToolOnlySourceReply(params: {
         }
       : {}),
   });
+  return (
+    delivered &&
+    (params.sourceReplyDeliveryMode === "message_tool_only" ||
+      resultDetails?.sourceReplySink === "internal-ui" ||
+      readToolResultDetails(params.hookResult)?.sourceReplySink === "internal-ui")
+  );
 }
 
 /** Installs an after-tool hook that records and settles completed source replies. */
@@ -60,7 +62,7 @@ export function installMessageToolTerminalHook(params: {
   params.agent.afterToolCall = async (context, signal) => {
     const hookResult = await previousAfterToolCall?.(context, signal);
     if (
-      isDeliveredMessageToolOnlySourceReply({
+      isTerminalMessageToolSourceReply({
         sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
         context,
         hookResult,

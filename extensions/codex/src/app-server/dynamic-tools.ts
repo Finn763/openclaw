@@ -870,7 +870,10 @@ export function createCodexDynamicToolBridge(params: {
           toolName === "message" &&
           // Internal UI receipts are current-source facts even when the outer run
           // otherwise uses automatic final replies; completed sends end this turn.
-          (deliveredSourceReply ||
+          ((deliveredSourceReply &&
+            (params.hookContext?.sourceReplyDeliveryMode === "message_tool_only" ||
+              asOptionalRecord(rawResult.details)?.sourceReplySink === "internal-ui" ||
+              asOptionalRecord(result.details)?.sourceReplySink === "internal-ui")) ||
             (params.hookContext?.sourceReplyDeliveryMode === "message_tool_only" &&
               (toolConfirmedSourceReply || receiptConfirmedSourceReply)));
         const sourceReplyFinal = confirmedSourceReply ? executedArgs.final !== false : undefined;

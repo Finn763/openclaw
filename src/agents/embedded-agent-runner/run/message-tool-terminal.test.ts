@@ -272,6 +272,42 @@ describe("message-tool source replies", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("keeps automatic external current-source replies nonterminal", async () => {
+    const agent = {} as unknown as Agent;
+    const onDeliveredSourceReply = vi.fn();
+    installMessageToolTerminalHook({
+      agent,
+      sourceReplyDeliveryMode: "automatic",
+      onDeliveredSourceReply,
+    });
+
+    await expect(
+      agent.afterToolCall?.(
+        createAfterToolCallContext({
+          toolName: "message",
+          args: {
+            action: "thread-reply",
+            threadId: "thread-1",
+            message: "first update",
+          },
+          result: {
+            content: [{ type: "text", text: '{"ok":true}' }],
+            details: {
+              ok: true,
+              sourceReplyRoute: "current-source",
+              messageDelivery: {
+                status: "settled",
+                partialDelivery: false,
+                createdThreadIds: [],
+              },
+            },
+          },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(onDeliveredSourceReply).not.toHaveBeenCalled();
+  });
+
   it("leaves existing after-tool-call output alone when the send failed", async () => {
     const previousAfterToolCall = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "failed" }],
