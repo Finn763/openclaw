@@ -1331,9 +1331,11 @@ describe("promptDefaultModel", () => {
     });
     const prompter = makePrompter({ select });
     const config = { agents: { defaults: {} } } as OpenClawConfig;
+    const env: NodeJS.ProcessEnv = { OPENCLAW_STATE_DIR: "/tmp/openclaw-picker-state" };
 
     const result = await promptDefaultPicker({
       config,
+      env,
       prompter,
       includeProviderPluginSetups: true,
       agentDir: "/tmp/openclaw-agent",
@@ -1341,12 +1343,10 @@ describe("promptDefaultModel", () => {
     });
 
     expect(runProviderPluginAuthMethod).toHaveBeenCalledOnce();
-    expect(resolvePluginProviders).toHaveBeenCalledWith({
-      config,
-      workspaceDir: undefined,
-      env: undefined,
-      mode: "setup",
-    });
+    expect(runProviderPluginAuthMethod).toHaveBeenCalledWith(expect.objectContaining({ env }));
+    expect(resolvePluginProviders).toHaveBeenCalledWith(
+      expect.objectContaining({ config, workspaceDir: undefined, env, mode: "setup" }),
+    );
     expect(result.model).toBe("vllm/meta-llama/Meta-Llama-3-8B-Instruct");
     expect(result.config?.models?.providers?.vllm).toEqual({
       baseUrl: "http://127.0.0.1:8000/v1",

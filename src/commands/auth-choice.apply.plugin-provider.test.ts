@@ -608,6 +608,7 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
         notes: ["Detected local provider runtime.", "Pulled model metadata."],
       }),
     };
+    const env = { OPENCLAW_STATE_DIR: "/tmp/openclaw-selected-state" };
 
     const result = await runProviderPluginAuthMethod({
       config: {
@@ -617,7 +618,7 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
           },
         },
       },
-      env: { OPENCLAW_STATE_DIR: "/tmp/openclaw-state" },
+      env,
       runtime: {} as ApplyAuthChoiceParams["runtime"],
       prompter: {
         note,
@@ -643,7 +644,10 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
       "Provider notes",
     );
     expect(persistAuthProfileBatch).toHaveBeenCalledWith(
-      expect.objectContaining({ stateDir: "/tmp/openclaw-state" }),
+      expect.objectContaining({
+        profiles: [expect.objectContaining({ resetFailureState: true })],
+        stateDir: env.OPENCLAW_STATE_DIR,
+      }),
     );
     expect(events).toEqual(["note", "lock"]);
   });
