@@ -140,6 +140,7 @@ export function makeChatHost(
     chatAvatarStatus: null,
     chatAvatarReason: null,
     sessionsLoading: false,
+    sidebarLayout: { columns: [] },
     sessionsResult: null,
     sessionsResultAgentId: null,
     sessionsError: null,
