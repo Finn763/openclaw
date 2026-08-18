@@ -137,7 +137,7 @@ export type PluginRuntimeLoadContext = {
   manifestRegistry?: PluginManifestRegistry;
   metadataSnapshot?: PluginMetadataSnapshot;
   installRecords?: Record<string, PluginInstallRecord>;
-  preferBuiltPluginArtifacts: boolean;
+  preferBuiltPluginArtifacts?: boolean;
 };
 
 /** Runtime load option values that can be passed directly to plugin loading. */
