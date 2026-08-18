@@ -133,6 +133,18 @@ export function getWorkerTurnExecutionIdentityCapability(
     : undefined;
 }
 
+/** Resolve diagnostic provenance for the current exact session/run owner. */
+export function getWorkerTurnExecutionIdentityCapabilityForRun(
+  store: WorkerTurnExecutionIdentityStore,
+  binding: { sessionId: string; runId: string },
+): WorkerTurnExecutionIdentityCapability | undefined {
+  const path = store[WORKER_TURN_EXECUTION_IDENTITY_PATH];
+  const bound = path ? workerTurnExecutionIdentities.get(path)?.get(binding.sessionId) : undefined;
+  return bound && bound.claim.runId === binding.runId && store.validateTurnClaim(bound.claim)
+    ? bound.capability
+    : undefined;
+}
+
 export function attachWorkerTurnExecutionIdentityStore(store: object, path: string): void {
   Object.defineProperty(store, WORKER_TURN_EXECUTION_IDENTITY_PATH, { value: path });
 }

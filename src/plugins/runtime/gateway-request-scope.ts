@@ -20,6 +20,7 @@ type PluginRuntimeGatewayRequestScope = {
   pluginTrustedOfficialInstall?: boolean;
   gatewayMethodDispatchAllowed?: boolean;
   pluginRegistry?: PluginRegistry;
+  nativeActionEvidence?: "callback" | "unsupported";
 };
 
 type PluginRuntimePluginScope = {
@@ -137,6 +138,18 @@ export function withPluginRuntimePluginScope<T>(scope: PluginRuntimePluginScope,
  */
 export function withPluginRuntimePluginIdScope<T>(pluginId: string, run: () => T): T {
   return withPluginRuntimePluginScope({ pluginId }, run);
+}
+
+/** Marks whether this exact persisted runtime owner exposes an OpenClaw action callback. */
+export function withPluginRuntimeNativeActionEvidence<T>(
+  nativeActionEvidence: "callback" | "unsupported",
+  run: () => T,
+): T {
+  const current = pluginRuntimeGatewayRequestScope.getStore();
+  if (!current) {
+    return run();
+  }
+  return pluginRuntimeGatewayRequestScope.run({ ...current, nativeActionEvidence }, run);
 }
 
 /**

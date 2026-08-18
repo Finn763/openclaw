@@ -6,6 +6,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import { clampPositiveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isToolAllowedByPolicyName } from "../agents/tool-policy-match.js";
@@ -16,6 +17,7 @@ import {
   normalizeToolPolicyName,
   readToolAllowlistIntersection,
 } from "../agents/tool-policy.js";
+import type { ExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
 import { copyReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -108,6 +110,7 @@ import type {
   PluginHookSkillProposalEvaluateResult,
   PluginHookSkillProposalEvaluationOutcome,
 } from "./hook-types.js";
+import { recordPluginRuntimeActionDecision } from "./runtime-action-decision.js";
 import {
   type PluginSubagentRequesterContext,
   withPluginSubagentRequesterContext,
@@ -223,6 +226,11 @@ type ModifyingHookPolicy<K extends PluginHookName, TResult> = {
   shouldStop?: (result: TResult) => boolean;
   terminalLabel?: string;
   onTerminal?: (params: { hookName: K; pluginId: string; result: TResult }) => void;
+  onHandlerResult?: (params: {
+    hook: PluginHookRegistration<K>;
+    result: TResult | undefined;
+  }) => void;
+  onHandlerError?: (params: { hook: PluginHookRegistration<K> }) => void;
 };
 
 type PluginTargetedInboundClaimOutcome =
@@ -321,9 +329,68 @@ export function createHookRunner(
   // Prompt-build hooks may start nested agent runs through any caller. The
   // mutable token lets detached descendants dispatch after the outer run settles.
   const beforePromptBuildDispatch = new AsyncLocalStorage<{ active: boolean }>();
+  const runtimeDecisionScopeId = randomUUID();
+  let runtimeDecisionOrdinal = 0;
 
   const shouldCatchHookErrors = (hookName: PluginHookName): boolean =>
     catchErrors && (failurePolicyByHook[hookName] ?? "fail-open") === "fail-open";
+
+  const recordBeforeToolCallDecision = (params: {
+    event: PluginHookBeforeToolCallEvent;
+    hook: PluginHookRegistration<"before_tool_call">;
+    token?: ExecutionIdentityAdmissionToken;
+    result?: PluginHookBeforeToolCallResult;
+    failed?: boolean;
+  }): void => {
+    const failOpen = params.failed && shouldCatchHookErrors("before_tool_call");
+    const blocked = params.result?.block === true || (params.failed && !failOpen);
+    runtimeDecisionOrdinal += 1;
+    recordPluginRuntimeActionDecision({
+      token: params.token,
+      family: "plugin",
+      operation: "before_tool_call",
+      outcome: blocked ? "denied" : failOpen ? "unknown" : "allowed",
+      coverageState: blocked || !params.failed ? "enforced" : "unknown",
+      reasonCode: params.failed
+        ? failOpen
+          ? "plugin_hook_failed_open"
+          : "plugin_hook_failed_closed"
+        : blocked
+          ? "plugin_hook_blocked"
+          : params.result?.requireApproval
+            ? "plugin_hook_approval_required"
+            : "plugin_hook_allowed",
+      owner: "plugin-hook",
+      decisionBoundary: "plugin.before-tool-call",
+      policyRefs: ["plugin-hook:before-tool-call"],
+      summary: params.failed
+        ? failOpen
+          ? "A plugin hook failed open, so its policy outcome is unknown."
+          : "A plugin hook failed closed before tool execution."
+        : blocked
+          ? "A registered plugin hook denied tool execution."
+          : params.result?.requireApproval
+            ? "A registered plugin hook required a separate owner-native approval decision."
+            : "A registered plugin hook allowed tool execution to continue.",
+      missingEvidence: failOpen ? ["plugin.hook_decision"] : [],
+      remediation: failOpen
+        ? [
+            {
+              code: "repair_plugin_hook",
+              text: "Inspect the registered plugin hook failure before relying on this action.",
+            },
+          ]
+        : [],
+      discriminator: JSON.stringify([
+        params.hook.pluginId,
+        params.hook.registrationId ?? null,
+        params.event.toolCallId ?? null,
+        runtimeDecisionOrdinal,
+        params.event.toolName,
+        runtimeDecisionScopeId,
+      ]),
+    });
+  };
 
   const firstDefined = <T>(prev: T | undefined, next: T | undefined): T | undefined => prev ?? next;
   const lastDefined = <T>(prev: T | undefined, next: T | undefined): T | undefined => next ?? prev;
@@ -731,6 +798,8 @@ export function createHookRunner(
         const timeoutMs = getModifyingHookTimeoutMs(hookName, hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
 
+        policy.onHandlerResult?.({ hook, result: handlerResult });
+
         const shouldMergeResult =
           handlerResult !== undefined && (handlerResult !== null || policy.mergeNullResults);
         if (shouldMergeResult) {
@@ -750,6 +819,7 @@ export function createHookRunner(
           }
         }
       } catch (err) {
+        policy.onHandlerError?.({ hook });
         if (err instanceof HookIsolationError) {
           throw err;
         }
@@ -1256,6 +1326,7 @@ export function createHookRunner(
   async function runBeforeToolCall(
     event: PluginHookBeforeToolCallEvent,
     ctx: PluginHookToolContext,
+    executionIdentityToken?: ExecutionIdentityAdmissionToken,
   ): Promise<PluginHookBeforeToolCallResult | undefined> {
     return runModifyingHook<"before_tool_call", PluginHookBeforeToolCallResult>(
       "before_tool_call",
@@ -1291,6 +1362,15 @@ export function createHookRunner(
         },
         shouldStop: (result) => result.block === true,
         terminalLabel: "block=true",
+        onHandlerResult: ({ hook, result }) =>
+          recordBeforeToolCallDecision({ event, hook, token: executionIdentityToken, result }),
+        onHandlerError: ({ hook }) =>
+          recordBeforeToolCallDecision({
+            event,
+            hook,
+            token: executionIdentityToken,
+            failed: true,
+          }),
       },
       event.toolName,
     );

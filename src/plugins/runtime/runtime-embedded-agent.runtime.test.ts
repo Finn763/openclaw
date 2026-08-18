@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DecisionReceiptV1 } from "../../../packages/gateway-protocol/src/index.js";
+import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { withPluginRuntimePluginIdScope } from "./gateway-request-scope.js";
+import { configurePluginRuntimeActionDecisionSink } from "../runtime-action-decision.js";
+import {
+  withPluginRuntimeNativeActionEvidence,
+  withPluginRuntimePluginIdScope,
+} from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -78,6 +84,7 @@ describe("plugin embedded-agent runtime admission", () => {
           state: "present",
         },
       },
+      onAdmitted: expect.any(Function),
     });
     expect(mocks.runEmbeddedAgentCore).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -95,6 +102,66 @@ describe("plugin embedded-agent runtime admission", () => {
       withPluginRuntimePluginIdScope("memory-plugin", () => runPluginEmbeddedAgent(params)),
     ).rejects.toThrow("core failed");
     expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("marks external native actions unsupported when the persisted owner has no callback", async () => {
+    const executionIdentityToken = {
+      tokenVersion: 1,
+      contextId: "context-native",
+      executionId: "execution-native",
+      runId: "run-plugin",
+      createdAt: 100,
+    } as const;
+    const admittedRunContext: AdmittedRunContext = {
+      operationalRunInstance: { instanceId: "instance:run-plugin", runId: "run-plugin" },
+      executionIdentityToken,
+    };
+    mocks.prepareAgentRunAdmission.mockImplementationOnce(
+      (input: { onAdmitted?: (context: AdmittedRunContext) => void | Promise<void> }) => ({
+        operationalRunInstance: admittedRunContext.operationalRunInstance,
+        admit: async () => {
+          await input.onAdmitted?.(admittedRunContext);
+          return admittedRunContext;
+        },
+        close: mocks.close,
+      }),
+    );
+    mocks.runEmbeddedAgentCore.mockImplementationOnce(async (input) => {
+      await input.preparedRunAdmission.admit("plugin-harness");
+      return { payloads: [] };
+    });
+    const receipts: DecisionReceiptV1[] = [];
+    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+      receipts.push(receipt);
+      return true;
+    });
+    try {
+      await withPluginRuntimePluginIdScope("private-acp-plugin", () =>
+        withPluginRuntimeNativeActionEvidence("unsupported", () => runPluginEmbeddedAgent(params)),
+      );
+    } finally {
+      clear();
+    }
+    expect(receipts).toMatchObject([
+      {
+        decision: { outcome: "allowed", reasonCode: "plugin_runtime_owner_admitted" },
+        enforcement: { coverageState: "enforced" },
+      },
+      {
+        action: { family: "native-runtime", operation: "action-evidence" },
+        decision: {
+          outcome: "not-applicable",
+          reasonCode: "native_action_callback_unsupported",
+        },
+        enforcement: { coverageState: "unsupported" },
+        missingEvidence: ["native.action_callback"],
+      },
+      {
+        decision: { outcome: "allowed", reasonCode: "plugin_runtime_completed" },
+        enforcement: { coverageState: "attribution-only" },
+      },
+    ]);
+    expect(JSON.stringify(receipts)).not.toContain("private-acp-plugin");
   });
 
   it("revokes admission immediately when a pending plugin run aborts", async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   WorkerConnectParams,
   WorkerLiveEventParams,
@@ -16,6 +17,7 @@ import type {
   WorkerInferenceStartParams,
   WorkerInferenceStartResult,
 } from "../../../packages/gateway-protocol/src/schema/worker-inference.js";
+import { recordPluginRuntimeActionDecision } from "../../plugins/runtime-action-decision.js";
 import { safeEqualSecret } from "../../security/secret-equal.js";
 import type { WorkerSessionToolName } from "../../worker/tool-authority.js";
 import {
@@ -124,6 +126,8 @@ export function createWorkerTurnRpc(options: WorkerTurnRpcOptions) {
   const observedAckCursors = new Map<string, WorkerTerminalTurnFence>();
   const pendingTerminalTurnFences = new Map<string, WorkerPendingTerminalTurnFence>();
   const terminalTurnFences = new Map<string, WorkerTerminalTurnFence>();
+  const workerAdmissionReceiptScope = randomUUID();
+  let workerAdmissionOrdinal = 0;
 
   const placementClaim = (identity: WorkerConnectionIdentity) => identity.turnClaim ?? undefined;
 
@@ -155,6 +159,73 @@ export function createWorkerTurnRpc(options: WorkerTurnRpcOptions) {
       ...(claim ? { turnClaim: claim } : {}),
       allowExpiredCredential: true,
     });
+  };
+
+  const finishWorkerAdmission = <T extends { ok: boolean; reason?: string }>(
+    admission: WorkerConnectParams["admission"],
+    result: T,
+  ): T => {
+    if (admission.sessionId === null || admission.runId === null) {
+      return result;
+    }
+    const binding = { sessionId: admission.sessionId, runId: admission.runId };
+    const capability = options.placementStore?.getExecutionIdentityCapability?.(binding);
+    if (!capability) {
+      return result;
+    }
+    const currentClaim = options.placementStore?.readWorkerTurnClaimForRun?.(binding);
+    const currentOwner = currentClaim?.owner;
+    const ownerChanged =
+      currentOwner?.kind === "worker" &&
+      (currentOwner.environmentId !== admission.environmentId ||
+        currentOwner.ownerEpoch !== admission.ownerEpoch);
+    const reasonCode = result.ok
+      ? "worker_admission_gate_allowed"
+      : ownerChanged
+        ? "worker_admission_owner_epoch_mismatch"
+        : `worker_admission_${result.reason ?? "failed"}`.replaceAll("-", "_");
+    workerAdmissionOrdinal += 1;
+    void capability
+      .run((identity) =>
+        recordPluginRuntimeActionDecision({
+          token: identity.executionIdentityToken,
+          family: "worker",
+          operation: "admit",
+          outcome: result.ok ? "allowed" : "denied",
+          coverageState: "enforced",
+          reasonCode,
+          owner: "worker-runtime",
+          decisionBoundary: "gateway.worker-admission",
+          policyRefs: [
+            "worker:credential",
+            "worker:build",
+            "worker:owner-epoch",
+            "worker:turn-claim",
+          ],
+          summary: result.ok
+            ? "The current worker credential, build, owner epoch, and turn claim passed admission."
+            : "Worker admission was denied by the current credential, build, owner, or claim gate.",
+          remediation: result.ok
+            ? []
+            : [
+                {
+                  code: "reprovision_worker",
+                  text: "Redispatch the session so the worker receives the current build and credential binding.",
+                },
+              ],
+          discriminator: JSON.stringify([
+            admission.sessionId,
+            admission.runId,
+            admission.environmentId,
+            admission.ownerEpoch,
+            workerAdmissionReceiptScope,
+            workerAdmissionOrdinal,
+          ]),
+        }),
+      )
+      // Diagnostic evidence must not revive or alter a worker admission whose owner closed.
+      .catch(() => undefined);
+    return result;
   };
 
   const matchesTurnBinding = (
@@ -509,48 +580,63 @@ export function createWorkerTurnRpc(options: WorkerTurnRpcOptions) {
   return {
     admitWorker: async (admission: WorkerConnectParams["admission"]) => {
       if (options.isStopping()) {
-        return { ok: false, reason: "environment-unavailable" } as const;
+        return finishWorkerAdmission(admission, {
+          ok: false,
+          reason: "environment-unavailable",
+        } as const);
       }
       const preflightAtMs = now();
       const preflight = admitWorkerAt(admission, admission.handshake, preflightAtMs);
       if (!preflight.ok) {
-        return preflight;
+        return finishWorkerAdmission(admission, preflight);
       }
       if (preflightAtMs >= preflight.identity.credentialExpiresAtMs) {
         const placement = placementClaim(preflight.identity);
         if (!placement || !options.placementStore?.validateWorkerTurn(placement)) {
-          return { ok: false, reason: "credential-expired" } as const;
+          return finishWorkerAdmission(admission, {
+            ok: false,
+            reason: "credential-expired",
+          } as const);
         }
       }
       let expectedBuild: ExpectedWorkerBuild;
       try {
         expectedBuild = await options.prepareInstallation("bundle");
       } catch {
-        return { ok: false, reason: "environment-unavailable" } as const;
+        return finishWorkerAdmission(admission, {
+          ok: false,
+          reason: "environment-unavailable",
+        } as const);
       }
       if (options.isStopping()) {
-        return { ok: false, reason: "environment-unavailable" } as const;
+        return finishWorkerAdmission(admission, {
+          ok: false,
+          reason: "environment-unavailable",
+        } as const);
       }
       const admittedAtMs = now();
       const admitted = admitWorkerAt(admission, expectedBuild, admittedAtMs);
       if (!admitted.ok) {
-        return admitted;
+        return finishWorkerAdmission(admission, admitted);
       }
       const expired = admittedAtMs >= admitted.identity.credentialExpiresAtMs;
       if (
         !options.placementStore ||
         (admitted.identity.sessionId === null && admitted.identity.runId === null)
       ) {
-        return expired ? ({ ok: false, reason: "credential-expired" } as const) : admitted;
+        return finishWorkerAdmission(
+          admission,
+          expired ? ({ ok: false, reason: "credential-expired" } as const) : admitted,
+        );
       }
       const placement = placementClaim(admitted.identity);
       if (!placement || !options.placementStore.validateWorkerTurn(placement)) {
-        return {
+        return finishWorkerAdmission(admission, {
           ok: false,
           reason: expired ? "credential-expired" : "placement-mismatch",
-        } as const;
+        } as const);
       }
-      return admitted;
+      return finishWorkerAdmission(admission, admitted);
     },
     validateWorkerConnection: (identity: WorkerConnectionIdentity) => {
       if (options.isStopping()) {

@@ -1,9 +1,12 @@
 /** Tests before-tool-call hook ordering, mutation, and cancellation behavior. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DecisionReceiptV1 } from "../../packages/gateway-protocol/src/index.js";
+import { createExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
 import { createHookRunner } from "./hooks.js";
 import { addStaticTestHooks } from "./hooks.test-fixtures.js";
 import { addTestHook } from "./hooks.test-helpers.js";
 import { createEmptyPluginRegistry, type PluginRegistry } from "./registry.js";
+import { configurePluginRuntimeActionDecisionSink } from "./runtime-action-decision.js";
 import type {
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
@@ -502,6 +505,96 @@ describe("before_tool_call hook merger — requireApproval", () => {
 
     await expect(run).rejects.toThrow("before_tool_call mutable input isolation failed");
     expect(lowerPriorityHook).not.toHaveBeenCalled();
+  });
+});
+
+describe("before_tool_call execution receipts", () => {
+  it.each([
+    {
+      name: "records an allowing hook gate",
+      result: { params: { approved: true } },
+      expectedOutcome: "allowed",
+      expectedReason: "plugin_hook_allowed",
+    },
+    {
+      name: "records a blocking hook gate",
+      result: { block: true, blockReason: "policy denied" },
+      expectedOutcome: "denied",
+      expectedReason: "plugin_hook_blocked",
+    },
+  ] as const)("$name", async ({ result, expectedOutcome, expectedReason }) => {
+    const registry = createEmptyPluginRegistry();
+    addStaticTestHooks(registry, {
+      hookName: "before_tool_call",
+      hooks: [{ pluginId: "secret-plugin-id", result }],
+    });
+    const receipts: DecisionReceiptV1[] = [];
+    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+      receipts.push(receipt);
+      return true;
+    });
+    try {
+      await createHookRunner(registry).runBeforeToolCall(
+        { toolName: "secret-tool-name", params: {} },
+        { ...stubCtx, toolName: "secret-tool-name" },
+        createExecutionIdentityAdmissionToken("run-hook", {
+          contextId: "context-hook",
+          executionId: "execution-hook",
+          now: 100,
+        }),
+      );
+    } finally {
+      clear();
+    }
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      action: { family: "plugin", operation: "before_tool_call" },
+      decision: { outcome: expectedOutcome, reasonCode: expectedReason },
+      enforcement: { coverageState: "enforced" },
+      source: { owner: "plugin-hook" },
+    });
+    expect(JSON.stringify(receipts)).not.toContain("secret-plugin-id");
+    expect(JSON.stringify(receipts)).not.toContain("secret-tool-name");
+  });
+
+  it("records fail-closed hook failure before rejecting the tool", async () => {
+    const registry = createEmptyPluginRegistry();
+    addTestHook({
+      registry,
+      pluginId: "failing-plugin",
+      hookName: "before_tool_call",
+      handler: () => {
+        throw new Error("credential=must-not-leak");
+      },
+    });
+    const receipts: DecisionReceiptV1[] = [];
+    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+      receipts.push(receipt);
+      return true;
+    });
+    try {
+      await expect(
+        createHookRunner(registry, {
+          failurePolicyByHook: { before_tool_call: "fail-closed" },
+        }).runBeforeToolCall(
+          { toolName: "bash", params: {} },
+          stubCtx,
+          createExecutionIdentityAdmissionToken("run-hook-failure", {
+            contextId: "context-hook-failure",
+            executionId: "execution-hook-failure",
+            now: 100,
+          }),
+        ),
+      ).rejects.toThrow("before_tool_call handler from failing-plugin failed");
+    } finally {
+      clear();
+    }
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      decision: { outcome: "denied", reasonCode: "plugin_hook_failed_closed" },
+      enforcement: { coverageState: "enforced" },
+    });
+    expect(JSON.stringify(receipts)).not.toContain("must-not-leak");
   });
 });
 
