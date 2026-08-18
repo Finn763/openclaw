@@ -517,6 +517,11 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       }
       throw error;
     }
+    // Abort can land after the probe resolves but before this continuation resumes.
+    // Recheck at the spawn boundary so a cancelled monitor never creates a daemon.
+    if (opts.abortSignal?.aborted) {
+      return;
+    }
     if (Date.now() >= startupDeadline) {
       throw new Error(
         `signal daemon startup timed out after ${startupTimeoutMs}ms before starting`,

@@ -210,6 +210,23 @@ describe("monitorSignalProvider autostart", () => {
     expect(spawnSignalDaemonMock).not.toHaveBeenCalled();
   });
 
+  it("does not spawn when monitoring aborts as the endpoint probe completes", async () => {
+    const runtime = createMonitorRuntime();
+    const abortController = new AbortController();
+    setSignalAutoStartConfig();
+    assertSignalDaemonEndpointAvailableMock.mockImplementationOnce(async () => {
+      abortController.abort();
+    });
+
+    await expect(
+      runMonitorWithMocks({
+        abortSignal: abortController.signal,
+        runtime,
+      }),
+    ).resolves.toBeUndefined();
+    expect(spawnSignalDaemonMock).not.toHaveBeenCalled();
+  });
+
   it("bounds the managed endpoint probe by the startup timeout", async () => {
     const runtime = createMonitorRuntime();
     setSignalAutoStartConfig();
