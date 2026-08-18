@@ -4,18 +4,20 @@ import { discoverOpenAICompatibleLocalModels } from "./provider-self-hosted-disc
 import { configureOpenAICompatibleSelfHostedProviderNonInteractive } from "./provider-self-hosted-setup.js";
 import type { ProviderAuthMethodNonInteractiveContext } from "./types.js";
 
-const { fetchWithSsrFGuardMock, upsertAuthProfileWithLock, loggerWarnMock } = vi.hoisted(() => ({
-  fetchWithSsrFGuardMock: vi.fn(),
-  upsertAuthProfileWithLock: vi.fn(async () => null),
-  loggerWarnMock: vi.fn(),
-}));
+const { fetchWithSsrFGuardMock, upsertAuthProfileAfterLoginWithLock, loggerWarnMock } = vi.hoisted(
+  () => ({
+    fetchWithSsrFGuardMock: vi.fn(),
+    upsertAuthProfileAfterLoginWithLock: vi.fn(async () => null),
+    loggerWarnMock: vi.fn(),
+  }),
+);
 
 vi.mock("../infra/net/fetch-guard.js", () => ({
   fetchWithSsrFGuard: fetchWithSsrFGuardMock,
 }));
 
 vi.mock("../agents/auth-profiles/upsert-with-lock.js", () => ({
-  upsertAuthProfileWithLock,
+  upsertAuthProfileAfterLoginWithLock,
 }));
 
 vi.mock("../logging/subsystem.js", () => ({
@@ -828,7 +830,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
       envVar: params.envVar,
       envVarName: params.envVar,
     });
-    expect(upsertAuthProfileWithLock).toHaveBeenCalledWith({
+    expect(upsertAuthProfileAfterLoginWithLock).toHaveBeenCalledWith({
       profileId,
       agentDir: ctx.agentDir,
       credential: {
@@ -880,7 +882,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
     expect(readPrimaryModel(cfg)).toBe(`${params.providerId}/${modelId}`);
     expect(JSON.stringify(cfg)).not.toContain(profileSecret);
     expect(ctx.toApiKeyCredential).not.toHaveBeenCalled();
-    expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
+    expect(upsertAuthProfileAfterLoginWithLock).not.toHaveBeenCalled();
     expect(ctx.runtime.error).not.toHaveBeenCalled();
     expect(ctx.runtime.exit).not.toHaveBeenCalled();
   });
@@ -914,7 +916,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
     expect(readPrimaryModel(cfg)).toBe(`${params.providerId}/${modelId}`);
     expect(cfg?.auth?.profiles?.[`${params.providerId}:default`]).toBeUndefined();
     expect(ctx.toApiKeyCredential).not.toHaveBeenCalled();
-    expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
+    expect(upsertAuthProfileAfterLoginWithLock).not.toHaveBeenCalled();
     expect(ctx.runtime.error).not.toHaveBeenCalled();
     expect(ctx.runtime.exit).not.toHaveBeenCalled();
   });
@@ -963,7 +965,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
 
       expect(cfg).toBeNull();
       expect(ctx.toApiKeyCredential).toHaveBeenCalledOnce();
-      expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
+      expect(upsertAuthProfileAfterLoginWithLock).not.toHaveBeenCalled();
       expect(ctx.runtime.error).toHaveBeenCalledOnce();
       expect(ctx.runtime.exit).toHaveBeenCalledWith(1);
     },
@@ -982,7 +984,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
     });
 
     expect(ctx.toApiKeyCredential).toHaveBeenCalledOnce();
-    expect(upsertAuthProfileWithLock).toHaveBeenCalledWith({
+    expect(upsertAuthProfileAfterLoginWithLock).toHaveBeenCalledWith({
       profileId: "vllm:default",
       agentDir: ctx.agentDir,
       credential: { type: "api_key", provider: "vllm", key: "lmstudio-local" },
@@ -1015,7 +1017,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
       envVar: "VLLM_API_KEY",
     });
 
-    expect(upsertAuthProfileWithLock).toHaveBeenCalledWith({
+    expect(upsertAuthProfileAfterLoginWithLock).toHaveBeenCalledWith({
       profileId: "vllm:default",
       agentDir: ctx.agentDir,
       credential,
@@ -1036,7 +1038,7 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
 
     expect(cfg).toBeNull();
     expect(ctx.toApiKeyCredential).not.toHaveBeenCalled();
-    expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
+    expect(upsertAuthProfileAfterLoginWithLock).not.toHaveBeenCalled();
   });
 
   it("exits without touching auth when custom model id is missing", async () => {
@@ -1061,6 +1063,6 @@ describe("configureOpenAICompatibleSelfHostedProviderNonInteractive", () => {
     );
     expect(ctx.runtime.exit).toHaveBeenCalledWith(1);
     expect(ctx.resolveApiKey).not.toHaveBeenCalled();
-    expect(upsertAuthProfileWithLock).not.toHaveBeenCalled();
+    expect(upsertAuthProfileAfterLoginWithLock).not.toHaveBeenCalled();
   });
 });

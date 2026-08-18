@@ -24,7 +24,7 @@ import {
   suggestOAuthProfileIdForLegacyDefault,
   validateAnthropicSetupToken,
 } from "openclaw/plugin-sdk/provider-auth";
-import { upsertAuthProfileWithLockOrThrow } from "openclaw/plugin-sdk/provider-auth-api-key";
+import { upsertAuthProfileAfterLoginWithLockOrThrow } from "openclaw/plugin-sdk/provider-auth-api-key";
 import { buildOpenAICompatibleProviderCatalog } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
 import {
   buildManifestModelProviderConfig,
@@ -304,7 +304,7 @@ async function runAnthropicSetupTokenNonInteractive(
 
   const profileId = resolveAnthropicSetupTokenProfileId(ctx.opts.tokenProfileId);
   const expires = resolveAnthropicSetupTokenExpiry(ctx.opts.tokenExpiresIn);
-  await upsertAuthProfileWithLockOrThrow({
+  await upsertAuthProfileAfterLoginWithLockOrThrow({
     profileId,
     credential: {
       type: "token",

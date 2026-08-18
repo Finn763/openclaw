@@ -348,7 +348,7 @@ async function prepareProviderPluginAuthMethod(
   persistAuthProfiles: (profiles?: ProviderAuthResult["profiles"]) => Promise<void>;
 }> {
   const agentId = params.agentId ?? resolveDefaultAgentId(params.config);
-  const agentDir = params.agentDir ?? resolveAgentDir(params.config, agentId);
+  const agentDir = params.agentDir ?? resolveAgentDir(params.config, agentId, params.env);
   const workspaceDir =
     params.workspaceDir ??
     resolveAgentWorkspaceDir(params.config, agentId) ??
@@ -387,7 +387,7 @@ async function prepareProviderPluginAuthMethod(
     }
     await params.beforePersistentEffect?.();
     await persistAuthProfileBatch({
-      profiles,
+      profiles: profiles.map((profile) => ({ ...profile, resetFailureState: true })),
       agentDir,
       stateDir: params.env?.OPENCLAW_STATE_DIR,
     });
@@ -397,7 +397,10 @@ async function prepareProviderPluginAuthMethod(
   return {
     config: nextConfig,
     ...(defaultModel ? { defaultModel } : {}),
-    authProfiles: result.profiles,
+    authProfiles: result.profiles.map((profile) => ({
+      ...profile,
+      resetFailureState: true,
+    })),
     persistAuthProfiles,
   };
 }

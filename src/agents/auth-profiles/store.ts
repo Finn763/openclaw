@@ -59,6 +59,7 @@ import {
   setRuntimeAuthProfileStoreSnapshot,
   setRuntimeAuthProfileStoreSnapshotAtDatabasePath,
 } from "./runtime-snapshots.js";
+import { resolveSharedMainAuthAgentDir } from "./shared-main-dir.js";
 import {
   deferAuthProfilePostCommitPublication,
   deletePersistedAuthProfileStoreRaw,
@@ -1224,6 +1225,7 @@ export function findPersistedAuthProfileCredential(params: {
 export function resolvePersistedAuthProfileOwnerAgentDir(params: {
   agentDir?: string;
   profileId: string;
+  stateDir?: string;
 }): string | undefined {
   if (isEnvOnlyAuthProfileRuntime()) {
     return undefined;
@@ -1234,7 +1236,12 @@ export function resolvePersistedAuthProfileOwnerAgentDir(params: {
   }
   const requestedStore = loadPersistedAuthProfileStore(agentDir);
   const requestedPath = resolveAgentAuthPath(agentDir);
-  const mainAgentDir = resolveRuntimeAuthProfileAgentDir();
+  const sharedEnv = params.stateDir
+    ? { ...process.env, OPENCLAW_AGENT_DIR: undefined, OPENCLAW_STATE_DIR: params.stateDir }
+    : process.env;
+  const mainAgentDir = params.stateDir
+    ? resolveSharedMainAuthAgentDir(sharedEnv)
+    : resolveRuntimeAuthProfileAgentDir();
   const mainPath = mainAgentDir ? resolveAgentAuthPath(mainAgentDir) : resolveSharedAuthPath();
   if (requestedPath === mainPath) {
     return undefined;

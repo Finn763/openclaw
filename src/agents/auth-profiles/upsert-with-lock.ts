@@ -11,40 +11,161 @@ import {
   writePersistedAuthProfileStateRaw,
 } from "./sqlite.js";
 import { buildPersistedAuthProfileState } from "./state.js";
-import { saveAuthProfileStore, updateAuthProfileStoreWithLock } from "./store.js";
-import type { AuthProfileCredential, AuthProfileStore } from "./types.js";
+import {
+  resolvePersistedAuthProfileOwnerAgentDir,
+  saveAuthProfileStore,
+  updateAuthProfileStoreWithLock,
+} from "./store.js";
+import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
+import { resetAuthProfileFailureState } from "./usage-state.js";
+
+type AuthProfileUpsertParams = Parameters<typeof upsertAuthProfileWithLock>[0];
+
+function throwAuthProfileUpdateError(): never {
+  throw new Error(
+    "Failed to update auth profile store; the auth store lock may be busy. Wait a moment and retry.",
+  );
+}
+
+async function upsertAuthProfileWithLockCore(
+  params: AuthProfileUpsertParams,
+  resetFailureState: boolean,
+): Promise<AuthProfileStore | null> {
+  const credential = normalizeAuthProfileCredential(params.credential);
+  const agentDir = resetFailureState
+    ? resolvePersistedAuthProfileOwnerAgentDir({
+        agentDir: params.agentDir,
+        profileId: params.profileId,
+        stateDir: params.stateDir,
+      })
+    : params.agentDir;
+  return await updateAuthProfileStoreWithLock({
+    agentDir,
+    stateDir: params.stateDir,
+    saveOptions: {
+      filterExternalAuthProfiles: false,
+      ...(resetFailureState ? { preserveStateProfileIds: [params.profileId] } : {}),
+      syncExternalCli: false,
+    },
+    updater: (store) => {
+      store.profiles[params.profileId] = credential;
+      if (resetFailureState) {
+        store.usageStats = store.usageStats ?? {};
+        const existingStats = store.usageStats[params.profileId];
+        const credentialGeneration = (existingStats?.credentialGeneration ?? 0) + 1;
+        if (!Number.isSafeInteger(credentialGeneration)) {
+          throw new RangeError("Auth profile credential generation exhausted safe integer range");
+        }
+        store.usageStats[params.profileId] = resetAuthProfileFailureState(existingStats, {
+          credentialGeneration,
+        });
+      }
+      return true;
+    },
+  });
+}
 
 type PersistAuthProfileBatchParams = {
   profiles: readonly {
     profileId: string;
     credential: AuthProfileCredential;
     replaceExisting?: boolean;
+    resetFailureState?: boolean;
   }[];
   order?: Readonly<Record<string, readonly string[]>>;
   agentDir?: string;
   stateDir?: string;
 };
 
+type PersistAuthProfileBatchReceipt = { rollback: () => void };
+
+function resolveBatchOrder(
+  order: PersistAuthProfileBatchParams["order"],
+  profileIds: ReadonlySet<string>,
+): PersistAuthProfileBatchParams["order"] {
+  if (!order) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(order)
+      .map(([provider, ids]) => [provider, ids.filter((id) => profileIds.has(id))] as const)
+      .filter(([, ids]) => ids.length > 0),
+  );
+}
+
 /** Atomically persists a batch and returns conditional attempt-scoped compensation. */
 export async function persistAuthProfileBatch(
   params: PersistAuthProfileBatchParams,
-): Promise<{ rollback: () => void }> {
+): Promise<PersistAuthProfileBatchReceipt> {
+  const dedupedProfiles = [
+    ...new Map(params.profiles.map((entry) => [entry.profileId, entry])).values(),
+  ];
+  if (dedupedProfiles.length === 0) {
+    return { rollback() {} };
+  }
+
+  const groups = new Map<string | undefined, typeof dedupedProfiles>();
+  for (const entry of dedupedProfiles) {
+    const ownerAgentDir = entry.resetFailureState
+      ? resolvePersistedAuthProfileOwnerAgentDir({
+          agentDir: params.agentDir,
+          profileId: entry.profileId,
+          stateDir: params.stateDir,
+        })
+      : params.agentDir;
+    const group = groups.get(ownerAgentDir) ?? [];
+    group.push(entry);
+    groups.set(ownerAgentDir, group);
+  }
+
+  const receipts: PersistAuthProfileBatchReceipt[] = [];
+  try {
+    for (const [agentDir, profiles] of groups) {
+      const profileIds = new Set(profiles.map((entry) => entry.profileId));
+      receipts.push(
+        await persistAuthProfileBatchForAgent({
+          ...params,
+          profiles,
+          agentDir,
+          order: resolveBatchOrder(params.order, profileIds),
+        }),
+      );
+    }
+  } catch (error) {
+    for (const receipt of receipts.toReversed()) {
+      receipt.rollback();
+    }
+    throw error;
+  }
+
+  return {
+    rollback: () => {
+      for (const receipt of receipts.toReversed()) {
+        receipt.rollback();
+      }
+    },
+  };
+}
+
+async function persistAuthProfileBatchForAgent(
+  params: PersistAuthProfileBatchParams,
+): Promise<PersistAuthProfileBatchReceipt> {
   const profiles = new Map(
-    params.profiles.map(({ profileId, credential, replaceExisting }) => [
+    params.profiles.map(({ profileId, credential, replaceExisting, resetFailureState }) => [
       profileId,
       {
         credential: normalizeAuthProfileCredential(credential),
         replaceExisting: replaceExisting !== false,
+        resetFailureState: resetFailureState === true,
       },
     ]),
   );
-  if (profiles.size === 0) {
-    return { rollback() {} };
-  }
 
   const previousProfiles = new Map<string, AuthProfileCredential | undefined>();
+  const previousUsageStats = new Map<string, ProfileUsageStats | undefined>();
   const previousOrder = new Map<string, readonly string[] | undefined>();
   const appliedProfiles = new Map<string, AuthProfileCredential>();
+  const appliedUsageStats = new Map<string, ProfileUsageStats>();
   let storeWasAbsent = false;
   let stateWasAbsent = false;
   runAuthProfileWriteTransaction(
@@ -64,6 +185,28 @@ export async function persistAuthProfileBatch(
         previousProfiles.set(profileId, next.profiles[profileId]);
         next.profiles[profileId] = entry.credential;
         appliedProfiles.set(profileId, entry.credential);
+        if (entry.resetFailureState) {
+          const previousStats = next.usageStats?.[profileId];
+          previousUsageStats.set(
+            profileId,
+            previousStats
+              ? {
+                  ...previousStats,
+                  failureCounts: previousStats.failureCounts
+                    ? { ...previousStats.failureCounts }
+                    : undefined,
+                }
+              : undefined,
+          );
+          const credentialGeneration = (previousStats?.credentialGeneration ?? 0) + 1;
+          if (!Number.isSafeInteger(credentialGeneration)) {
+            throw new RangeError("Auth profile credential generation exhausted safe integer range");
+          }
+          const resetStats = resetAuthProfileFailureState(previousStats, { credentialGeneration });
+          next.usageStats = next.usageStats ?? {};
+          next.usageStats[profileId] = resetStats;
+          appliedUsageStats.set(profileId, resetStats);
+        }
       }
       for (const [provider, profileIds] of Object.entries(params.order ?? {})) {
         previousOrder.set(provider, next.order?.[provider]);
@@ -79,7 +222,11 @@ export async function persistAuthProfileBatch(
         saveAuthProfileStore(
           next,
           params.agentDir,
-          { filterExternalAuthProfiles: false, syncExternalCli: false },
+          {
+            filterExternalAuthProfiles: false,
+            preserveStateProfileIds: appliedUsageStats.keys(),
+            syncExternalCli: false,
+          },
           database,
         );
       }
@@ -112,6 +259,19 @@ export async function persistAuthProfileBatch(
             } else {
               delete current.profiles[profileId];
             }
+            const appliedStats = appliedUsageStats.get(profileId);
+            if (appliedStats && isDeepStrictEqual(current.usageStats?.[profileId], appliedStats)) {
+              const previousStats = previousUsageStats.get(profileId);
+              current.usageStats = current.usageStats ?? {};
+              if (previousStats) {
+                current.usageStats[profileId] = previousStats;
+              } else {
+                delete current.usageStats[profileId];
+                if (Object.keys(current.usageStats).length === 0) {
+                  delete current.usageStats;
+                }
+              }
+            }
           }
           for (const [provider, profileIds] of Object.entries(params.order ?? {})) {
             const existing = current.order?.[provider];
@@ -140,7 +300,11 @@ export async function persistAuthProfileBatch(
           saveAuthProfileStore(
             current,
             params.agentDir,
-            { filterExternalAuthProfiles: false, syncExternalCli: false },
+            {
+              filterExternalAuthProfiles: false,
+              preserveStateProfileIds: previousUsageStats.keys(),
+              syncExternalCli: false,
+            },
             database,
           );
           if (storeWasAbsent && Object.keys(current.profiles).length === 0) {
@@ -164,19 +328,7 @@ export async function upsertAuthProfileWithLock(params: {
   agentDir?: string;
   stateDir?: string;
 }): Promise<AuthProfileStore | null> {
-  const credential = normalizeAuthProfileCredential(params.credential);
-  return await updateAuthProfileStoreWithLock({
-    agentDir: params.agentDir,
-    stateDir: params.stateDir,
-    saveOptions: {
-      filterExternalAuthProfiles: false,
-      syncExternalCli: false,
-    },
-    updater: (store) => {
-      store.profiles[params.profileId] = credential;
-      return true;
-    },
-  });
+  return await upsertAuthProfileWithLockCore(params, false);
 }
 
 /** Upserts an auth profile under the store lock, failing when the store cannot be written. */
@@ -185,8 +337,23 @@ export async function upsertAuthProfileWithLockOrThrow(
 ): Promise<void> {
   const updated = await upsertAuthProfileWithLock(params);
   if (!updated) {
-    throw new Error(
-      "Failed to update auth profile store; the auth store lock may be busy. Wait a moment and retry.",
-    );
+    throwAuthProfileUpdateError();
+  }
+}
+
+/** Atomically persists a completed login and clears failure state from the replaced credential. */
+export async function upsertAuthProfileAfterLoginWithLock(
+  params: AuthProfileUpsertParams,
+): Promise<AuthProfileStore | null> {
+  return await upsertAuthProfileWithLockCore(params, true);
+}
+
+/** Atomically persists a completed login and fails when the store cannot be written. */
+export async function upsertAuthProfileAfterLoginWithLockOrThrow(
+  params: AuthProfileUpsertParams,
+): Promise<void> {
+  const updated = await upsertAuthProfileAfterLoginWithLock(params);
+  if (!updated) {
+    throwAuthProfileUpdateError();
   }
 }

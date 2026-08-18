@@ -1,8 +1,82 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { AUTH_STORE_VERSION } from "../agents/auth-profiles/constants.js";
+import {
+  loadAuthProfileStoreWithoutExternalProfiles,
+  saveAuthProfileStore,
+} from "../agents/auth-profiles/store.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import { createProviderApiKeyAuthMethod } from "./provider-api-key-auth.js";
 
 describe("createProviderApiKeyAuthMethod", () => {
+  it("clears stale failure state when a flag replaces a stored credential", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-provider-api-key-reauth-"));
+    const agentDir = path.join(stateDir, "agents", "main", "agent");
+    const now = Date.now();
+    try {
+      await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+        fs.mkdirSync(agentDir, { recursive: true });
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              "example:default": { type: "api_key", provider: "example", key: "old-key" },
+            },
+            usageStats: {
+              "example:default": {
+                errorCount: 4,
+                disabledUntil: now + 60_000,
+                disabledReason: "auth_permanent",
+                failureCounts: { auth_permanent: 4 },
+              },
+            },
+          },
+          agentDir,
+        );
+        const method = createProviderApiKeyAuthMethod({
+          providerId: "example",
+          methodId: "api-key",
+          label: "Example",
+          optionKey: "exampleApiKey",
+          flagName: "--example-api-key",
+          envVar: "EXAMPLE_API_KEY",
+          promptMessage: "Example API key",
+        });
+
+        await method.runNonInteractive?.({
+          authChoice: "example-api-key",
+          config: {},
+          baseConfig: {},
+          opts: { exampleApiKey: "fresh-key" },
+          agentDir,
+          runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() } as unknown as RuntimeEnv,
+          resolveApiKey: vi.fn(async () => ({ key: "fresh-key", source: "flag" as const })),
+          toApiKeyCredential: vi.fn(() => ({
+            type: "api_key" as const,
+            provider: "example",
+            key: "fresh-key",
+          })),
+        });
+
+        const persisted = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
+        expect(persisted.profiles["example:default"]).toMatchObject({ key: "fresh-key" });
+        expect(persisted.usageStats?.["example:default"]).toEqual({
+          credentialGeneration: 1,
+          errorCount: 0,
+        });
+      });
+    } finally {
+      closeOpenClawAgentDatabasesForTest();
+      closeOpenClawStateDatabaseForTest();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("exposes side-effect-free non-interactive credential validation", async () => {
     const method = createProviderApiKeyAuthMethod({
       providerId: "example",

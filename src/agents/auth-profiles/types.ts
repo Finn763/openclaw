@@ -104,6 +104,8 @@ export type AuthProfileBlockedSource = "codex_rate_limits" | "wham";
 
 /** Per-profile usage statistics for round-robin and cooldown tracking */
 export type ProfileUsageStats = {
+  /** Successful credential replacements advance this to fence older request settlements. */
+  credentialGeneration?: number;
   lastUsed?: number;
   blockedUntil?: number;
   blockedReason?: AuthProfileBlockedReason;

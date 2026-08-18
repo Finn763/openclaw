@@ -3,6 +3,8 @@
  * Centralizes expiry, missing-secret, and unresolved-reference checks used by
  * auth selection, refresh, health, and doctor flows.
  */
+import { isDeepStrictEqual } from "node:util";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { coerceSecretRef, normalizeSecretInputString } from "../../config/types.secrets.js";
 import type { AuthProfileCredential, OAuthCredential } from "./types.js";
@@ -18,6 +20,34 @@ export type AuthCredentialReasonCode =
 
 /** Default OAuth access-token refresh margin before expiry. */
 export const DEFAULT_OAUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+/** Returns true when two profile snapshots represent the same request credential. */
+export function isSameAuthProfileCredential(
+  expected: AuthProfileCredential,
+  current: AuthProfileCredential | undefined,
+): boolean {
+  if (
+    !current ||
+    expected.type !== current.type ||
+    normalizeProviderId(expected.provider) !== normalizeProviderId(current.provider)
+  ) {
+    return false;
+  }
+  if (expected.type === "oauth" && current.type === "oauth") {
+    return expected.access === current.access && expected.accountId === current.accountId;
+  }
+  if (expected.type === "api_key" && current.type === "api_key") {
+    return expected.keyRef || current.keyRef
+      ? isDeepStrictEqual(expected.keyRef, current.keyRef)
+      : expected.key === current.key;
+  }
+  if (expected.type === "token" && current.type === "token") {
+    return expected.tokenRef || current.tokenRef
+      ? isDeepStrictEqual(expected.tokenRef, current.tokenRef)
+      : expected.token === current.token;
+  }
+  return false;
+}
 
 /** Normalized expiry state for token-style credentials. */
 export type TokenExpiryState = "missing" | "valid" | "expiring" | "expired" | "invalid_expires";

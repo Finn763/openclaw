@@ -6,6 +6,7 @@ export type { SecretInput } from "../config/types.secrets.js";
 
 export {
   upsertAuthProfile,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   upsertAuthProfileWithLock,
   upsertAuthProfileWithLockOrThrow,
 } from "../agents/auth-profiles/profiles.js";

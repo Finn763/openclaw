@@ -66,6 +66,7 @@ export {
   listProfilesForProvider,
   removeProviderAuthProfilesWithLock,
   upsertAuthProfile,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   upsertAuthProfileWithLock,
 } from "../agents/auth-profiles/profiles.js";
 export { resolveEnvApiKey } from "../agents/model-auth-env.js";

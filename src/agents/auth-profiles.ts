@@ -42,6 +42,8 @@ export {
   resolveSubscriptionAuthModeForProfiles,
   setAuthProfileOrder,
   upsertAuthProfile,
+  upsertAuthProfileAfterLoginWithLock,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   upsertAuthProfileWithLock,
   upsertAuthProfileWithLockOrThrow,
 } from "./auth-profiles/profiles.js";

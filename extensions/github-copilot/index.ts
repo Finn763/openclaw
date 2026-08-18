@@ -17,7 +17,7 @@ import {
   listProfilesForProvider,
   normalizeOptionalSecretInput,
   resolveDefaultSecretProviderAlias,
-  upsertAuthProfileWithLock,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
 } from "openclaw/plugin-sdk/provider-auth";
 import { resolveFirstGithubToken } from "./auth.js";
 import {
@@ -376,7 +376,7 @@ async function runGitHubCopilotNonInteractiveAuth(
   // auth state that appears usable on the next run.
   if (resolved) {
     const useTokenRef = ctx.opts.secretInputMode === "ref" && resolved.source === "env";
-    await upsertAuthProfileWithLock({
+    await upsertAuthProfileAfterLoginWithLockOrThrow({
       profileId,
       credential: {
         type: "token",

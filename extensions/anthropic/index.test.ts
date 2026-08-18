@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { calculateCost, type Usage } from "openclaw/plugin-sdk/llm";
 import type {
   ProviderResolveDynamicModelContext,
@@ -8,6 +11,10 @@ import {
   capturePluginRegistration,
   registerSingleProviderPlugin,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
+import {
+  ensureAuthProfileStore,
+  updateAuthProfileStoreWithLock,
+} from "openclaw/plugin-sdk/provider-auth";
 // Anthropic tests cover index plugin behavior.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1287,6 +1294,60 @@ describe("anthropic provider replay hooks", () => {
       });
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("clears stale routing state after non-interactive setup-token replacement", async () => {
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-anthropic-auth-"));
+    const profileId = "anthropic:default";
+    try {
+      await updateAuthProfileStoreWithLock({
+        agentDir,
+        updater: (store) => {
+          store.profiles[profileId] = {
+            type: "token",
+            provider: "anthropic",
+            token: "expired-token",
+          };
+          store.usageStats = {
+            [profileId]: {
+              disabledUntil: Date.now() + 60_000,
+              disabledReason: "auth_permanent",
+              errorCount: 2,
+            },
+          };
+          return true;
+        },
+      });
+
+      const provider = await registerSingleProviderPlugin(anthropicPlugin);
+      const setupTokenAuth = provider.auth.find((entry) => entry.id === "setup-token");
+      if (!setupTokenAuth?.runNonInteractive) {
+        throw new Error("expected Anthropic setup-token non-interactive auth method");
+      }
+
+      await setupTokenAuth.runNonInteractive({
+        authChoice: "setup-token",
+        agentDir,
+        config: {},
+        baseConfig: {},
+        opts: { token: ANTHROPIC_SETUP_TOKEN },
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        resolveApiKey: vi.fn(async () => null),
+      } as never);
+
+      const stored = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+      expect(stored.profiles[profileId]).toMatchObject({
+        type: "token",
+        provider: "anthropic",
+        token: ANTHROPIC_SETUP_TOKEN,
+      });
+      expect(stored.usageStats?.[profileId]).toEqual({
+        credentialGeneration: 1,
+        errorCount: 0,
+      });
+    } finally {
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 

@@ -6,8 +6,8 @@ import { resolveDefaultAgentDir } from "../agents/agent-scope-config.js";
 import { buildAuthProfileId } from "../agents/auth-profiles/identity.js";
 import {
   upsertAuthProfile,
-  upsertAuthProfileWithLock,
-  upsertAuthProfileWithLockOrThrow,
+  upsertAuthProfileAfterLoginWithLock,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
 } from "../agents/auth-profiles/profiles.js";
 import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -336,7 +336,7 @@ export async function writeOAuthCredentials(
     ...(options?.displayName ? { displayName: options.displayName } : {}),
   };
 
-  await upsertAuthProfileWithLockOrThrow({
+  await upsertAuthProfileAfterLoginWithLockOrThrow({
     profileId,
     credential,
     agentDir: resolvedAgentDir,
@@ -350,7 +350,7 @@ export async function writeOAuthCredentials(
         continue;
       }
       try {
-        await upsertAuthProfileWithLock({
+        await upsertAuthProfileAfterLoginWithLock({
           profileId,
           credential,
           agentDir: targetAgentDir,

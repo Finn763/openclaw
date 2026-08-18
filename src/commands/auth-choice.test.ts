@@ -217,6 +217,13 @@ vi.mock("../agents/auth-profiles.js", () => ({
     seedTestAuthProfile(params);
     return { version: 1, profiles: readTestAuthProfileStore(params.agentDir).profiles };
   },
+  upsertAuthProfileAfterLoginWithLockOrThrow: async (params: {
+    profileId: string;
+    credential: StoredAuthProfile;
+    agentDir?: string;
+  }) => {
+    seedTestAuthProfile(params);
+  },
   upsertAuthProfileWithLockOrThrow: async (params: {
     profileId: string;
     credential: StoredAuthProfile;

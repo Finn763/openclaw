@@ -5,7 +5,47 @@
  */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
+import { isSameAuthProfileCredential } from "./credential-state.js";
 import type { AuthProfileFailureReason, AuthProfileStore, ProfileUsageStats } from "./types.js";
+
+/** Checks that request credentials and their successful-replacement generation still match. */
+export function isSameAuthProfileRequestGeneration(
+  expectedStore: AuthProfileStore,
+  currentStore: AuthProfileStore,
+  profileId: string,
+): boolean {
+  const expectedCredential = expectedStore.profiles[profileId];
+  return (
+    expectedCredential !== undefined &&
+    (expectedStore.usageStats?.[profileId]?.credentialGeneration ?? 0) ===
+      (currentStore.usageStats?.[profileId]?.credentialGeneration ?? 0) &&
+    isSameAuthProfileCredential(expectedCredential, currentStore.profiles[profileId])
+  );
+}
+
+/** Clears failure windows and counters while preserving unrelated usage metadata. */
+export function resetAuthProfileFailureState(
+  existing: ProfileUsageStats | undefined,
+  overrides?: Partial<ProfileUsageStats>,
+): ProfileUsageStats {
+  return {
+    ...existing,
+    errorCount: 0,
+    blockedUntil: undefined,
+    blockedReason: undefined,
+    blockedSource: undefined,
+    blockedModel: undefined,
+    blockedScope: undefined,
+    cooldownUntil: undefined,
+    cooldownReason: undefined,
+    cooldownClassification: undefined,
+    cooldownModel: undefined,
+    disabledUntil: undefined,
+    disabledReason: undefined,
+    failureCounts: undefined,
+    ...overrides,
+  };
+}
 
 /** Returns true for providers whose auth-profile cooldowns are provider-managed. */
 export function isAuthCooldownBypassedForProvider(provider: string | undefined): boolean {

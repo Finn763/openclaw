@@ -4,7 +4,7 @@
  * separately from secret-bearing credentials.
  */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
+import { asFiniteNumber, asSafeIntegerInRange } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
@@ -116,6 +116,7 @@ function normalizeUsageStatsEntry(raw: unknown): ProfileUsageStats | undefined {
     AUTH_COOLDOWN_CLASSIFICATIONS,
   );
   const stats: ProfileUsageStats = {
+    credentialGeneration: asSafeIntegerInRange(raw.credentialGeneration, { min: 0 }),
     lastUsed: asFiniteNumber(raw.lastUsed),
     blockedUntil: asFiniteNumber(raw.blockedUntil),
     blockedReason: normalizeEnumValue(raw.blockedReason, AUTH_BLOCKED_REASONS),

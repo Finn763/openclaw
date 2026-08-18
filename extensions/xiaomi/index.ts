@@ -16,7 +16,7 @@ import {
   normalizeApiKeyInput,
   normalizeOptionalSecretInput,
   type SecretInput,
-  upsertAuthProfileWithLockOrThrow,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   validateApiKeyInput,
 } from "openclaw/plugin-sdk/provider-auth-api-key";
 import { buildOpenAICompatibleLiveModelProviderConfig } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
@@ -264,7 +264,7 @@ async function runXiaomiApiKeyAuthNonInteractive(
     if (!credential) {
       return null;
     }
-    await upsertAuthProfileWithLockOrThrow({
+    await upsertAuthProfileAfterLoginWithLockOrThrow({
       profileId,
       credential,
       agentDir: ctx.agentDir,

@@ -12,7 +12,7 @@ import {
   normalizeOptionalSecretInput,
   type OpenClawConfig,
   type SecretInput,
-  upsertAuthProfileWithLockOrThrow,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   validateApiKeyInput,
 } from "openclaw/plugin-sdk/provider-auth-api-key";
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-onboard";
@@ -205,7 +205,7 @@ async function runPixVerseApiKeyAuthNonInteractive(ctx: ProviderAuthMethodNonInt
     if (!credential) {
       return null;
     }
-    await upsertAuthProfileWithLockOrThrow({
+    await upsertAuthProfileAfterLoginWithLockOrThrow({
       profileId: PROFILE_ID,
       credential,
       agentDir: ctx.agentDir,

@@ -24,6 +24,7 @@ import {
   removeAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
   setAuthProfileOrder,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   upsertAuthProfileWithLock,
 } from "./profiles.js";
 import {
@@ -48,6 +49,7 @@ import {
 } from "./store.js";
 import { testing as storeTesting } from "./store.test-support.js";
 import type { AuthProfileStore, RuntimeAuthProfileStore } from "./types.js";
+import { markAuthProfileBlockedUntil, markAuthProfileFailure } from "./usage.js";
 
 vi.mock("../provider-auth-aliases.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../provider-auth-aliases.js")>();
@@ -1002,6 +1004,285 @@ describe("promoteAuthProfileInOrder", () => {
           provider: "anthropic",
           key: "sk-ant",
         });
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
+  it("atomically replaces a login credential and resets its failure state", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-profile-login-reset-",
+      async ({ agentDir }) => {
+        fs.mkdirSync(agentDir, { recursive: true });
+        const profileId = "fixture:login";
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              [profileId]: {
+                type: "oauth",
+                provider: "fixture",
+                access: "expired-access",
+                refresh: "expired-refresh",
+                expires: Date.now() - 60_000,
+              },
+            },
+            usageStats: {
+              [profileId]: {
+                lastUsed: 100,
+                lastFailureAt: 200,
+                lastProbeAt: 300,
+                errorCount: 4,
+                failureCounts: { auth_permanent: 4 },
+                blockedUntil: Date.now() + 60_000,
+                blockedReason: "subscription_limit",
+                blockedSource: "wham",
+                cooldownUntil: Date.now() + 60_000,
+                cooldownReason: "auth",
+                disabledUntil: Date.now() + 60_000,
+                disabledReason: "auth_permanent",
+              },
+            },
+          },
+          agentDir,
+          { filterExternalAuthProfiles: false },
+        );
+
+        await upsertAuthProfileAfterLoginWithLockOrThrow({
+          profileId,
+          credential: {
+            type: "oauth",
+            provider: "fixture",
+            access: "fresh-access",
+            refresh: "fresh-refresh",
+            expires: Date.now() + 60_000,
+          },
+          agentDir,
+        });
+
+        const persisted = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
+        expect(persisted.profiles[profileId]).toMatchObject({
+          type: "oauth",
+          provider: "fixture",
+          access: "fresh-access",
+          refresh: "fresh-refresh",
+        });
+        expect(persisted.usageStats?.[profileId]).toEqual({
+          credentialGeneration: 1,
+          lastUsed: 100,
+          lastFailureAt: 200,
+          lastProbeAt: 300,
+          errorCount: 0,
+        });
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
+  it("updates the main owner when a secondary agent reauthenticates an inherited profile", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-profile-inherited-login-",
+      async ({ agentDirFor }) => {
+        const secondaryAgentDir = agentDirFor("secondary");
+        fs.mkdirSync(secondaryAgentDir, { recursive: true });
+        const profileId = "openai:shared";
+        const now = Date.now();
+        saveAuthProfileStore({
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider: "openai",
+              access: "inherited-access",
+              refresh: "inherited-refresh",
+              expires: now + 120_000,
+              accountId: "shared-account",
+            },
+          },
+          usageStats: {
+            [profileId]: {
+              errorCount: 4,
+              failureCounts: { auth_permanent: 4 },
+              disabledUntil: now + 60_000,
+              disabledReason: "auth_permanent",
+            },
+          },
+        });
+
+        await upsertAuthProfileAfterLoginWithLockOrThrow({
+          profileId,
+          credential: {
+            type: "oauth",
+            provider: "openai",
+            access: "reauthenticated-access",
+            refresh: "reauthenticated-refresh",
+            expires: now + 60_000,
+            accountId: "shared-account",
+          },
+          agentDir: secondaryAgentDir,
+        });
+
+        const mainStore = loadAuthProfileStoreWithoutExternalProfiles();
+        expect(mainStore.profiles[profileId]).toMatchObject({
+          access: "reauthenticated-access",
+          refresh: "reauthenticated-refresh",
+        });
+        expect(mainStore.usageStats?.[profileId]).toEqual({
+          credentialGeneration: 1,
+          errorCount: 0,
+        });
+        const secondaryStore = loadAuthProfileStoreWithoutExternalProfiles(secondaryAgentDir);
+        expect(secondaryStore.profiles[profileId]).toMatchObject({
+          access: "reauthenticated-access",
+          refresh: "reauthenticated-refresh",
+        });
+        expect(secondaryStore.usageStats?.[profileId]).toEqual({
+          credentialGeneration: 1,
+          errorCount: 0,
+        });
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
+  it("uses the explicit state root when replacing an inherited profile", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-profile-explicit-root-",
+      async ({ stateDir }) => {
+        const explicitStateDir = path.join(stateDir, "explicit");
+        const explicitAgentDirFor = (agentId: string) =>
+          path.join(explicitStateDir, "agents", agentId, "agent");
+        const mainAgentDir = explicitAgentDirFor("main");
+        const secondaryAgentDir = explicitAgentDirFor("secondary");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(secondaryAgentDir, { recursive: true });
+        const profileId = "openai:shared";
+        const now = Date.now();
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              [profileId]: {
+                type: "oauth",
+                provider: "openai",
+                access: "inherited-access",
+                refresh: "inherited-refresh",
+                expires: now + 120_000,
+              },
+            },
+            usageStats: {
+              [profileId]: {
+                errorCount: 4,
+                disabledUntil: now + 60_000,
+                disabledReason: "auth_permanent",
+              },
+            },
+          },
+          mainAgentDir,
+        );
+
+        await upsertAuthProfileAfterLoginWithLockOrThrow({
+          profileId,
+          credential: {
+            type: "oauth",
+            provider: "openai",
+            access: "reauthenticated-access",
+            refresh: "reauthenticated-refresh",
+            expires: now + 180_000,
+          },
+          agentDir: secondaryAgentDir,
+          stateDir: explicitStateDir,
+        });
+
+        expect(loadPersistedAuthProfileStore(mainAgentDir)).toMatchObject({
+          profiles: {
+            [profileId]: {
+              access: "reauthenticated-access",
+              refresh: "reauthenticated-refresh",
+            },
+          },
+          usageStats: {
+            [profileId]: {
+              credentialGeneration: 1,
+              errorCount: 0,
+            },
+          },
+        });
+        expect(
+          loadPersistedAuthProfileStore(secondaryAgentDir)?.profiles[profileId],
+        ).toBeUndefined();
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
+  it("ignores usage settlement from a replaced credential generation", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-profile-stale-settlement-",
+      async ({ agentDir }) => {
+        fs.mkdirSync(agentDir, { recursive: true });
+        const now = Date.now();
+        const profileIds = {
+          failure: "fixture:failure",
+          blocked: "fixture:blocked",
+          success: "fixture:success",
+        } as const;
+        const oldCredential = (profileId: string) => ({
+          type: "api_key" as const,
+          provider: "fixture",
+          key: `old-${profileId}`,
+        });
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: Object.fromEntries(
+              Object.values(profileIds).map((profileId) => [profileId, oldCredential(profileId)]),
+            ),
+          },
+          agentDir,
+        );
+        const staleStores = {
+          failure: loadAuthProfileStoreForRuntime(agentDir),
+          blocked: loadAuthProfileStoreForRuntime(agentDir),
+          success: loadAuthProfileStoreForRuntime(agentDir),
+        };
+        for (const profileId of Object.values(profileIds)) {
+          await upsertAuthProfileAfterLoginWithLockOrThrow({
+            profileId,
+            credential: oldCredential(profileId),
+            agentDir,
+          });
+        }
+
+        await markAuthProfileFailure({
+          store: staleStores.failure,
+          profileId: profileIds.failure,
+          reason: "auth_permanent",
+          agentDir,
+        });
+        await markAuthProfileBlockedUntil({
+          store: staleStores.blocked,
+          profileId: profileIds.blocked,
+          blockedUntil: now + 60_000,
+          source: "codex_rate_limits",
+          agentDir,
+        });
+        await markAuthProfileSuccess({
+          store: staleStores.success,
+          provider: "fixture",
+          profileId: profileIds.success,
+          agentDir,
+        });
+
+        const persisted = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
+        for (const profileId of Object.values(profileIds)) {
+          expect(persisted.profiles[profileId]).toMatchObject({ key: `old-${profileId}` });
+          expect(persisted.usageStats?.[profileId]).toEqual({
+            credentialGeneration: 1,
+            errorCount: 0,
+          });
+        }
+        expect(persisted.lastGood).toBeUndefined();
       },
       { clearOAuthDir: true },
     );

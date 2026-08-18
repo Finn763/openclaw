@@ -13,7 +13,7 @@ import {
   normalizeOptionalSecretInput,
   validateApiKeyInput,
 } from "openclaw/plugin-sdk/provider-auth";
-import { upsertAuthProfileWithLockOrThrow } from "openclaw/plugin-sdk/provider-auth-api-key";
+import { upsertAuthProfileAfterLoginWithLockOrThrow } from "openclaw/plugin-sdk/provider-auth-api-key";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { buildCloudflareAiGatewayCatalogProvider } from "./catalog-provider.js";
 import { CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF } from "./models.js";
@@ -184,7 +184,7 @@ export default definePluginEntry({
               if (!credential) {
                 return null;
               }
-              await upsertAuthProfileWithLockOrThrow({
+              await upsertAuthProfileAfterLoginWithLockOrThrow({
                 profileId: PROFILE_ID,
                 credential,
                 agentDir: ctx.agentDir,

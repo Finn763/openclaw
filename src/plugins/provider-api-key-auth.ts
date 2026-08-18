@@ -1,7 +1,7 @@
 /** Builds API-key provider auth methods that write profiles and config updates. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
-import { upsertAuthProfileWithLockOrThrow } from "../agents/auth-profiles/profiles.js";
+import { upsertAuthProfileAfterLoginWithLockOrThrow } from "../agents/auth-profiles/profiles.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SecretInput } from "../config/types.secrets.js";
@@ -230,7 +230,7 @@ export function createProviderApiKeyAuthMethod(
           if (!credential) {
             return null;
           }
-          await upsertAuthProfileWithLockOrThrow({
+          await upsertAuthProfileAfterLoginWithLockOrThrow({
             profileId,
             credential,
             agentDir: ctx.agentDir,
