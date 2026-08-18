@@ -202,9 +202,10 @@ Plugin, node, and worker receipts use the same coverage vocabulary:
 - A plugin node policy that returns without its supplied node callback is
   `unknown` with `node.action_callback` missing.
 - An action performed wholly inside an ACP or other external native runtime
-  without an OpenClaw pre-action callback is `unsupported` with
-  `native.action_callback` missing. Add an adapter callback; transcript or task
-  text cannot repair this evidence gap.
+  without an OpenClaw pre-action callback requires an owner-produced
+  `unsupported` receipt with `native.action_callback` missing. A plugin-run
+  receipt cannot infer that fact; add an ACP/native owner adapter callback.
+  Transcript or task text cannot repair this evidence gap.
 
 These generic receipts retain no plugin id, node id, worker environment or
 session id, credential or build hash, token, command, parameters, or raw error

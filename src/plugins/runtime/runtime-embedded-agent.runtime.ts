@@ -14,8 +14,7 @@ import type { PluginRuntime } from "./types.js";
 export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] = async (
   params,
 ) => {
-  const runtimeScope = getPluginRuntimeGatewayRequestScope();
-  const pluginId = runtimeScope?.pluginId;
+  const pluginId = getPluginRuntimeGatewayRequestScope()?.pluginId;
   if (!pluginId) {
     throw new Error("Plugin embedded-agent execution requires an active plugin runtime scope.");
   }
@@ -55,34 +54,6 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
         remediation: [],
         discriminator: JSON.stringify([pluginId, params.runId, decisionOccurrenceId, "admission"]),
       });
-      if (runtimeScope?.nativeActionEvidence === "unsupported") {
-        recordPluginRuntimeActionDecision({
-          token,
-          family: "native-runtime",
-          operation: "action-evidence",
-          outcome: "not-applicable",
-          coverageState: "unsupported",
-          reasonCode: "native_action_callback_unsupported",
-          owner: "plugin-runtime",
-          decisionBoundary: "plugin.runtime.external-native-action",
-          policyRefs: ["native-action:explicit-callback"],
-          summary:
-            "This external runtime exposes no OpenClaw pre-action callback; this coverage fact does not claim a side effect occurred.",
-          missingEvidence: ["native.action_callback"],
-          remediation: [
-            {
-              code: "add_native_action_adapter",
-              text: "Add an OpenClaw adapter callback before the native runtime performs the side effect.",
-            },
-          ],
-          discriminator: JSON.stringify([
-            pluginId,
-            params.runId,
-            decisionOccurrenceId,
-            "unsupported-native-action",
-          ]),
-        });
-      }
     },
   });
   let closed = false;

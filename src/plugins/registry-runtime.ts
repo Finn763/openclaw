@@ -40,7 +40,6 @@ import type { PluginRecord } from "./registry-types.js";
 import {
   getGatewayContextResolver,
   withPluginRuntimePluginIdScope,
-  withPluginRuntimeNativeActionEvidence,
   withPluginRuntimePluginScope,
 } from "./runtime/gateway-request-scope.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -468,12 +467,9 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         }
       }
     };
-    const resolveRunSessionExecutionOwner = async (
+    const resolveRunSessionExecutionOwner = (
       params: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0],
-    ): Promise<{
-      ownerPluginId?: string;
-      nativeActionEvidence: "callback" | "unsupported";
-    }> => {
+    ): string | undefined => {
       const target = params.sessionTarget;
       const targetSessionKey = normalizeOptionalString(target?.sessionKey);
       const directSessionKey = normalizeOptionalString(params.sessionKey);
@@ -544,24 +540,6 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           ? resolveLockedSessionHarnessRegistration(sessionKey, entry, "run")
           : undefined;
       const ownerPluginId = locked?.ownerPluginId;
-      const resolveNativeActionEvidence = async (): Promise<"callback" | "unsupported"> => {
-        if (!entry || !sessionKey) {
-          return "callback";
-        }
-        if (entry.acpSessionBinding) {
-          return "unsupported";
-        }
-        // ACP finalization clears the initialization fence. Read the exact durable
-        // owner row lazily or completed native sessions would look callback-capable.
-        const { readAcpSessionMetaForEntry } = await import("../acp/runtime/session-meta.js");
-        return readAcpSessionMetaForEntry({
-          sessionKey,
-          ...(ownershipAgentId ? { agentId: ownershipAgentId } : {}),
-          entry,
-        })
-          ? "unsupported"
-          : "callback";
-      };
       if (locked && entry && sessionKey && ownerPluginId !== pluginId) {
         const registration = "registration" in locked ? locked.registration : undefined;
         if (!registration) {
@@ -589,10 +567,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             `Plugin "${pluginId}" may execute locked session "${sessionKey}" only with its exact persisted identity and harness.`,
           );
         }
-        return {
-          ownerPluginId,
-          nativeActionEvidence: await resolveNativeActionEvidence(),
-        };
+        return ownerPluginId;
       }
       assertSessionIdentitiesOwned({
         action: "run",
@@ -602,9 +577,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         sessionKeys: [target?.sessionKey ?? params.sessionKey],
         storePath: ownershipStorePath,
       });
-      return {
-        nativeActionEvidence: await resolveNativeActionEvidence(),
-      };
+      return undefined;
     };
     const assertGatewaySessionRequestOwned = (
       method: string,
@@ -981,20 +954,13 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           const runEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] = async (params) => {
             const runParams = { ...params, skillWorkshopCollectionReconcile: undefined };
             return await runWithPluginScope(async () => {
-              const executionOwner = await resolveRunSessionExecutionOwner(runParams);
-              return await withPluginRuntimeNativeActionEvidence(
-                executionOwner.nativeActionEvidence,
-                async () => {
-                  if (executionOwner.ownerPluginId) {
-                    return await resolvePluginRuntime(
-                      executionOwner.ownerPluginId,
-                    ).agent.runEmbeddedAgent(runParams);
-                  }
-                  // The public runtime adapter owns admission preparation. Passing
-                  // host authority through this plugin wrapper is rejected by design.
-                  return await agent.runEmbeddedAgent(runParams);
-                },
-              );
+              const ownerPluginId = resolveRunSessionExecutionOwner(runParams);
+              if (ownerPluginId) {
+                return await resolvePluginRuntime(ownerPluginId).agent.runEmbeddedAgent(runParams);
+              }
+              // The public runtime adapter owns admission preparation. Passing
+              // host authority through this plugin wrapper is rejected by design.
+              return await agent.runEmbeddedAgent(runParams);
             });
           };
           const scopedAgent = Object.create(

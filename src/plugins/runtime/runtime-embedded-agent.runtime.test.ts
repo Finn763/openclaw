@@ -3,10 +3,7 @@ import type { DecisionReceiptV1 } from "../../../packages/gateway-protocol/src/i
 import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { configurePluginRuntimeActionDecisionSink } from "../runtime-action-decision.js";
-import {
-  withPluginRuntimeNativeActionEvidence,
-  withPluginRuntimePluginIdScope,
-} from "./gateway-request-scope.js";
+import { withPluginRuntimePluginIdScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -104,11 +101,11 @@ describe("plugin embedded-agent runtime admission", () => {
     expect(mocks.close).toHaveBeenCalledOnce();
   });
 
-  it("marks external native actions unsupported when the persisted owner has no callback", async () => {
+  it("records exact admission and attribution-only completion without plugin identifiers", async () => {
     const executionIdentityToken = {
       tokenVersion: 1,
-      contextId: "context-native",
-      executionId: "execution-native",
+      contextId: "context-plugin",
+      executionId: "execution-plugin",
       runId: "run-plugin",
       createdAt: 100,
     } as const;
@@ -136,8 +133,8 @@ describe("plugin embedded-agent runtime admission", () => {
       return true;
     });
     try {
-      await withPluginRuntimePluginIdScope("private-acp-plugin", () =>
-        withPluginRuntimeNativeActionEvidence("unsupported", () => runPluginEmbeddedAgent(params)),
+      await withPluginRuntimePluginIdScope("private-plugin-id", () =>
+        runPluginEmbeddedAgent(params),
       );
     } finally {
       clear();
@@ -148,20 +145,11 @@ describe("plugin embedded-agent runtime admission", () => {
         enforcement: { coverageState: "enforced" },
       },
       {
-        action: { family: "native-runtime", operation: "action-evidence" },
-        decision: {
-          outcome: "not-applicable",
-          reasonCode: "native_action_callback_unsupported",
-        },
-        enforcement: { coverageState: "unsupported" },
-        missingEvidence: ["native.action_callback"],
-      },
-      {
         decision: { outcome: "allowed", reasonCode: "plugin_runtime_completed" },
         enforcement: { coverageState: "attribution-only" },
       },
     ]);
-    expect(JSON.stringify(receipts)).not.toContain("private-acp-plugin");
+    expect(JSON.stringify(receipts)).not.toContain("private-plugin-id");
   });
 
   it("revokes admission immediately when a pending plugin run aborts", async () => {
