@@ -32,7 +32,7 @@ import type {
 } from "./state.js";
 import { emit, isImmediateCronRunMode } from "./state.js";
 import { ensureLoaded, runPostPersistCronNotifications, warnIfDisabled } from "./store.js";
-import { tryCreateCronTaskRun, tryFinishCronTaskRun } from "./task-runs.js";
+import { tryCreateCronTaskRunHandle, tryFinishCronTaskRun } from "./task-runs.js";
 import { applyJobResult, armTimer, type CronTriggerEvalOutcome } from "./timer.js";
 
 type PreparedManualRun =
@@ -64,6 +64,8 @@ type PreparedManualRun =
 export type ActivatedManualRun = Extract<PreparedManualRun, { ran: true }> & {
   startedAt: number;
   taskRunId?: string;
+  taskId?: string;
+  flowId?: string;
   activeJobMarker?: CronActiveJobMarker;
   admittedJob: CronJob;
   executionJob: CronJob;
@@ -489,12 +491,13 @@ export async function activatePreparedManualRun(
       job: activatedJob,
       runAtMs: startedAt,
     });
-    const taskRunId = tryCreateCronTaskRun({
+    const taskRun = tryCreateCronTaskRunHandle({
       state,
       job: activatedJob,
       startedAt,
       publicRunId: prepared.runId ?? activation.runReceipt.receiptId,
     });
+    const taskRunId = taskRun?.runId;
     const activeJobMarker = markManualCronJobActive(state, job);
     // Execute against a snapshot so later reload/merge can preserve delivery
     // target writeback from disk without mutating the running object.
@@ -513,6 +516,8 @@ export async function activatePreparedManualRun(
       startedAt,
       runId: prepared.runId ?? taskRunId,
       taskRunId,
+      taskId: taskRun?.taskId,
+      flowId: taskRun?.flowId,
       activeJobMarker,
       admittedJob,
       executionJob,

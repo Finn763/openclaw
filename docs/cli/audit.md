@@ -115,7 +115,8 @@ view renders these sections:
 3. **Lineage**: parent context or an explicit absent, unknown, or unsupported
    state.
 4. **Decisions**: bounded run-admission and authoritative action-decision
-   receipts, including terminal operator approvals.
+   receipts, including terminal operator approvals and exact-bound cron, task,
+   and task-flow lifecycle rows.
 5. **Missing evidence** and **Next steps**.
 
 Every field includes `present`, `absent`, `unknown`, or `unsupported`; the CLI
@@ -124,6 +125,14 @@ credential. A direct local run currently shows authoritative `local-cli`
 ingress, an absent invoker, and
 `unattributed` coverage. Its admission receipt says `not-applicable` because no
 identity-aware policy or grant evaluation was proven.
+
+Lifecycle rows from `cron_run_receipts`, `task_runs`, and `flow_runs` appear as
+owner-native, attribution-only receipts when they carry the exact inspected
+context and execution ids. They contain status and bounded record references,
+not prompts, task goals, hook payloads, paths, or raw errors. Their decision is
+`not-applicable` because lifecycle attribution does not prove authorization.
+Treat every decision cursor as opaque: numeric and `a:`, `m:`, and `g:` values
+remain compatible, while cron/task/flow pages may return `c:`, `t:`, or `f:`.
 
 For Gateway runs, a resolved authenticated profile can make the invoker
 `present` and coverage `attribution-only`. Paired devices and shared credentials

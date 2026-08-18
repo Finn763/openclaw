@@ -22,7 +22,10 @@ import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
 import { formatErrorMessageWithCode, readErrorName } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { createRunningTaskRun } from "../../tasks/detached-task-runtime.js";
+import { bindTaskFlowExecution } from "../../tasks/task-flow-registry.store.sqlite.js";
 import { mapAgentRunTerminalOutcomeToTaskStatus } from "../../tasks/task-registry-common.js";
+import { bindTaskRunExecution } from "../../tasks/task-registry.store.sqlite.js";
+import type { TaskRecord } from "../../tasks/task-registry.types.js";
 import { normalizeDeliveryContext } from "../../utils/delivery-context.shared.js";
 import type { ChatAbortControllerEntry } from "../chat-abort.js";
 import {
@@ -136,9 +139,10 @@ export function dispatchAgentRunFromGateway(params: {
 }) {
   const shouldTrackTask = params.taskTrackingMode === "cli";
   let taskTracked = false;
+  let trackedTask: TaskRecord | undefined;
   if (shouldTrackTask) {
     try {
-      taskTracked = Boolean(
+      trackedTask =
         createRunningTaskRun({
           runtime: "cli",
           sourceId: params.runId,
@@ -155,8 +159,8 @@ export function dispatchAgentRunFromGateway(params: {
           task: params.ingressOpts.message,
           deliveryStatus: "not_applicable",
           startedAt: Date.now(),
-        }),
-      );
+        }) ?? undefined;
+      taskTracked = Boolean(trackedTask);
     } catch (err) {
       // Best-effort only: background task tracking must not block agent runs.
       // Still surface the swallowed error so non-transient tracking failures stay observable.
@@ -188,12 +192,43 @@ export function dispatchAgentRunFromGateway(params: {
     params.ingressOpts,
     readAgentRunDispatchExecutionIdentity(params),
   );
+  const ingressOptsWithTaskBinding = trackedTask
+    ? {
+        ...ingressOptsWithSpawnFacts,
+        onAdmittedRunContext: async (
+          admitted: Parameters<
+            NonNullable<typeof ingressOptsWithSpawnFacts.onAdmittedRunContext>
+          >[0],
+        ) => {
+          await ingressOptsWithSpawnFacts.onAdmittedRunContext?.(admitted);
+          try {
+            const taskResult = bindTaskRunExecution({ admitted, taskId: trackedTask.taskId });
+            const flowResult = trackedTask.parentFlowId
+              ? bindTaskFlowExecution({ admitted, flowId: trackedTask.parentFlowId })
+              : undefined;
+            if (
+              [taskResult, flowResult].some(
+                (result) => result === "mismatch" || result === "missing",
+              )
+            ) {
+              params.context.logGateway.warn(
+                `exact tracked-task execution binding was not retained for ${params.runId}`,
+              );
+            }
+          } catch (error) {
+            params.context.logGateway.warn(
+              `failed to retain tracked-task execution binding ${params.runId}: ${formatForLog(error)}`,
+            );
+          }
+        },
+      }
+    : ingressOptsWithSpawnFacts;
   const runAgent = () =>
     runWithCanonicalSkillWorkspace(params.canonicalSkillWorkspaceDir, () =>
       agentCommandFromGatewayIngress(
         cronCreatorAuthorityCapability
-          ? { ...ingressOptsWithSpawnFacts, cronCreatorAuthorityCapability }
-          : ingressOptsWithSpawnFacts,
+          ? { ...ingressOptsWithTaskBinding, cronCreatorAuthorityCapability }
+          : ingressOptsWithTaskBinding,
         defaultRuntime,
         params.context.deps,
         {

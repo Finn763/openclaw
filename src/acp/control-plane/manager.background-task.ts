@@ -1,5 +1,6 @@
 /** Mirrors child ACP turns into detached-task status for requester-facing progress. */
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import {
@@ -9,6 +10,8 @@ import {
   startTaskRunByRunId,
 } from "../../tasks/detached-task-runtime.js";
 import { resolveRequiredCompletionTerminalResult } from "../../tasks/task-completion-contract.js";
+import { bindTaskFlowExecution } from "../../tasks/task-flow-registry.store.sqlite.js";
+import { bindTaskRunExecution } from "../../tasks/task-registry.store.sqlite.js";
 import {
   deliveryContextFromSession,
   type DeliveryContext,
@@ -133,6 +136,7 @@ export function resolveBackgroundTaskContext(params: {
 export function createBackgroundTaskRecord(
   context: BackgroundTaskContext,
   startedAt: number,
+  admitted?: AdmittedRunContext,
 ): void {
   try {
     const task = createRunningTaskRun({
@@ -151,6 +155,20 @@ export function createBackgroundTaskRecord(
       logVerbose(
         `acp-manager: failed creating background task for ${context.runId}: persist_failed`,
       );
+      return;
+    }
+    if (admitted) {
+      const taskResult = bindTaskRunExecution({ admitted, taskId: task.taskId });
+      const flowResult = task.parentFlowId
+        ? bindTaskFlowExecution({ admitted, flowId: task.parentFlowId })
+        : undefined;
+      if (
+        [taskResult, flowResult].some((result) => result === "mismatch" || result === "missing")
+      ) {
+        logVerbose(
+          `acp-manager: exact task execution binding was not retained for ${context.runId}`,
+        );
+      }
     }
   } catch (error) {
     logVerbose(

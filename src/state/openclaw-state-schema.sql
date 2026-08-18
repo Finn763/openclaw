@@ -1596,6 +1596,8 @@ CREATE TABLE IF NOT EXISTS cron_run_receipts (
   owner_start_time INTEGER,
   started_at_ms INTEGER NOT NULL,
   finished_at_ms INTEGER,
+  context_id TEXT,
+  execution_id TEXT,
   error_text TEXT,
   CHECK (status IN ('running', 'ok', 'error', 'skipped', 'interrupted', 'superseded')),
   CHECK (
@@ -1731,6 +1733,8 @@ CREATE TABLE IF NOT EXISTS task_runs (
   progress_summary TEXT,
   terminal_summary TEXT,
   terminal_outcome TEXT,
+  context_id TEXT,
+  execution_id TEXT,
   detail_json TEXT
 ) STRICT;
 
@@ -1895,7 +1899,9 @@ CREATE TABLE IF NOT EXISTS flow_runs (
   cancel_requested_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  ended_at INTEGER
+  ended_at INTEGER,
+  context_id TEXT,
+  execution_id TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs(status);

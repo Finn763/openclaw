@@ -88,7 +88,7 @@ export async function runManagerTurn(params: {
         })
       : null;
   if (taskContext) {
-    createBackgroundTaskRecord(taskContext, turnStartedAt);
+    createBackgroundTaskRecord(taskContext, turnStartedAt, input.admittedRunContext);
   }
   let taskProgressSummary = "";
   const initialResolution = params.resolveSession({

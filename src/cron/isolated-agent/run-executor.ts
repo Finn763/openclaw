@@ -282,6 +282,7 @@ function createCronPromptExecutor(params: {
       Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
   ) => void;
   onLaneWait?: (info?: { waiting?: boolean }) => void;
+  executionIdentity?: import("../service/state.js").CronExecutionIdentityAdmission;
 }) {
   const sessionFile = params.runSessionKey;
   const cronFallbacksOverride =
@@ -395,8 +396,14 @@ function createCronPromptExecutor(params: {
       facts: {
         runId,
         agentId: params.agentId,
-        ingress: { kind: "schedule", boundary: "cron.isolated-agent", state: "present" },
+        ingress: params.executionIdentity?.ingress ?? {
+          kind: "schedule",
+          boundary: "cron.isolated-agent",
+          state: "present",
+        },
+        ...(params.executionIdentity?.invoker ? { invoker: params.executionIdentity.invoker } : {}),
       },
+      onAdmitted: params.executionIdentity?.onAdmitted,
     });
     const fallbackResult = await runWithModelFallback({
       cfg: params.cfgWithAgentDefaults,
@@ -840,6 +847,7 @@ export async function executeCronRun(params: {
       Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
   ) => void;
   onLaneWait?: (info?: { waiting?: boolean }) => void;
+  executionIdentity?: import("../service/state.js").CronExecutionIdentityAdmission;
   immutableThinkLevel: ThinkLevel | undefined;
   thinkingCatalog?: ModelCatalogEntry[];
   loadThinkingCatalog: (provider: string, model: string) => Promise<ModelCatalogEntry[]>;
@@ -896,6 +904,7 @@ export async function executeCronRun(params: {
     onExecutionStarted: params.onExecutionStarted,
     onExecutionPhase: params.onExecutionPhase,
     onLaneWait: params.onLaneWait,
+    executionIdentity: params.executionIdentity,
   });
 
   const runStartedAt = params.runStartedAt ?? Date.now();

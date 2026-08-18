@@ -1087,7 +1087,7 @@ describe("cron service ops seam coverage", () => {
         });
         const taskRunId =
           reservationOffsetMs === undefined
-            ? taskRuns.tryCreateCronTaskRun({ state, job, startedAt })
+            ? taskRuns.tryCreateCronTaskRunHandle({ state, job, startedAt })?.runId
             : taskExecutor.createRunningTaskRunCore({
                 runtime: "cron",
                 sourceId: job.id,
@@ -1205,7 +1205,7 @@ describe("cron service ops seam coverage", () => {
         requestHeartbeat: vi.fn(),
         runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
       });
-      const taskRunId = taskRuns.tryCreateCronTaskRun({ state, job, startedAt });
+      const taskRunId = taskRuns.tryCreateCronTaskRunHandle({ state, job, startedAt })?.runId;
       if (!taskRunId) {
         throw new Error("expected invalid finalized cron task run");
       }
@@ -1273,7 +1273,7 @@ describe("cron service ops seam coverage", () => {
         runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
         onEvent: (event) => events.push(structuredClone(event)),
       });
-      const taskRunId = taskRuns.tryCreateCronTaskRun({ state, job, startedAt });
+      const taskRunId = taskRuns.tryCreateCronTaskRunHandle({ state, job, startedAt })?.runId;
       if (!taskRunId) {
         throw new Error("expected cron task run");
       }
@@ -1339,7 +1339,7 @@ describe("cron service ops seam coverage", () => {
         requestHeartbeat: vi.fn(),
         runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
       });
-      const taskRunId = taskRuns.tryCreateCronTaskRun({ state, job, startedAt });
+      const taskRunId = taskRuns.tryCreateCronTaskRunHandle({ state, job, startedAt })?.runId;
       if (!taskRunId) {
         throw new Error("expected cron task run");
       }
@@ -1413,7 +1413,11 @@ describe("cron service ops seam coverage", () => {
           requestHeartbeat: vi.fn(),
           runIsolatedAgentJob,
         });
-        const taskRunId = taskRuns.tryCreateCronTaskRun({ state, job: original, startedAt });
+        const taskRunId = taskRuns.tryCreateCronTaskRunHandle({
+          state,
+          job: original,
+          startedAt,
+        })?.runId;
         if (!taskRunId) {
           throw new Error("expected cron task run");
         }

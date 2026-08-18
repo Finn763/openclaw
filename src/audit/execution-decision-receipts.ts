@@ -15,6 +15,12 @@ import {
   summarizeExecutionDecisionFactsForContext,
 } from "./execution-decision-facts.js";
 import {
+  pageOwnerLifecycleReceipts,
+  summarizeOwnerLifecycleReceipts,
+  type OwnerLifecycleCursor,
+  type OwnerLifecycleStage,
+} from "./execution-owner-lifecycle-receipts.js";
+import {
   pageMessageDeliveryReceiptsForRun,
   summarizeMessageDeliveryReceiptsForRun,
 } from "./message-delivery-receipts.js";
@@ -23,9 +29,10 @@ type ExecutionDecisionReadOptions = OpenClawStateDatabaseOptions & { now?: numbe
 
 const MAX_AGGREGATE_MISSING_EVIDENCE = 16;
 const MISSING_EVIDENCE_TRUNCATED = "decision.missing_evidence_truncated";
+type DecisionStage = "approval" | "message" | "generic" | OwnerLifecycleStage;
 type DecisionCursor =
   | {
-      stage: "approval" | "message" | "generic";
+      stage: DecisionStage;
       after?: { occurredAt: number; rowId: number };
     }
   | {
@@ -47,7 +54,7 @@ function parseDecisionCursor(value: string | undefined): DecisionCursor | undefi
   if (offset !== null && offset !== undefined) {
     return { offset };
   }
-  const match = /^([amg]):(0|[1-9]\d*):(0|[1-9]\d*)$/.exec(value);
+  const match = /^([amgctf]):(0|[1-9]\d*):(0|[1-9]\d*)$/.exec(value);
   if (!match) {
     return null;
   }
@@ -56,8 +63,20 @@ function parseDecisionCursor(value: string | undefined): DecisionCursor | undefi
   if (!Number.isSafeInteger(occurredAt) || !Number.isSafeInteger(rowId)) {
     return null;
   }
+  const stage =
+    match[1] === "a"
+      ? "approval"
+      : match[1] === "m"
+        ? "message"
+        : match[1] === "g"
+          ? "generic"
+          : match[1] === "c"
+            ? "cron"
+            : match[1] === "t"
+              ? "task"
+              : "flow";
   return {
-    stage: match[1] === "a" ? "approval" : match[1] === "m" ? "message" : "generic",
+    stage,
     ...(occurredAt === 0 && rowId === 0 ? {} : { after: { occurredAt, rowId } }),
   };
 }
@@ -67,10 +86,17 @@ export function isExecutionDecisionCursor(value: string): boolean {
 }
 
 function formatDecisionCursor(
-  stage: "approval" | "message" | "generic",
+  stage: DecisionStage,
   cursor?: { occurredAt: number; rowId: number },
 ): string {
-  const prefix = stage === "approval" ? "a" : stage === "message" ? "m" : "g";
+  const prefix = {
+    approval: "a",
+    message: "m",
+    generic: "g",
+    cron: "c",
+    task: "t",
+    flow: "f",
+  }[stage];
   return `${prefix}:${cursor?.occurredAt ?? 0}:${cursor?.rowId ?? 0}`;
 }
 
@@ -141,10 +167,8 @@ export function presentExecutionDecisionReceipts(params: {
   if (cursor === null) {
     throw new ExecutionDecisionCursorError();
   }
-  const limit = params.decisionLimit ?? 50;
+  const decisionLimit = params.decisionLimit ?? 50;
   const now = params.options.now ?? Date.now();
-  // Numeric cursors are the shipped aggregate offset. Resolve its owner span
-  // once, then let the canonical bounded owner pagers emit opaque successors.
   const opaqueCursor = cursor && "stage" in cursor ? cursor : undefined;
   const legacyOffset = cursor && "offset" in cursor ? cursor.offset - 1 : undefined;
   const approvalSummary = summarizeOperatorApprovalReceiptsForRun({
@@ -166,41 +190,138 @@ export function presentExecutionDecisionReceipts(params: {
     context: params.context,
     options: { ...params.options, now },
   });
+  const cronSummary = summarizeOwnerLifecycleReceipts({
+    stage: "cron",
+    context: params.context,
+    options: params.options,
+  });
+  const taskSummary = summarizeOwnerLifecycleReceipts({
+    stage: "task",
+    context: params.context,
+    options: params.options,
+  });
+  const flowSummary = summarizeOwnerLifecycleReceipts({
+    stage: "flow",
+    context: params.context,
+    options: params.options,
+  });
+  const stages: Array<{
+    stage: DecisionStage;
+    count: number;
+    page: (params: { after?: OwnerLifecycleCursor; offset?: number; limit: number }) => {
+      receipts: DecisionReceiptV1[];
+      nextCursor?: OwnerLifecycleCursor;
+    };
+  }> = [
+    {
+      stage: "approval",
+      count: approvalSummary.count,
+      page: ({ after, offset, limit }) =>
+        pageOperatorApprovalReceiptsForRun({
+          context: {
+            contextId: params.context.contextId,
+            executionId: params.context.executionId,
+            runId: params.context.runId,
+          },
+          after,
+          offset,
+          limit,
+          nowMs: now,
+          databaseOptions: params.options,
+        }),
+    },
+    {
+      stage: "message",
+      count: messageSummary.count,
+      page: ({ after, offset, limit }) =>
+        pageMessageDeliveryReceiptsForRun({
+          context: params.context,
+          after,
+          offset,
+          limit,
+          options: { ...params.options, now },
+        }),
+    },
+    {
+      stage: "generic",
+      count: genericSummary.count,
+      page: ({ after, offset, limit }) =>
+        pageExecutionDecisionFactsForContext({
+          context: params.context,
+          after,
+          offset,
+          limit,
+          now,
+          database: params.options,
+        }),
+    },
+    ...(["cron", "task", "flow"] as const).map((stage) => ({
+      stage,
+      count: { cron: cronSummary, task: taskSummary, flow: flowSummary }[stage].count,
+      page: ({
+        after,
+        offset,
+        limit,
+      }: {
+        after?: OwnerLifecycleCursor;
+        offset?: number;
+        limit: number;
+      }) =>
+        pageOwnerLifecycleReceipts({
+          stage,
+          context: params.context,
+          after,
+          offset,
+          limit,
+          options: params.options,
+        }),
+    })),
+  ];
   const decisions: DecisionReceiptV1[] = [];
-  let remainingLimit = limit;
+  let remainingLimit = decisionLimit;
   let nextDecisionCursor: string | undefined;
-  const approvalOffset =
-    legacyOffset !== undefined && legacyOffset < approvalSummary.count ? legacyOffset : undefined;
 
   if (cursor === undefined && remainingLimit > 0) {
     decisions.push(admissionDecision(params.context));
     remainingLimit -= 1;
-    if (
-      remainingLimit === 0 &&
-      (approvalSummary.count > 0 || messageSummary.count > 0 || genericSummary.count > 0)
-    ) {
+    if (remainingLimit === 0 && stages.some((stage) => stage.count > 0)) {
+      // The shipped first successor remains the approval cursor even when that owner is empty.
       nextDecisionCursor = formatDecisionCursor("approval");
     }
   }
-  if (
-    remainingLimit > 0 &&
-    opaqueCursor?.stage !== "message" &&
-    opaqueCursor?.stage !== "generic" &&
-    (legacyOffset === undefined || approvalOffset !== undefined)
-  ) {
+  let startStage = 0;
+  let firstStageOffset: number | undefined;
+  if (opaqueCursor) {
+    startStage = stages.findIndex((stage) => stage.stage === opaqueCursor.stage);
+  } else if (legacyOffset !== undefined) {
+    let preceding = 0;
+    startStage = stages.findIndex((stage) => {
+      if (legacyOffset < preceding + stage.count) {
+        firstStageOffset = legacyOffset - preceding;
+        return true;
+      }
+      preceding += stage.count;
+      return false;
+    });
+    if (startStage < 0) {
+      startStage = stages.length;
+    }
+  }
+  for (let index = startStage; index < stages.length && remainingLimit > 0; index += 1) {
+    const stage = stages[index];
+    if (!stage) {
+      continue;
+    }
     let page;
     try {
-      page = pageOperatorApprovalReceiptsForRun({
-        context: {
-          contextId: params.context.contextId,
-          executionId: params.context.executionId,
-          runId: params.context.runId,
-        },
-        after: opaqueCursor?.stage === "approval" ? opaqueCursor.after : undefined,
-        offset: approvalOffset,
+      page = stage.page({
+        ...(index === startStage && opaqueCursor?.stage === stage.stage
+          ? { after: opaqueCursor.after }
+          : {}),
+        ...(index === startStage && firstStageOffset !== undefined
+          ? { offset: firstStageOffset }
+          : {}),
         limit: remainingLimit,
-        nowMs: now,
-        databaseOptions: params.options,
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes("cursor is no longer retained")) {
@@ -213,95 +334,30 @@ export function presentExecutionDecisionReceipts(params: {
     decisions.push(...page.receipts);
     remainingLimit -= page.receipts.length;
     if (page.nextCursor) {
-      nextDecisionCursor = formatDecisionCursor("approval", page.nextCursor);
-    } else if (remainingLimit === 0 && messageSummary.count > 0) {
-      nextDecisionCursor = formatDecisionCursor("message");
-    } else if (remainingLimit === 0 && genericSummary.count > 0) {
-      nextDecisionCursor = formatDecisionCursor("generic");
+      nextDecisionCursor = formatDecisionCursor(stage.stage, page.nextCursor);
+      break;
     }
-  }
-  const messageOffset =
-    legacyOffset === undefined
-      ? undefined
-      : legacyOffset >= approvalSummary.count &&
-          legacyOffset < approvalSummary.count + messageSummary.count
-        ? legacyOffset - approvalSummary.count
-        : undefined;
-  if (
-    remainingLimit > 0 &&
-    nextDecisionCursor?.startsWith("a:") !== true &&
-    opaqueCursor?.stage !== "generic" &&
-    (legacyOffset === undefined || messageOffset !== undefined || approvalOffset !== undefined)
-  ) {
-    let page;
-    try {
-      page = pageMessageDeliveryReceiptsForRun({
-        context: params.context,
-        after: opaqueCursor?.stage === "message" ? opaqueCursor.after : undefined,
-        offset: messageOffset,
-        limit: remainingLimit,
-        options: { ...params.options, now },
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("cursor is no longer retained")) {
-        throw new ExecutionDecisionCursorError(
-          "decision cursor is no longer retained; restart inspection without --cursor",
-        );
-      }
-      throw error;
-    }
-    decisions.push(...page.receipts);
-    remainingLimit -= page.receipts.length;
-    if (page.nextCursor) {
-      nextDecisionCursor = formatDecisionCursor("message", page.nextCursor);
-    } else if (remainingLimit === 0 && genericSummary.count > 0) {
-      nextDecisionCursor = formatDecisionCursor("generic");
-    }
-  }
-  const genericOffset =
-    legacyOffset === undefined
-      ? undefined
-      : Math.max(0, legacyOffset - approvalSummary.count - messageSummary.count);
-  if (
-    remainingLimit > 0 &&
-    nextDecisionCursor?.startsWith("a:") !== true &&
-    nextDecisionCursor?.startsWith("m:") !== true
-  ) {
-    let page;
-    try {
-      page = pageExecutionDecisionFactsForContext({
-        context: params.context,
-        after: opaqueCursor?.stage === "generic" ? opaqueCursor.after : undefined,
-        offset: genericOffset,
-        limit: remainingLimit,
-        now,
-        database: params.options,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("cursor is no longer retained")) {
-        throw new ExecutionDecisionCursorError(
-          "decision cursor is no longer retained; restart inspection without --cursor",
-        );
-      }
-      throw error;
-    }
-    decisions.push(...page.receipts);
-    if (page.nextCursor) {
-      nextDecisionCursor = formatDecisionCursor("generic", page.nextCursor);
-    } else {
-      nextDecisionCursor = undefined;
+    if (remainingLimit === 0) {
+      const successor = stages.slice(index + 1).find((candidate) => candidate.count > 0);
+      nextDecisionCursor = successor ? formatDecisionCursor(successor.stage) : undefined;
     }
   }
   const ownerCoverage = new Set([
     approvalSummary.coverageState,
     messageSummary.coverageState,
     genericSummary.coverageState,
+    cronSummary.coverageState,
+    taskSummary.coverageState,
+    flowSummary.coverageState,
   ]);
   const boundedEvidence = boundMissingEvidence([
     ...params.context.missingEvidence,
     ...approvalSummary.missingEvidence,
     ...messageSummary.missingEvidence,
     ...genericSummary.missingEvidence,
+    ...cronSummary.missingEvidence,
+    ...taskSummary.missingEvidence,
+    ...flowSummary.missingEvidence,
   ]);
   const coverageState = boundedEvidence.truncated
     ? "unknown"

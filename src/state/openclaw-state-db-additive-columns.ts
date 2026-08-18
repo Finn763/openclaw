@@ -39,6 +39,12 @@ export const CLAW_LAZY_ADDITIVE_STATE_COLUMN_DEFINITIONS = [
     dataType: "INTEGER",
     tableName: "skill_workshop_proposals",
   },
+  { columnName: "context_id", dataType: "TEXT", tableName: "cron_run_receipts" },
+  { columnName: "execution_id", dataType: "TEXT", tableName: "cron_run_receipts" },
+  { columnName: "context_id", dataType: "TEXT", tableName: "task_runs" },
+  { columnName: "execution_id", dataType: "TEXT", tableName: "task_runs" },
+  { columnName: "context_id", dataType: "TEXT", tableName: "flow_runs" },
+  { columnName: "execution_id", dataType: "TEXT", tableName: "flow_runs" },
 ] as const satisfies readonly LazyAdditiveStateColumnDefinition[];
 
 function isFirstUseAdditiveStateColumn({
@@ -49,7 +55,9 @@ function isFirstUseAdditiveStateColumn({
     (tableName === "device_bootstrap_tokens" && columnName === "setup_id") ||
     (tableName === "skill_workshop_proposals" && columnName === "claim_released_time") ||
     (tableName === "worker_session_placement_moves" && columnName === "target_machine_class") ||
-    (tableName === "session_groups" && (columnName === "cwd" || columnName === "worktree"))
+    (tableName === "session_groups" && (columnName === "cwd" || columnName === "worktree")) ||
+    (["cron_run_receipts", "task_runs", "flow_runs"].includes(tableName) &&
+      (columnName === "context_id" || columnName === "execution_id"))
   );
 }
 

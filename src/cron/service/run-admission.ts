@@ -27,7 +27,10 @@ import {
 import { applyCronRuntimeRowsToState, commitCronRuntimeRows } from "./runtime-store.js";
 import { type CronServiceState, type DeferredCronNotifications, emit } from "./state.js";
 import { ensureLoaded, runPostPersistCronNotifications } from "./store.js";
-import { tryCreateCronTaskRun } from "./task-runs.js";
+import {
+  createCronOwnerExecutionIdentityAdmission,
+  tryCreateCronTaskRunHandle,
+} from "./task-runs.js";
 import {
   runsDetachedFromMainSession,
   type TimedCronRunOutcome,
@@ -621,12 +624,13 @@ export async function executeQueuedCronRun(params: {
     const executionJob = structuredClone(started.job);
     executionJob.state.runningAtMs = started.startedAt;
     executionJob.state.lastError = undefined;
-    const taskRunId = tryCreateCronTaskRun({
+    const taskRun = tryCreateCronTaskRunHandle({
       state,
       job: executionJob,
       startedAt: started.startedAt,
       publicRunId: started.runReceipt.receiptId,
     });
+    const taskRunId = taskRun?.runId;
     const activeJobMarker = markCronJobActive(executionJob.id, {
       preserveAcrossGenerationAdvance: !runsDetachedFromMainSession(executionJob),
     });
@@ -651,6 +655,12 @@ export async function executeQueuedCronRun(params: {
         runId: taskRunId,
         activeJobMarker,
         runReceipt: started.runReceipt,
+        executionIdentity: createCronOwnerExecutionIdentityAdmission({
+          state,
+          runReceipt: started.runReceipt,
+          taskId: taskRun?.taskId,
+          flowId: taskRun?.flowId,
+        }),
       });
       outcome = { ...base, ...result, endedAt: state.deps.nowMs() };
     } catch (error) {

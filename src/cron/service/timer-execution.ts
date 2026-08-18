@@ -451,6 +451,7 @@ async function executeDetachedCronJob(
     onExecutionStarted: options?.onExecutionStarted,
     onExecutionPhase: options?.onExecutionPhase,
     onLaneWait: options?.onLaneWait,
+    executionIdentity: options?.executionIdentity,
   });
 
   if (abortSignal?.aborted) {

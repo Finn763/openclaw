@@ -488,7 +488,9 @@ export interface CronJobs {
 export interface CronRunReceipts {
   agent_id: string;
   config_revision: string;
+  context_id: string | null;
   error_text: string | null;
+  execution_id: string | null;
   finished_at_ms: number | null;
   job_id: string;
   owner_pid: number;
@@ -709,10 +711,12 @@ export interface FlowRuns {
   blocked_summary: string | null;
   blocked_task_id: string | null;
   cancel_requested_at: number | null;
+  context_id: string | null;
   controller_id: string | null;
   created_at: number;
   current_step: string | null;
   ended_at: number | null;
+  execution_id: string | null;
   flow_id: string;
   goal: string;
   notify_policy: string;
@@ -1439,11 +1443,13 @@ export interface TaskRuns {
   agent_id: string | null;
   child_session_key: string | null;
   cleanup_after: number | null;
+  context_id: string | null;
   created_at: number;
   delivery_status: string;
   detail_json: string | null;
   ended_at: number | null;
   error: string | null;
+  execution_id: string | null;
   label: string | null;
   last_event_at: number | null;
   last_tool_name: string | null;
