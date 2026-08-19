@@ -212,6 +212,7 @@ function hasDynamicTmpdirJoin(source: string): boolean {
 function listTrackedRuntimeSourceFiles(repoRoot: string): string[] {
   const stdout = execFileSync("git", ["-C", repoRoot, "ls-files", "--", "src", "extensions"], {
     encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024,
     stdio: ["ignore", "pipe", "inherit"],
   });
   return stdout
