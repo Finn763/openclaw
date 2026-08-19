@@ -67,7 +67,7 @@ describe("Gateway agent command execution identity", () => {
     });
 
     const admitted = await prepared.admit("embedded");
-    await prepared.admit("cli");
+    await prepared.admit("embedded");
 
     expect(admitted.executionIdentityToken).toBeDefined();
     expect(events).toEqual(["admitted", "owner-bound"]);
