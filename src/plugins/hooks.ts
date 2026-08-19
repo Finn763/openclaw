@@ -18,6 +18,7 @@ import {
   readToolAllowlistIntersection,
 } from "../agents/tool-policy.js";
 import type { ExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
+import { recordRuntimeActionDecision } from "../audit/runtime-action-decision.js";
 import { copyReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -110,7 +111,6 @@ import type {
   PluginHookSkillProposalEvaluateResult,
   PluginHookSkillProposalEvaluationOutcome,
 } from "./hook-types.js";
-import { recordPluginRuntimeActionDecision } from "./runtime-action-decision.js";
 import {
   type PluginSubagentRequesterContext,
   withPluginSubagentRequesterContext,
@@ -345,7 +345,7 @@ export function createHookRunner(
     const failOpen = params.failed && shouldCatchHookErrors("before_tool_call");
     const blocked = params.result?.block === true || (params.failed && !failOpen);
     runtimeDecisionOrdinal += 1;
-    recordPluginRuntimeActionDecision({
+    recordRuntimeActionDecision({
       token: params.token,
       family: "plugin",
       operation: "before_tool_call",

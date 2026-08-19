@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecisionReceiptV1 } from "../../../packages/gateway-protocol/src/index.js";
 import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
+import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-decision.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { configurePluginRuntimeActionDecisionSink } from "../runtime-action-decision.js";
 import { withPluginRuntimePluginIdScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -128,7 +128,7 @@ describe("plugin embedded-agent runtime admission", () => {
       return { payloads: [] };
     });
     const receipts: DecisionReceiptV1[] = [];
-    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+    const clear = configureRuntimeActionDecisionSink((receipt) => {
       receipts.push(receipt);
       return true;
     });

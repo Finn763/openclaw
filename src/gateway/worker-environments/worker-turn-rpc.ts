@@ -17,7 +17,7 @@ import type {
   WorkerInferenceStartParams,
   WorkerInferenceStartResult,
 } from "../../../packages/gateway-protocol/src/schema/worker-inference.js";
-import { recordPluginRuntimeActionDecision } from "../../plugins/runtime-action-decision.js";
+import { recordRuntimeActionDecision } from "../../audit/runtime-action-decision.js";
 import { safeEqualSecret } from "../../security/secret-equal.js";
 import type { WorkerSessionToolName } from "../../worker/tool-authority.js";
 import {
@@ -187,7 +187,7 @@ export function createWorkerTurnRpc(options: WorkerTurnRpcOptions) {
     workerAdmissionOrdinal += 1;
     void capability
       .run((identity) =>
-        recordPluginRuntimeActionDecision({
+        recordRuntimeActionDecision({
           token: identity.executionIdentityToken,
           family: "worker",
           operation: "admit",

@@ -6,8 +6,8 @@ import {
   type AdmittedRunContext,
 } from "../../agents/admitted-run-context.js";
 import { runEmbeddedAgent as runEmbeddedAgentCore } from "../../agents/embedded-agent.js";
+import { recordRuntimeActionDecision } from "../../audit/runtime-action-decision.js";
 import { getRuntimeConfig } from "../../config/config.js";
-import { recordPluginRuntimeActionDecision } from "../runtime-action-decision.js";
 import { getPluginRuntimeGatewayRequestScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -40,7 +40,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     onAdmitted: (context) => {
       const token = context.executionIdentityToken;
       executionIdentityToken = token;
-      recordPluginRuntimeActionDecision({
+      recordRuntimeActionDecision({
         token,
         family: "plugin",
         operation: "run",
@@ -69,7 +69,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   try {
     params.abortSignal?.throwIfAborted();
     const result = await runEmbeddedAgentCore({ ...params, preparedRunAdmission });
-    recordPluginRuntimeActionDecision({
+    recordRuntimeActionDecision({
       token: executionIdentityToken,
       family: "plugin",
       operation: "run",

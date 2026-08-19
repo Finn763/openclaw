@@ -8,6 +8,7 @@ import { createAuditEventRecorder } from "../audit/audit-recorder.js";
 import { configureExecutionIdentityAdmissionSink } from "../audit/execution-identity-admission.js";
 import { configureMessageActionDecisionSink } from "../audit/message-action-decision.js";
 import { onTrustedMessageAuditEvent } from "../audit/message-audit-events.js";
+import { configureRuntimeActionDecisionSink } from "../audit/runtime-action-decision.js";
 import {
   configureChannelAdmissionDecisionSink,
   configureChannelAdmissionEvidenceCollection,
@@ -18,7 +19,6 @@ import { clearAgentRunContext } from "../infra/agent-run-registry.js";
 import { onTrustedToolExecutionEvent } from "../infra/diagnostic-events.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import type { SubsystemLogger } from "../logging/subsystem.js";
-import { configurePluginRuntimeActionDecisionSink } from "../plugins/runtime-action-decision.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onInternalSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { createLazyPromise, createLazyPromiseLoader } from "../shared/lazy-runtime.js";
@@ -109,7 +109,7 @@ export function startGatewayEventSubscriptions(params: {
   const clearMessageActionDecisionSink = configureMessageActionDecisionSink(
     auditRecorder.recordExecutionDecision,
   );
-  const clearPluginRuntimeActionDecisionSink = configurePluginRuntimeActionDecisionSink(
+  const clearRuntimeActionDecisionSink = configureRuntimeActionDecisionSink(
     auditRecorder.recordExecutionDecision,
   );
   const sessionObserver = createSessionObserver({
@@ -376,7 +376,7 @@ export function startGatewayEventSubscriptions(params: {
     clearChannelAdmissionEvidenceCollection();
     clearChannelAdmissionDecisionSink();
     clearMessageActionDecisionSink();
-    clearPluginRuntimeActionDecisionSink();
+    clearRuntimeActionDecisionSink();
     await agentEventHandlerLoader
       .peek()
       ?.then((handler) => handler.dispose())

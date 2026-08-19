@@ -1,14 +1,14 @@
-/** Bounded execution facts for plugin-owned runtime gates and actions. */
+/** Bounded execution facts for owner-controlled runtime gates and actions. */
 import { createHash } from "node:crypto";
 import type { DecisionReceiptV1 } from "../../packages/gateway-protocol/src/index.js";
-import type { ExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
+import type { ExecutionIdentityAdmissionToken } from "./execution-identity-admission.js";
 
 const state = resolveGlobalSingleton<{
   sink: ((receipt: DecisionReceiptV1) => boolean) | undefined;
-}>(Symbol.for("openclaw.pluginRuntimeActionDecisionSink"), () => ({ sink: undefined }));
+}>(Symbol.for("openclaw.runtimeActionDecisionSink"), () => ({ sink: undefined }));
 
-export function configurePluginRuntimeActionDecisionSink(
+export function configureRuntimeActionDecisionSink(
   sink: (receipt: DecisionReceiptV1) => boolean,
 ): () => void {
   state.sink = sink;
@@ -48,7 +48,7 @@ type RuntimeActionDecisionParams = {
   outcome: "allowed" | "denied" | "not-applicable" | "unknown";
   coverageState: "enforced" | "attribution-only" | "unknown" | "unsupported";
   reasonCode: string;
-  owner: "plugin-hook" | "plugin-runtime" | "node-runtime" | "worker-runtime";
+  owner: "plugin-hook" | "plugin-runtime" | "node-runtime" | "worker-runtime" | "acp-runtime";
   decisionBoundary: string;
   policyRefs?: string[];
   summary: string;
@@ -60,7 +60,7 @@ type RuntimeActionDecisionParams = {
 };
 
 /** Queue one owner-bound fact after exact execution admission. */
-export function recordPluginRuntimeActionDecision(params: RuntimeActionDecisionParams): boolean {
+export function recordRuntimeActionDecision(params: RuntimeActionDecisionParams): boolean {
   const token = params.token;
   if (!token || !state.sink) {
     return false;

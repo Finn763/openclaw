@@ -2,11 +2,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecisionReceiptV1 } from "../../packages/gateway-protocol/src/index.js";
 import { createExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
+import { configureRuntimeActionDecisionSink } from "../audit/runtime-action-decision.js";
 import { createHookRunner } from "./hooks.js";
 import { addStaticTestHooks } from "./hooks.test-fixtures.js";
 import { addTestHook } from "./hooks.test-helpers.js";
 import { createEmptyPluginRegistry, type PluginRegistry } from "./registry.js";
-import { configurePluginRuntimeActionDecisionSink } from "./runtime-action-decision.js";
 import type {
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
@@ -529,7 +529,7 @@ describe("before_tool_call execution receipts", () => {
       hooks: [{ pluginId: "secret-plugin-id", result }],
     });
     const receipts: DecisionReceiptV1[] = [];
-    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+    const clear = configureRuntimeActionDecisionSink((receipt) => {
       receipts.push(receipt);
       return true;
     });
@@ -568,7 +568,7 @@ describe("before_tool_call execution receipts", () => {
       },
     });
     const receipts: DecisionReceiptV1[] = [];
-    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+    const clear = configureRuntimeActionDecisionSink((receipt) => {
       receipts.push(receipt);
       return true;
     });

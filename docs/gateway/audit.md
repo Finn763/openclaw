@@ -113,9 +113,10 @@ If the private parent token was unavailable, the child remains inspectable but
 the missing parent context, execution, and run evidence is explicit. ACP spawn
 itself is observable. Actions performed wholly inside an external ACP runtime
 without a callback are reported as unsupported evidence, never inferred from
-task or transcript text. That receipt belongs at the ACP/native lifecycle
-owner; a generic plugin-run receipt must not infer it or claim that a native
-side effect occurred.
+task or transcript text. After admission, the ACP lifecycle owner records that
+receipt when the prompt is submitted, using the exact admitted execution token.
+It does not claim that a native side effect occurred; adapter authors must add
+an authoritative native-action callback to provide stronger evidence.
 
 Registered plugin runtime calls add bounded facts only after exact run
 admission. A `before_tool_call` hook records its own allow or block as an

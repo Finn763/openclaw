@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { recordRuntimeActionDecision } from "../audit/runtime-action-decision.js";
 import {
   sanitizeExecApprovalDisplayText,
   sanitizeExecApprovalWarningText,
@@ -10,7 +11,6 @@ import {
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { resolvePluginApprovalTimeoutMs } from "../infra/plugin-approvals.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
-import { recordPluginRuntimeActionDecision } from "../plugins/runtime-action-decision.js";
 import { getActivePluginGatewayNodePolicyRegistry } from "../plugins/runtime.js";
 import type {
   OpenClawPluginNodeInvokePolicyContext,
@@ -260,7 +260,7 @@ export async function applyPluginNodeInvokePolicy(params: {
     remediation?: Array<{ code: string; text: string }>;
   }) => {
     receiptOrdinal += 1;
-    recordPluginRuntimeActionDecision({
+    recordRuntimeActionDecision({
       token,
       family: "node",
       operation: "invoke",

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecisionReceiptV1 } from "../../packages/gateway-protocol/src/index.js";
 import { createOperationalRunInstanceRef } from "../agents/admitted-run-context.js";
 import { createExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
+import { configureRuntimeActionDecisionSink } from "../audit/runtime-action-decision.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
-import { configurePluginRuntimeActionDecisionSink } from "../plugins/runtime-action-decision.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import type { OpenClawPluginNodeInvokePolicyContext } from "../plugins/types.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
@@ -90,7 +90,7 @@ function createContext(node: NodeSession) {
 async function runPolicy(node = createNode()) {
   const { context, invoke } = createContext(node);
   const receipts: DecisionReceiptV1[] = [];
-  const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+  const clear = configureRuntimeActionDecisionSink((receipt) => {
     receipts.push(receipt);
     return true;
   });

@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { DecisionReceiptV1 } from "../../../packages/gateway-protocol/src/index.js";
 import { createOperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
 import { createExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
+import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-decision.js";
 import {
   claimAgentRunDelegatedAuthority,
   releaseAgentRunDelegatedAuthority,
 } from "../../infra/agent-run-registry.js";
-import { configurePluginRuntimeActionDecisionSink } from "../../plugins/runtime-action-decision.js";
 import { hashWorkerCredential } from "./credential.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
 import { createWorkerSessionPlacementStore } from "./placement-store.js";
@@ -225,7 +225,7 @@ describe("worker environment service", () => {
       handshake: support.BOOTSTRAP_RECEIPT,
     };
     const receipts: DecisionReceiptV1[] = [];
-    const clear = configurePluginRuntimeActionDecisionSink((receipt) => {
+    const clear = configureRuntimeActionDecisionSink((receipt) => {
       receipts.push(receipt);
       return true;
     });
