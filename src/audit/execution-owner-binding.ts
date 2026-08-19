@@ -1,4 +1,7 @@
-import type { AdmittedRunContext } from "../agents/admitted-run-context.js";
+import type {
+  AdmittedRunContext,
+  PreparedAgentRunAdmission,
+} from "../agents/admitted-run-context.js";
 import { parseExecutionIdentityAdmissionToken } from "./execution-identity-admission.js";
 
 export type ExecutionOwnerBindingResult =
@@ -39,25 +42,22 @@ export function classifyExecutionOwnerBinding(
     : "mismatch";
 }
 
-/** Carries immutable admission forward; owner I/O begins only after execution starts. */
-export function createPostAdmissionExecutionOwnerBinding(
+/** Adds one exact owner write after admission resolves, never inside the admission callback. */
+export function withPostAdmissionExecutionOwnerBinding(
+  prepared: PreparedAgentRunAdmission,
   bind: (context: AdmittedRunContext) => void,
-): {
-  onAdmitted: (context: AdmittedRunContext) => void;
-  onExecutionStarted: () => void;
-} {
-  let admitted: AdmittedRunContext | undefined;
+): PreparedAgentRunAdmission {
   let bound = false;
-  return {
-    onAdmitted: (context) => {
-      admitted = context;
-    },
-    onExecutionStarted: () => {
-      if (bound || !admitted) {
-        return;
+  return Object.freeze({
+    operationalRunInstance: prepared.operationalRunInstance,
+    admit: async (runtimeKind, runtimeInstanceId) => {
+      const admitted = await prepared.admit(runtimeKind, runtimeInstanceId);
+      if (!bound) {
+        bound = true;
+        bind(admitted);
       }
-      bound = true;
-      bind(admitted);
+      return admitted;
     },
-  };
+    close: prepared.close,
+  });
 }

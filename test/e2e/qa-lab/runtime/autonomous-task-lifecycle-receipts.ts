@@ -139,6 +139,29 @@ function readCronOwnerRows(
   }
 }
 
+function readCronOwnerBindingDiagnostic(
+  gateway: Awaited<ReturnType<typeof startQaGatewayChild>>,
+  jobId: string,
+): unknown {
+  const db = new DatabaseSync(stateDatabasePath(gateway), { readOnly: true });
+  try {
+    return {
+      cron: db
+        .prepare(
+          "SELECT context_id, execution_id, status FROM cron_run_receipts WHERE job_id = ? ORDER BY started_at_ms DESC LIMIT 1",
+        )
+        .get(jobId),
+      task: db
+        .prepare(
+          "SELECT context_id, execution_id, status FROM task_runs WHERE runtime = 'cron' AND source_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .get(jobId),
+    };
+  } finally {
+    db.close();
+  }
+}
+
 function readCliOwnerRows(
   gateway: Awaited<ReturnType<typeof startQaGatewayChild>>,
   runId: string,
@@ -296,9 +319,17 @@ async function runProof(options: ProducerOptions): Promise<string> {
       delivery: { mode: "none" },
     })) as { id: string };
     await gateway.call("cron.run", { id: cronJob.id, mode: "force" });
-    const cronRows = await waitFor("terminal cron/task exact bindings", () =>
-      readCronOwnerRows(gateway!, cronJob.id),
-    );
+    let cronRows: { cron: ExactOwnerRow; task: ExactOwnerRow };
+    try {
+      cronRows = await waitFor("terminal cron/task exact bindings", () =>
+        readCronOwnerRows(gateway!, cronJob.id),
+      );
+    } catch (error) {
+      throw new Error(
+        `${formatErrorMessage(error)}; owner rows=${JSON.stringify(readCronOwnerBindingDiagnostic(gateway, cronJob.id))}; gateway logs=${gateway.logs()}`,
+        { cause: error },
+      );
+    }
     if (
       cronRows.cron.context_id !== cronRows.task.context_id ||
       cronRows.cron.execution_id !== cronRows.task.execution_id

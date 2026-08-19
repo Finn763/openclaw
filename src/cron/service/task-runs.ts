@@ -2,7 +2,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { createPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { CRON_TASK_KIND } from "../../tasks/cron-task-contract.js";
 import {
@@ -75,7 +74,9 @@ export function createCronOwnerExecutionIdentityAdmission(params: {
   taskId?: string;
   flowId?: string;
 }): CronExecutionIdentityAdmission {
-  const ownerBinding = createPostAdmissionExecutionOwnerBinding((admitted) => {
+  const onPostAdmission = (
+    admitted: import("../../agents/admitted-run-context.js").AdmittedRunContext,
+  ) => {
     try {
       const receiptResult = bindCronRunReceiptExecution({
         admitted,
@@ -103,11 +104,10 @@ export function createCronOwnerExecutionIdentityAdmission(params: {
         "cron: failed to retain exact execution identity binding",
       );
     }
-  });
+  };
   return {
     ingress: { kind: "schedule", boundary: "cron.isolated-agent", state: "present" },
-    onAdmitted: ownerBinding.onAdmitted,
-    onExecutionStarted: ownerBinding.onExecutionStarted,
+    onPostAdmission,
   };
 }
 

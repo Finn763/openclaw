@@ -255,8 +255,7 @@ export type CronServiceDeps = {
 export type CronExecutionIdentityAdmission = {
   ingress: ExecutionIdentityAdmissionFacts["ingress"];
   invoker?: ExecutionIdentityAdmissionFacts["invoker"];
-  onAdmitted?: (context: AdmittedRunContext) => void | Promise<void>;
-  onExecutionStarted?: () => void;
+  onPostAdmission?: (context: AdmittedRunContext) => void;
 };
 
 /** Cron deps after optional defaults have been made concrete. */

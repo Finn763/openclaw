@@ -30,32 +30,31 @@ describe("cron run execution binding", () => {
       async (params: {
         executionIdentity?: {
           ingress: { kind: string };
-          onAdmitted?: (context: AdmittedRunContext) => void | Promise<void>;
-          onExecutionStarted?: () => void;
+          onPostAdmission?: (context: AdmittedRunContext) => void;
         };
       }) => {
-        await params.executionIdentity?.onAdmitted?.({
+        const admitted = {
           operationalRunInstance: { instanceId: "instance-exact", runId: "run-exact" },
           executionIdentityToken: createExecutionIdentityAdmissionToken("run-exact", {
             contextId: "context-exact",
             executionId: "execution-exact",
             now: dueAt,
           }),
-        });
-        const beforeStart = openOpenClawStateDatabase().db;
+        } satisfies AdmittedRunContext;
+        const beforeAdmissionSettles = openOpenClawStateDatabase().db;
         expect(
-          beforeStart
+          beforeAdmissionSettles
             .prepare("SELECT context_id, execution_id FROM cron_run_receipts WHERE job_id = ?")
             .get(job.id),
         ).toEqual({ context_id: null, execution_id: null });
         expect(
-          beforeStart
+          beforeAdmissionSettles
             .prepare(
               "SELECT context_id, execution_id FROM task_runs WHERE source_id = ? AND runtime = 'cron'",
             )
             .get(job.id),
         ).toEqual({ context_id: null, execution_id: null });
-        params.executionIdentity?.onExecutionStarted?.();
+        params.executionIdentity?.onPostAdmission?.(admitted);
         return { status: "ok" as const };
       },
     );

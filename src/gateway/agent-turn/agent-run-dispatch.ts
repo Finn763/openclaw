@@ -6,6 +6,7 @@ import {
   type AgentRunTerminalOutcome,
 } from "../../agents/agent-run-terminal-outcome.js";
 import type { PreparedAgentCommandRuntimeContext } from "../../agents/command/prepare.js";
+import type { AgentCommandOpts } from "../../agents/command/types.js";
 import {
   createCronCreatorAuthorityCapability,
   runWithCronCreatorAuthorityCapability,
@@ -15,7 +16,6 @@ import type { MainSessionRecoveryPendingTarget } from "../../agents/main-session
 import { isAgentRunRestartAbortReason } from "../../agents/run-termination.js";
 import { normalizeAgentRunTimeoutPhase } from "../../agents/run-timeout-attribution.js";
 import { runWithCanonicalSkillWorkspace } from "../../agents/skill-workshop-workspace-context.js";
-import { createPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import { agentCommandFromGatewayIngress } from "../../commands/agent.js";
 import { isAbortError } from "../../infra/abort-signal.js";
@@ -193,8 +193,8 @@ export function dispatchAgentRunFromGateway(params: {
     params.ingressOpts,
     readAgentRunDispatchExecutionIdentity(params),
   );
-  const trackedTaskBinding = trackedTask
-    ? createPostAdmissionExecutionOwnerBinding((admitted) => {
+  const bindTrackedTaskExecution = trackedTask
+    ? (admitted: Parameters<NonNullable<AgentCommandOpts["onPostAdmittedRunContext"]>>[0]) => {
         try {
           const taskResult = bindTaskRunExecution({ admitted, taskId: trackedTask.taskId });
           const flowResult = trackedTask.parentFlowId
@@ -212,23 +212,12 @@ export function dispatchAgentRunFromGateway(params: {
             `failed to retain tracked-task execution binding ${params.runId}: ${formatForLog(error)}`,
           );
         }
-      })
+      }
     : undefined;
   const ingressOptsWithTaskBinding = trackedTask
     ? {
         ...ingressOptsWithSpawnFacts,
-        onAdmittedRunContext: async (
-          admitted: Parameters<
-            NonNullable<typeof ingressOptsWithSpawnFacts.onAdmittedRunContext>
-          >[0],
-        ) => {
-          trackedTaskBinding?.onAdmitted(admitted);
-          await ingressOptsWithSpawnFacts.onAdmittedRunContext?.(admitted);
-        },
-        onExecutionStarted: () => {
-          ingressOptsWithSpawnFacts.onExecutionStarted?.();
-          trackedTaskBinding?.onExecutionStarted();
-        },
+        onPostAdmittedRunContext: bindTrackedTaskExecution,
       }
     : ingressOptsWithSpawnFacts;
   const runAgent = () =>

@@ -24,6 +24,7 @@ import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-p
 import { withLocalSessionPlacementTurnAdmission } from "../../agents/session-placement-admission.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { hasResolvedThinkingCatalogEntry } from "../../agents/thinking-runtime.js";
+import { withPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import type { ThinkLevel, VerboseLevel } from "../../auto-reply/thinking.js";
 import type { CliSessionBinding } from "../../config/sessions.js";
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
@@ -390,7 +391,7 @@ function createCronPromptExecutor(params: {
     });
     let acceptedContextEngineTurnCandidate: ContextEngineTurnAttemptFacts | undefined;
     const runId = params.cronSession.sessionEntry.sessionId;
-    const preparedRunAdmission = prepareAgentRunAdmission({
+    const basePreparedRunAdmission = prepareAgentRunAdmission({
       operationalRunInstance: createOperationalRunInstanceRef(runId),
       cfg: params.cfgWithAgentDefaults,
       facts: {
@@ -403,12 +404,13 @@ function createCronPromptExecutor(params: {
         },
         ...(params.executionIdentity?.invoker ? { invoker: params.executionIdentity.invoker } : {}),
       },
-      onAdmitted: params.executionIdentity?.onAdmitted,
     });
-    const onExecutionStarted = (info?: { lifecycleGeneration?: string }) => {
-      params.onExecutionStarted?.(info);
-      params.executionIdentity?.onExecutionStarted?.();
-    };
+    const preparedRunAdmission = params.executionIdentity?.onPostAdmission
+      ? withPostAdmissionExecutionOwnerBinding(
+          basePreparedRunAdmission,
+          params.executionIdentity.onPostAdmission,
+        )
+      : basePreparedRunAdmission;
     const fallbackResult = await runWithModelFallback({
       cfg: params.cfgWithAgentDefaults,
       provider: params.liveSelection.provider,
@@ -612,7 +614,7 @@ function createCronPromptExecutor(params: {
                 ),
                 scheduledToolPolicy,
                 abortSignal: params.abortSignal,
-                onExecutionStarted,
+                onExecutionStarted: params.onExecutionStarted,
                 onExecutionPhase: params.onExecutionPhase,
                 bootstrapContextMode,
                 bootstrapContextRunKind: "cron",
@@ -744,7 +746,7 @@ function createCronPromptExecutor(params: {
             contextEngineTurnCandidate = facts;
           },
           abortSignal: params.abortSignal,
-          onExecutionStarted,
+          onExecutionStarted: params.onExecutionStarted,
           onExecutionPhase: params.onExecutionPhase,
           onLaneWait: params.onLaneWait,
           bootstrapPromptWarningSignaturesSeen,
