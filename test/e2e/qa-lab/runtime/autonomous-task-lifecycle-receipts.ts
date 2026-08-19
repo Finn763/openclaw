@@ -410,7 +410,7 @@ async function runProof(options: ProducerOptions): Promise<string> {
     const db = new DatabaseSync(stateDatabasePath(gateway), { readOnly: true });
     let genericCount = 0;
     try {
-      if (hasSqliteColumns(db, "execution_decision_facts", ["fact_id"])) {
+      if (hasSqliteColumns(db, "execution_decision_facts", ["receipt_id"])) {
         genericCount = (
           db.prepare("SELECT COUNT(*) AS count FROM execution_decision_facts").get() as {
             count: number;
