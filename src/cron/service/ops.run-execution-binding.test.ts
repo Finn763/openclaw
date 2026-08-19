@@ -31,6 +31,7 @@ describe("cron run execution binding", () => {
         executionIdentity?: {
           ingress: { kind: string };
           onPostAdmission?: (context: AdmittedRunContext) => void;
+          onExecutionStarted?: () => void;
         };
       }) => {
         const admitted = {
@@ -55,6 +56,12 @@ describe("cron run execution binding", () => {
             .get(job.id),
         ).toEqual({ context_id: null, execution_id: null });
         params.executionIdentity?.onPostAdmission?.(admitted);
+        expect(
+          beforeAdmissionSettles
+            .prepare("SELECT context_id, execution_id FROM cron_run_receipts WHERE job_id = ?")
+            .get(job.id),
+        ).toEqual({ context_id: null, execution_id: null });
+        params.executionIdentity?.onExecutionStarted?.();
         return { status: "ok" as const };
       },
     );

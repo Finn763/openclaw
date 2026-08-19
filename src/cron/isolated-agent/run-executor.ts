@@ -411,6 +411,10 @@ function createCronPromptExecutor(params: {
           params.executionIdentity.onPostAdmission,
         )
       : basePreparedRunAdmission;
+    const onExecutionStarted = (info?: { lifecycleGeneration?: string }) => {
+      params.onExecutionStarted?.(info);
+      params.executionIdentity?.onExecutionStarted?.();
+    };
     const fallbackResult = await runWithModelFallback({
       cfg: params.cfgWithAgentDefaults,
       provider: params.liveSelection.provider,
@@ -614,7 +618,7 @@ function createCronPromptExecutor(params: {
                 ),
                 scheduledToolPolicy,
                 abortSignal: params.abortSignal,
-                onExecutionStarted: params.onExecutionStarted,
+                onExecutionStarted,
                 onExecutionPhase: params.onExecutionPhase,
                 bootstrapContextMode,
                 bootstrapContextRunKind: "cron",
@@ -746,7 +750,7 @@ function createCronPromptExecutor(params: {
             contextEngineTurnCandidate = facts;
           },
           abortSignal: params.abortSignal,
-          onExecutionStarted: params.onExecutionStarted,
+          onExecutionStarted,
           onExecutionPhase: params.onExecutionPhase,
           onLaneWait: params.onLaneWait,
           bootstrapPromptWarningSignaturesSeen,

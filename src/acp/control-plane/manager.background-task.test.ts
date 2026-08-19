@@ -16,6 +16,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 import {
   appendBackgroundTaskProgressSummary,
+  bindBackgroundTaskExecution,
   createBackgroundTaskRecord,
   resolveBackgroundTaskContext,
   resolveBackgroundTaskFailureStatus,
@@ -105,8 +106,8 @@ describe("resolveBackgroundTaskFailureStatus", () => {
   });
 });
 
-describe("createBackgroundTaskRecord", () => {
-  it("binds the exact admitted execution to its task and owner flow", async () => {
+describe("ACP background task execution binding", () => {
+  it("binds the exact admitted execution only at prompt submission", async () => {
     await withOpenClawTestState(
       { layout: "state-only", prefix: "openclaw-acp-execution-binding-" },
       async () => {
@@ -119,7 +120,7 @@ describe("createBackgroundTaskRecord", () => {
             executionId: "execution-acp",
           }),
         };
-        createBackgroundTaskRecord(
+        const record = createBackgroundTaskRecord(
           {
             requesterSessionKey: "agent:main:main",
             childSessionKey: "agent:qa:child",
@@ -127,13 +128,25 @@ describe("createBackgroundTaskRecord", () => {
             task: "private",
           },
           100,
-          admitted,
         );
         const task = findTaskByRunId("run-acp");
-        if (!task?.parentFlowId) {
+        if (!record || !task?.parentFlowId) {
           throw new Error("expected ACP task and owner flow");
         }
         const db = openOpenClawStateDatabase().db;
+        expect(
+          db
+            .prepare("SELECT context_id, execution_id FROM task_runs WHERE task_id = ?")
+            .get(task.taskId),
+        ).toEqual({ context_id: null, execution_id: null });
+        expect(
+          db
+            .prepare("SELECT context_id, execution_id FROM flow_runs WHERE flow_id = ?")
+            .get(task.parentFlowId),
+        ).toEqual({ context_id: null, execution_id: null });
+
+        bindBackgroundTaskExecution(record, admitted);
+
         expect(
           db
             .prepare("SELECT context_id, execution_id FROM task_runs WHERE task_id = ?")

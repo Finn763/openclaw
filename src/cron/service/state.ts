@@ -256,6 +256,7 @@ export type CronExecutionIdentityAdmission = {
   ingress: ExecutionIdentityAdmissionFacts["ingress"];
   invoker?: ExecutionIdentityAdmissionFacts["invoker"];
   onPostAdmission?: (context: AdmittedRunContext) => void;
+  onExecutionStarted?: () => void;
 };
 
 /** Cron deps after optional defaults have been made concrete. */

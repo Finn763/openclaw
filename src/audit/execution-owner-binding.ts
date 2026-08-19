@@ -61,3 +61,30 @@ export function withPostAdmissionExecutionOwnerBinding(
     close: prepared.close,
   });
 }
+
+/** Requires both exact admission and actual execution start, in either runtime order. */
+export function createExecutionStartedOwnerBinding(bind: (context: AdmittedRunContext) => void): {
+  onPostAdmission: (context: AdmittedRunContext) => void;
+  onExecutionStarted: () => void;
+} {
+  let admitted: AdmittedRunContext | undefined;
+  let executionStarted = false;
+  let bound = false;
+  const bindIfReady = () => {
+    if (bound || !admitted || !executionStarted) {
+      return;
+    }
+    bound = true;
+    bind(admitted);
+  };
+  return {
+    onPostAdmission: (context) => {
+      admitted = context;
+      bindIfReady();
+    },
+    onExecutionStarted: () => {
+      executionStarted = true;
+      bindIfReady();
+    },
+  };
+}

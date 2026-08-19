@@ -34,6 +34,11 @@ type BackgroundTaskContext = {
   task: string;
 };
 
+export type BackgroundTaskRecord = {
+  taskId: string;
+  parentFlowId?: string;
+};
+
 /** Produces the bounded task label shown for a child ACP background run. */
 function summarizeBackgroundTaskText(text: string): string {
   const normalized = normalizeText(text) ?? "ACP background task";
@@ -136,8 +141,7 @@ export function resolveBackgroundTaskContext(params: {
 export function createBackgroundTaskRecord(
   context: BackgroundTaskContext,
   startedAt: number,
-  admitted?: AdmittedRunContext,
-): void {
+): BackgroundTaskRecord | undefined {
   try {
     const task = createRunningTaskRun({
       runtime: "acp",
@@ -155,25 +159,35 @@ export function createBackgroundTaskRecord(
       logVerbose(
         `acp-manager: failed creating background task for ${context.runId}: persist_failed`,
       );
-      return;
+      return undefined;
     }
-    if (admitted) {
-      const taskResult = bindTaskRunExecution({ admitted, taskId: task.taskId });
-      const flowResult = task.parentFlowId
-        ? bindTaskFlowExecution({ admitted, flowId: task.parentFlowId })
-        : undefined;
-      if (
-        [taskResult, flowResult].some((result) => result === "mismatch" || result === "missing")
-      ) {
-        logVerbose(
-          `acp-manager: exact task execution binding was not retained for ${context.runId}`,
-        );
-      }
-    }
+    return {
+      taskId: task.taskId,
+      ...(task.parentFlowId ? { parentFlowId: task.parentFlowId } : {}),
+    };
   } catch (error) {
     logVerbose(
       `acp-manager: failed creating background task for ${context.runId}: ${String(error)}`,
     );
+    return undefined;
+  }
+}
+
+/** Links ACP owner rows only when the runtime reaches its prompt-submitted boundary. */
+export function bindBackgroundTaskExecution(
+  record: BackgroundTaskRecord,
+  admitted: AdmittedRunContext,
+): void {
+  try {
+    const taskResult = bindTaskRunExecution({ admitted, taskId: record.taskId });
+    const flowResult = record.parentFlowId
+      ? bindTaskFlowExecution({ admitted, flowId: record.parentFlowId })
+      : undefined;
+    if ([taskResult, flowResult].some((result) => result === "mismatch" || result === "missing")) {
+      logVerbose("acp-manager: exact task execution binding was not retained");
+    }
+  } catch (error) {
+    logVerbose(`acp-manager: failed binding background task execution: ${String(error)}`);
   }
 }
 
