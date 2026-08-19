@@ -22,7 +22,10 @@ export function createSubagentRegistryListener(config: {
   pendingLifecycle: ReturnType<typeof createPendingLifecycleScheduler>;
   onAgentEvent: (listener: (event: AgentEventPayload) => void) => () => void;
   persist: (...runIds: string[]) => void;
-  refreshFrozenResultFromSession: (sessionKey: string) => Promise<unknown>;
+  refreshFrozenResultFromSession: (
+    sessionKey: string,
+    terminalReply?: SubagentCompletionRequest["terminalReply"],
+  ) => Promise<unknown>;
   completeSubagentRunWithRecovery: (
     params: SubagentCompletionRequest,
     source: string,
@@ -52,6 +55,7 @@ export function createSubagentRegistryListener(config: {
           return;
         }
         const phase = evt.data?.phase;
+        const terminalReply = normalizeAgentRunTerminalReplySnapshot(evt.data?.terminalReply);
         const entry = runs.get(evt.runId);
         if (!entry) {
           if (phase === "end" && typeof evt.sessionKey === "string") {
@@ -59,7 +63,7 @@ export function createSubagentRegistryListener(config: {
             // A replacement generation can finish after its predecessor row is
             // terminal. Keep capture + persistence inside the suspension fence.
             await runWithGatewayIndependentRootWorkAdmission(async () => {
-              await refreshFrozenResultFromSession(sessionKey);
+              await refreshFrozenResultFromSession(sessionKey, terminalReply);
             });
           }
           return;
@@ -87,7 +91,6 @@ export function createSubagentRegistryListener(config: {
           typeof evt.data?.livenessState === "string" ? evt.data.livenessState : undefined;
         const stopReason =
           typeof evt.data?.stopReason === "string" ? evt.data.stopReason : undefined;
-        const terminalReply = normalizeAgentRunTerminalReplySnapshot(evt.data?.terminalReply);
         // sessions_yield ends the turn by aborting the run signal, so a yielded
         // terminal can also look aborted. An explicit yield is authoritative — pause,
         // don't kill — else the tracking task settles `cancelled` with a false notice (#92448).

@@ -215,8 +215,10 @@ export class SubagentLifecycleController {
   finalizeResumedAnnounceGiveUp = (params: Parameters<typeof finalizeResumedAnnounceGiveUp>[1]) =>
     finalizeResumedAnnounceGiveUp(this, params);
 
-  refreshFrozenResultFromSession = (sessionKey: string) =>
-    refreshFrozenResultFromSession(this, sessionKey);
+  refreshFrozenResultFromSession = (
+    sessionKey: string,
+    terminalReply?: SubagentCompletionRequest["terminalReply"],
+  ) => refreshFrozenResultFromSession(this, sessionKey, terminalReply);
 
   resumeRequesterSettleWake = (runId: string, entry: SubagentRunRecord) =>
     scheduleRequesterSettleWake(this, runId, entry);

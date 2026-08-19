@@ -230,13 +230,17 @@ describe("subagent registry lifecycle error grace", () => {
   };
 
   const waitForCleanupHandledFalse = async (runId: string) => {
-    // Cleanup can be released asynchronously after announce failure; poll fake
-    // time until the retry-grace state is observable.
+    // Cleanup is released before failed-delivery bookkeeping settles. Wait for
+    // the durable retry payload so the next lifecycle event cannot race it.
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const run = mod
         .listSubagentRunsForRequester(MAIN_REQUESTER_SESSION_KEY)
         .find((candidate) => candidate.runId === runId);
-      if (run?.cleanupHandled === false) {
+      if (
+        run?.cleanupHandled === false &&
+        run.delivery?.status === "pending" &&
+        run.delivery.payload
+      ) {
         return;
       }
       await vi.advanceTimersByTimeAsync(1);
@@ -687,7 +691,14 @@ describe("subagent registry lifecycle error grace", () => {
     );
     emitLifecycleEvent(
       "run-refresh-followup-turn",
-      { phase: "end", endedAt: endedAt + 200 },
+      {
+        phase: "end",
+        endedAt: endedAt + 200,
+        terminalReply: {
+          disposition: "visible",
+          text: "All 3 subagents complete. Here's the final summary.",
+        },
+      },
       { sessionKey: "agent:main:subagent:refresh" },
     );
     const runAfterRefresh = await waitForFrozenResultText(
@@ -705,7 +716,7 @@ describe("subagent registry lifecycle error grace", () => {
     await waitForAgentCallCount(2);
     expect(getAgentResultsForChildSession("agent:main:subagent:refresh")).toEqual([
       "Both spawned. Waiting for completion events...",
-      "Both spawned. Waiting for completion events...",
+      "All 3 subagents complete. Here's the final summary.",
     ]);
   });
 
@@ -727,7 +738,11 @@ describe("subagent registry lifecycle error grace", () => {
     setAssistantOutput("agent:main:subagent:refresh-silent", "NO_REPLY");
     emitLifecycleEvent(
       "run-refresh-silent-followup-turn",
-      { phase: "end", endedAt: endedAt + 200 },
+      {
+        phase: "end",
+        endedAt: endedAt + 200,
+        terminalReply: { disposition: "silent" },
+      },
       { sessionKey: "agent:main:subagent:refresh-silent" },
     );
     await flushAsync();
@@ -740,6 +755,11 @@ describe("subagent registry lifecycle error grace", () => {
     emitLifecycleEvent("run-refresh-silent", { phase: "end", endedAt: endedAt + 300 });
     await flushAsync();
 
+    await waitForAgentCallCount(2);
+    expect(getAgentResultsForChildSession("agent:main:subagent:refresh-silent")).toEqual([
+      "All work complete, final summary",
+      "All work complete, final summary",
+    ]);
     expect(runAfterSilent?.completion).toMatchObject({
       resultText: "All work complete, final summary",
       terminalReply: {
@@ -749,7 +769,7 @@ describe("subagent registry lifecycle error grace", () => {
     });
   });
 
-  it("regression, captures frozen completion output with 100KB cap and retains it for keep-mode cleanup", async () => {
+  it("regression, caps frozen completion output at 100KB", async () => {
     registerCompletionRun("run-capped", "capped", "capped result test", undefined, false);
     setAssistantOutput("agent:main:subagent:capped", "x".repeat(120 * 1024));
 

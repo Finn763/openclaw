@@ -17,6 +17,7 @@ import {
 } from "../../../tasks/detached-task-runtime.js";
 import { resolveRequiredCompletionDeliveryFailureTerminalResult } from "../../../tasks/task-completion-contract.js";
 import type { TaskDeliveryStatus } from "../../../tasks/task-registry.types.js";
+import type { AgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.js";
 import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
@@ -390,6 +391,7 @@ const listPendingCompletionRunsForSession = (
 export const refreshFrozenResultFromSession = async (
   context: SubagentLifecycleCommonContext,
   sessionKey: string,
+  terminalReply?: AgentRunTerminalReplySnapshot,
 ): Promise<boolean> => {
   const params = context.options;
   const candidates = listPendingCompletionRunsForSession(params, sessionKey).filter(
@@ -401,15 +403,22 @@ export const refreshFrozenResultFromSession = async (
   }
   const generation = entry.generation;
 
-  let captured: string | undefined;
-  try {
-    captured = await params.captureSubagentCompletionReply(sessionKey);
-  } catch {
+  if (terminalReply && terminalReply.disposition !== "visible") {
     return false;
   }
-  const trimmed = captured?.trim();
-  if (!trimmed || isSilentAgentReplyText(trimmed)) {
-    return false;
+  let frozenSource = terminalReply?.text;
+  if (!frozenSource) {
+    let captured: string | undefined;
+    try {
+      captured = await params.captureSubagentCompletionReply(sessionKey);
+    } catch {
+      return false;
+    }
+    const trimmed = captured?.trim();
+    if (!trimmed || isSilentAgentReplyText(trimmed)) {
+      return false;
+    }
+    frozenSource = trimmed;
   }
   // Reply capture yields while registration can transfer session ownership.
   // Only the exact row and generation that started capture may commit its text.
@@ -421,13 +430,20 @@ export const refreshFrozenResultFromSession = async (
     return false;
   }
 
-  const nextFrozen = capFrozenResultText(trimmed);
+  const nextFrozen = capFrozenResultText(frozenSource);
   const completion = ensureCompletionState(entry);
-  if (completion.resultText === nextFrozen) {
+  const replyChanged =
+    terminalReply?.disposition === "visible" &&
+    JSON.stringify(completion.terminalReply) !== JSON.stringify(terminalReply);
+  if (completion.resultText === nextFrozen && !replyChanged) {
     return false;
   }
   completion.resultText = nextFrozen;
   completion.capturedAt = Date.now();
+  if (terminalReply?.disposition === "visible") {
+    completion.terminalReply = terminalReply;
+    refreshPendingFinalDeliveryPayload(entry);
+  }
   params.persist(entry.runId);
   return true;
 };
