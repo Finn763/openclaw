@@ -687,7 +687,7 @@ describe("subagent registry lifecycle error grace", () => {
 
     setAssistantOutput(
       "agent:main:subagent:refresh",
-      "All 3 subagents complete. Here's the final summary.",
+      "Stale transcript text that must not replace producer evidence.",
     );
     emitLifecycleEvent(
       "run-refresh-followup-turn",
@@ -705,9 +705,13 @@ describe("subagent registry lifecycle error grace", () => {
       "run-refresh",
       "All 3 subagents complete. Here's the final summary.",
     );
-    expect(runAfterRefresh?.completion?.resultText).toBe(
-      "All 3 subagents complete. Here's the final summary.",
-    );
+    expect(runAfterRefresh?.completion).toMatchObject({
+      resultText: "All 3 subagents complete. Here's the final summary.",
+      terminalReply: {
+        disposition: "visible",
+        text: "All 3 subagents complete. Here's the final summary.",
+      },
+    });
     expect((runAfterRefresh?.completion?.capturedAt ?? 0) >= firstCapturedAt).toBe(true);
 
     emitLifecycleEvent("run-refresh", { phase: "end", endedAt: endedAt + 300 });
