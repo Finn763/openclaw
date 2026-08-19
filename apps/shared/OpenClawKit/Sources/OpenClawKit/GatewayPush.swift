@@ -3,6 +3,7 @@ import OpenClawProtocol
 public enum GatewayServerCapability: String, CaseIterable, Sendable {
     case chatSendRoutingContract = "chat-send-routing-contract"
     case systemAgentSetupModelRef = "openclaw-setup-model-ref"
+    case talkOutputGeneration = "talk-output-generation"
 }
 
 extension HelloOk {
