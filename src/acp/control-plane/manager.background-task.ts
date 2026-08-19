@@ -34,7 +34,7 @@ type BackgroundTaskContext = {
   task: string;
 };
 
-export type BackgroundTaskRecord = {
+type BackgroundTaskRecord = {
   taskId: string;
   parentFlowId?: string;
 };
