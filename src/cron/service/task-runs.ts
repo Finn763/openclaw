@@ -2,6 +2,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { createPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { CRON_TASK_KIND } from "../../tasks/cron-task-contract.js";
 import {
@@ -67,44 +68,46 @@ export function getActiveCronTaskRunId(): string | undefined {
   return activeCronTaskRunId.getStore();
 }
 
-/** Composes scheduled ingress with exact owner-row bindings at admission. */
+/** Carries exact admission into the first post-admission owner lifecycle phase. */
 export function createCronOwnerExecutionIdentityAdmission(params: {
   state: CronServiceState;
   runReceipt: CronRunReceiptHandle;
   taskId?: string;
   flowId?: string;
 }): CronExecutionIdentityAdmission {
-  return {
-    ingress: { kind: "schedule", boundary: "cron.isolated-agent", state: "present" },
-    onAdmitted: (admitted) => {
-      try {
-        const receiptResult = bindCronRunReceiptExecution({
-          admitted,
-          handle: params.runReceipt,
-        });
-        const taskResult = params.taskId
-          ? bindTaskRunExecution({ admitted, taskId: params.taskId })
-          : "missing";
-        const flowResult = params.flowId
-          ? bindTaskFlowExecution({ admitted, flowId: params.flowId })
-          : undefined;
-        if (
-          [receiptResult, taskResult, flowResult].some(
-            (result) => result === "mismatch" || result === "missing",
-          )
-        ) {
-          params.state.deps.log.warn(
-            { receiptResult, taskResult, flowResult },
-            "cron: exact execution identity binding was not retained",
-          );
-        }
-      } catch (error) {
+  const ownerBinding = createPostAdmissionExecutionOwnerBinding((admitted) => {
+    try {
+      const receiptResult = bindCronRunReceiptExecution({
+        admitted,
+        handle: params.runReceipt,
+      });
+      const taskResult = params.taskId
+        ? bindTaskRunExecution({ admitted, taskId: params.taskId })
+        : "missing";
+      const flowResult = params.flowId
+        ? bindTaskFlowExecution({ admitted, flowId: params.flowId })
+        : undefined;
+      if (
+        [receiptResult, taskResult, flowResult].some(
+          (result) => result === "mismatch" || result === "missing",
+        )
+      ) {
         params.state.deps.log.warn(
-          { error },
-          "cron: failed to retain exact execution identity binding",
+          { receiptResult, taskResult, flowResult },
+          "cron: exact execution identity binding was not retained",
         );
       }
-    },
+    } catch (error) {
+      params.state.deps.log.warn(
+        { error },
+        "cron: failed to retain exact execution identity binding",
+      );
+    }
+  });
+  return {
+    ingress: { kind: "schedule", boundary: "cron.isolated-agent", state: "present" },
+    onAdmitted: ownerBinding.onAdmitted,
+    onExecutionStarted: ownerBinding.onExecutionStarted,
   };
 }
 

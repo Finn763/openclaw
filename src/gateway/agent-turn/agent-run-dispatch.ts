@@ -15,6 +15,7 @@ import type { MainSessionRecoveryPendingTarget } from "../../agents/main-session
 import { isAgentRunRestartAbortReason } from "../../agents/run-termination.js";
 import { normalizeAgentRunTimeoutPhase } from "../../agents/run-timeout-attribution.js";
 import { runWithCanonicalSkillWorkspace } from "../../agents/skill-workshop-workspace-context.js";
+import { createPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import { agentCommandFromGatewayIngress } from "../../commands/agent.js";
 import { isAbortError } from "../../infra/abort-signal.js";
@@ -192,6 +193,27 @@ export function dispatchAgentRunFromGateway(params: {
     params.ingressOpts,
     readAgentRunDispatchExecutionIdentity(params),
   );
+  const trackedTaskBinding = trackedTask
+    ? createPostAdmissionExecutionOwnerBinding((admitted) => {
+        try {
+          const taskResult = bindTaskRunExecution({ admitted, taskId: trackedTask.taskId });
+          const flowResult = trackedTask.parentFlowId
+            ? bindTaskFlowExecution({ admitted, flowId: trackedTask.parentFlowId })
+            : undefined;
+          if (
+            [taskResult, flowResult].some((result) => result === "mismatch" || result === "missing")
+          ) {
+            params.context.logGateway.warn(
+              `exact tracked-task execution binding was not retained for ${params.runId}`,
+            );
+          }
+        } catch (error) {
+          params.context.logGateway.warn(
+            `failed to retain tracked-task execution binding ${params.runId}: ${formatForLog(error)}`,
+          );
+        }
+      })
+    : undefined;
   const ingressOptsWithTaskBinding = trackedTask
     ? {
         ...ingressOptsWithSpawnFacts,
@@ -200,26 +222,12 @@ export function dispatchAgentRunFromGateway(params: {
             NonNullable<typeof ingressOptsWithSpawnFacts.onAdmittedRunContext>
           >[0],
         ) => {
+          trackedTaskBinding?.onAdmitted(admitted);
           await ingressOptsWithSpawnFacts.onAdmittedRunContext?.(admitted);
-          try {
-            const taskResult = bindTaskRunExecution({ admitted, taskId: trackedTask.taskId });
-            const flowResult = trackedTask.parentFlowId
-              ? bindTaskFlowExecution({ admitted, flowId: trackedTask.parentFlowId })
-              : undefined;
-            if (
-              [taskResult, flowResult].some(
-                (result) => result === "mismatch" || result === "missing",
-              )
-            ) {
-              params.context.logGateway.warn(
-                `exact tracked-task execution binding was not retained for ${params.runId}`,
-              );
-            }
-          } catch (error) {
-            params.context.logGateway.warn(
-              `failed to retain tracked-task execution binding ${params.runId}: ${formatForLog(error)}`,
-            );
-          }
+        },
+        onExecutionStarted: () => {
+          ingressOptsWithSpawnFacts.onExecutionStarted?.();
+          trackedTaskBinding?.onExecutionStarted();
         },
       }
     : ingressOptsWithSpawnFacts;

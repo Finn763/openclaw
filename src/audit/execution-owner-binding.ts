@@ -38,3 +38,26 @@ export function classifyExecutionOwnerBinding(
     ? "already-bound"
     : "mismatch";
 }
+
+/** Carries immutable admission forward; owner I/O begins only after execution starts. */
+export function createPostAdmissionExecutionOwnerBinding(
+  bind: (context: AdmittedRunContext) => void,
+): {
+  onAdmitted: (context: AdmittedRunContext) => void;
+  onExecutionStarted: () => void;
+} {
+  let admitted: AdmittedRunContext | undefined;
+  let bound = false;
+  return {
+    onAdmitted: (context) => {
+      admitted = context;
+    },
+    onExecutionStarted: () => {
+      if (bound || !admitted) {
+        return;
+      }
+      bound = true;
+      bind(admitted);
+    },
+  };
+}

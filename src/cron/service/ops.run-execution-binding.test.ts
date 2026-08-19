@@ -31,6 +31,7 @@ describe("cron run execution binding", () => {
         executionIdentity?: {
           ingress: { kind: string };
           onAdmitted?: (context: AdmittedRunContext) => void | Promise<void>;
+          onExecutionStarted?: () => void;
         };
       }) => {
         await params.executionIdentity?.onAdmitted?.({
@@ -41,6 +42,20 @@ describe("cron run execution binding", () => {
             now: dueAt,
           }),
         });
+        const beforeStart = openOpenClawStateDatabase().db;
+        expect(
+          beforeStart
+            .prepare("SELECT context_id, execution_id FROM cron_run_receipts WHERE job_id = ?")
+            .get(job.id),
+        ).toEqual({ context_id: null, execution_id: null });
+        expect(
+          beforeStart
+            .prepare(
+              "SELECT context_id, execution_id FROM task_runs WHERE source_id = ? AND runtime = 'cron'",
+            )
+            .get(job.id),
+        ).toEqual({ context_id: null, execution_id: null });
+        params.executionIdentity?.onExecutionStarted?.();
         return { status: "ok" as const };
       },
     );
