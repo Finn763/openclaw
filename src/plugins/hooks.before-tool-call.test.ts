@@ -557,45 +557,100 @@ describe("before_tool_call execution receipts", () => {
     expect(JSON.stringify(receipts)).not.toContain("secret-tool-name");
   });
 
-  it("records fail-closed hook failure before rejecting the tool", async () => {
-    const registry = createEmptyPluginRegistry();
-    addTestHook({
-      registry,
-      pluginId: "failing-plugin",
-      hookName: "before_tool_call",
-      handler: () => {
+  it.each([
+    {
+      name: "records a caught hook failure as fail open",
+      failurePolicy: undefined,
+      sharedMemory: false,
+      rejects: false,
+      expectedOutcome: "unknown",
+      expectedCoverage: "unknown",
+      expectedReason: "plugin_hook_failed_open",
+    },
+    {
+      name: "records a configured hook failure as fail closed",
+      failurePolicy: "fail-closed",
+      sharedMemory: false,
+      rejects: true,
+      expectedOutcome: "denied",
+      expectedCoverage: "enforced",
+      expectedReason: "plugin_hook_failed_closed",
+    },
+    {
+      name: "records an isolation failure as fail closed",
+      failurePolicy: undefined,
+      sharedMemory: true,
+      rejects: true,
+      expectedOutcome: "denied",
+      expectedCoverage: "enforced",
+      expectedReason: "plugin_hook_failed_closed",
+    },
+  ] as const)(
+    "$name",
+    async ({
+      failurePolicy,
+      sharedMemory,
+      rejects,
+      expectedOutcome,
+      expectedCoverage,
+      expectedReason,
+    }) => {
+      const registry = createEmptyPluginRegistry();
+      const handler = vi.fn(() => {
+        if (sharedMemory) {
+          return {};
+        }
         throw new Error("credential=must-not-leak");
-      },
-    });
-    const receipts: DecisionReceiptV1[] = [];
-    const clear = configureRuntimeActionDecisionSink((receipt) => {
-      receipts.push(receipt);
-      return true;
-    });
-    try {
-      await expect(
-        createHookRunner(registry, {
-          failurePolicyByHook: { before_tool_call: "fail-closed" },
+      });
+      addTestHook({
+        registry,
+        pluginId: "failing-plugin",
+        hookName: "before_tool_call",
+        handler,
+      });
+      const receipts: DecisionReceiptV1[] = [];
+      const clear = configureRuntimeActionDecisionSink((receipt) => {
+        receipts.push(receipt);
+        return true;
+      });
+      try {
+        const run = createHookRunner(registry, {
+          ...(failurePolicy
+            ? { failurePolicyByHook: { before_tool_call: failurePolicy } }
+            : undefined),
         }).runBeforeToolCall(
-          { toolName: "bash", params: {} },
+          {
+            toolName: "bash",
+            params: sharedMemory ? { shared: new Uint8Array(new SharedArrayBuffer(4)) } : {},
+          },
           stubCtx,
           createExecutionIdentityAdmissionToken("run-hook-failure", {
             contextId: "context-hook-failure",
             executionId: "execution-hook-failure",
             now: 100,
           }),
-        ),
-      ).rejects.toThrow("before_tool_call handler from failing-plugin failed");
-    } finally {
-      clear();
-    }
-    expect(receipts).toHaveLength(1);
-    expect(receipts[0]).toMatchObject({
-      decision: { outcome: "denied", reasonCode: "plugin_hook_failed_closed" },
-      enforcement: { coverageState: "enforced" },
-    });
-    expect(JSON.stringify(receipts)).not.toContain("must-not-leak");
-  });
+        );
+        if (rejects) {
+          await expect(run).rejects.toThrow(
+            sharedMemory
+              ? "before_tool_call mutable input isolation failed"
+              : "before_tool_call handler from failing-plugin failed",
+          );
+        } else {
+          await expect(run).resolves.toBeUndefined();
+        }
+      } finally {
+        clear();
+      }
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        decision: { outcome: expectedOutcome, reasonCode: expectedReason },
+        enforcement: { coverageState: expectedCoverage },
+      });
+      expect(JSON.stringify(receipts)).not.toContain("must-not-leak");
+      expect(handler).toHaveBeenCalledTimes(sharedMemory ? 0 : 1);
+    },
+  );
 });
 
 describe("before_tool_call matcher scoping", () => {

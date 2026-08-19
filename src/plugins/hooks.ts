@@ -230,7 +230,7 @@ type ModifyingHookPolicy<K extends PluginHookName, TResult> = {
     hook: PluginHookRegistration<K>;
     result: TResult | undefined;
   }) => void;
-  onHandlerError?: (params: { hook: PluginHookRegistration<K> }) => void;
+  onHandlerError?: (hook: PluginHookRegistration<K>, failOpen: boolean) => void;
 };
 
 type PluginTargetedInboundClaimOutcome =
@@ -340,19 +340,18 @@ export function createHookRunner(
     hook: PluginHookRegistration<"before_tool_call">;
     token?: ExecutionIdentityAdmissionToken;
     result?: PluginHookBeforeToolCallResult;
-    failed?: boolean;
+    failOpen?: boolean;
   }): void => {
-    const failOpen = params.failed && shouldCatchHookErrors("before_tool_call");
-    const blocked = params.result?.block === true || (params.failed && !failOpen);
-    runtimeDecisionOrdinal += 1;
+    const failed = params.failOpen !== undefined;
+    const blocked = params.result?.block === true || params.failOpen === false;
     recordRuntimeActionDecision({
       token: params.token,
       family: "plugin",
       operation: "before_tool_call",
-      outcome: blocked ? "denied" : failOpen ? "unknown" : "allowed",
-      coverageState: blocked || !params.failed ? "enforced" : "unknown",
-      reasonCode: params.failed
-        ? failOpen
+      outcome: blocked ? "denied" : params.failOpen ? "unknown" : "allowed",
+      coverageState: blocked || !failed ? "enforced" : "unknown",
+      reasonCode: failed
+        ? params.failOpen
           ? "plugin_hook_failed_open"
           : "plugin_hook_failed_closed"
         : blocked
@@ -363,8 +362,8 @@ export function createHookRunner(
       owner: "plugin-hook",
       decisionBoundary: "plugin.before-tool-call",
       policyRefs: ["plugin-hook:before-tool-call"],
-      summary: params.failed
-        ? failOpen
+      summary: failed
+        ? params.failOpen
           ? "A plugin hook failed open, so its policy outcome is unknown."
           : "A plugin hook failed closed before tool execution."
         : blocked
@@ -372,8 +371,8 @@ export function createHookRunner(
           : params.result?.requireApproval
             ? "A registered plugin hook required a separate owner-native approval decision."
             : "A registered plugin hook allowed tool execution to continue.",
-      missingEvidence: failOpen ? ["plugin.hook_decision"] : [],
-      remediation: failOpen
+      missingEvidence: params.failOpen ? ["plugin.hook_decision"] : [],
+      remediation: params.failOpen
         ? [
             {
               code: "repair_plugin_hook",
@@ -385,7 +384,7 @@ export function createHookRunner(
         params.hook.pluginId,
         params.hook.registrationId ?? null,
         params.event.toolCallId ?? null,
-        runtimeDecisionOrdinal,
+        ++runtimeDecisionOrdinal,
         params.event.toolName,
         runtimeDecisionScopeId,
       ]),
@@ -819,7 +818,8 @@ export function createHookRunner(
           }
         }
       } catch (err) {
-        policy.onHandlerError?.({ hook });
+        const failOpen = !(err instanceof HookIsolationError) && shouldCatchHookErrors(hookName);
+        policy.onHandlerError?.(hook, failOpen);
         if (err instanceof HookIsolationError) {
           throw err;
         }
@@ -1364,12 +1364,12 @@ export function createHookRunner(
         terminalLabel: "block=true",
         onHandlerResult: ({ hook, result }) =>
           recordBeforeToolCallDecision({ event, hook, token: executionIdentityToken, result }),
-        onHandlerError: ({ hook }) =>
+        onHandlerError: (hook, failOpen) =>
           recordBeforeToolCallDecision({
             event,
             hook,
             token: executionIdentityToken,
-            failed: true,
+            failOpen,
           }),
       },
       event.toolName,
