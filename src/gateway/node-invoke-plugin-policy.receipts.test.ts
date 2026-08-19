@@ -157,4 +157,59 @@ describe("plugin node action receipts", () => {
       },
     ]);
   });
+
+  it.each(["allowed", "denied", "throws"] as const)(
+    "does not attribute a late %s policy result after runtime authority closes",
+    async (outcome) => {
+      let releasePolicy: (() => void) | undefined;
+      let markPolicyStarted: (() => void) | undefined;
+      const policyStarted = new Promise<void>((resolve) => {
+        markPolicyStarted = resolve;
+      });
+      const policyWait = new Promise<void>((resolve) => {
+        releasePolicy = resolve;
+      });
+      registerPolicy(async () => {
+        markPolicyStarted?.();
+        await policyWait;
+        if (outcome === "throws") {
+          throw new Error("late policy failure");
+        }
+        return outcome === "allowed"
+          ? { ok: true, payload: "done" }
+          : { ok: false, code: "PLUGIN_DENIED", message: "denied" };
+      });
+      const node = createNode();
+      let authorityActive = true;
+      const { context, invoke } = createContext(node);
+      context.validateAgentRuntimeApprovalAuthority = () => authorityActive;
+      const receipts: DecisionReceiptV1[] = [];
+      const clear = configureRuntimeActionDecisionSink((receipt) => {
+        receipts.push(receipt);
+        return true;
+      });
+      try {
+        const resultPromise = applyPluginNodeInvokePolicy({
+          context,
+          client: createClient(`run-node-policy-${outcome}`),
+          nodeSession: node,
+          command: COMMAND,
+          params: { private: "arguments" },
+        });
+        await policyStarted;
+        authorityActive = false;
+        releasePolicy?.();
+
+        if (outcome === "throws") {
+          await expect(resultPromise).rejects.toThrow("late policy failure");
+        } else {
+          await expect(resultPromise).resolves.toMatchObject({ ok: outcome === "allowed" });
+        }
+        expect(invoke).not.toHaveBeenCalled();
+        expect(receipts).toEqual([]);
+      } finally {
+        clear();
+      }
+    },
+  );
 });

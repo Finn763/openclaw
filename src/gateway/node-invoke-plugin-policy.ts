@@ -247,7 +247,11 @@ export async function applyPluginNodeInvokePolicy(params: {
   isApprovalAuthorityActive?: () => boolean;
 }): Promise<OpenClawPluginNodeInvokePolicyResult | null> {
   const registry = getActivePluginGatewayNodePolicyRegistry();
-  const token = params.client?.internal?.agentRuntimeIdentity?.executionIdentity;
+  const callerIdentity = params.client?.internal?.agentRuntimeIdentity;
+  const token = callerIdentity?.executionIdentity;
+  const isCallerRuntimeAuthorityActive = () =>
+    !callerIdentity ||
+    params.context.validateAgentRuntimeApprovalAuthority?.(callerIdentity) === true;
   const decisionOccurrenceId = randomUUID();
   let receiptOrdinal = 0;
   const recordNodeDecision = (input: {
@@ -357,7 +361,6 @@ export async function applyPluginNodeInvokePolicy(params: {
       });
       return result;
     };
-    const callerIdentity = params.client?.internal?.agentRuntimeIdentity;
     if (
       callerIdentity &&
       params.context.validateAgentRuntimeApprovalAuthority?.(callerIdentity) !== true
@@ -553,7 +556,9 @@ export async function applyPluginNodeInvokePolicy(params: {
       invokeNode,
     });
   } catch (error) {
-    if (!nodeCommandDispatched) {
+    // Plugin policy handlers may settle after their exact caller authority
+    // closes. Never attribute that late result to the retired run.
+    if (!nodeCommandDispatched && isCallerRuntimeAuthorityActive()) {
       recordNodeDecision({
         pluginId: entry.pluginId,
         outcome: "denied",
@@ -564,7 +569,7 @@ export async function applyPluginNodeInvokePolicy(params: {
     }
     throw error;
   }
-  if (!nodeCommandDispatched && !nodeGateDecisionRecorded) {
+  if (!nodeCommandDispatched && !nodeGateDecisionRecorded && isCallerRuntimeAuthorityActive()) {
     recordNodeDecision({
       pluginId: entry.pluginId,
       outcome: result.ok ? "unknown" : "denied",
