@@ -118,29 +118,11 @@ export function bindWorkerTurnExecutionIdentity(
 
 export function getWorkerTurnExecutionIdentityCapability(
   store: WorkerTurnExecutionIdentityStore,
-  binding: { sessionId: string; environmentId: string; ownerEpoch: number; runId: string },
+  claim: WorkerSessionTurnClaim,
 ): WorkerTurnExecutionIdentityCapability | undefined {
   const path = store[WORKER_TURN_EXECUTION_IDENTITY_PATH];
-  const bound = path ? workerTurnExecutionIdentities.get(path)?.get(binding.sessionId) : undefined;
-  const owner = bound?.claim.owner;
-  return bound &&
-    owner?.kind === "worker" &&
-    bound.claim.runId === binding.runId &&
-    owner.environmentId === binding.environmentId &&
-    owner.ownerEpoch === binding.ownerEpoch &&
-    store.validateTurnClaim(bound.claim)
-    ? bound.capability
-    : undefined;
-}
-
-/** Resolve diagnostic provenance for the current exact session/run owner. */
-export function getWorkerTurnExecutionIdentityCapabilityForRun(
-  store: WorkerTurnExecutionIdentityStore,
-  binding: { sessionId: string; runId: string },
-): WorkerTurnExecutionIdentityCapability | undefined {
-  const path = store[WORKER_TURN_EXECUTION_IDENTITY_PATH];
-  const bound = path ? workerTurnExecutionIdentities.get(path)?.get(binding.sessionId) : undefined;
-  return bound && bound.claim.runId === binding.runId && store.validateTurnClaim(bound.claim)
+  const bound = path ? workerTurnExecutionIdentities.get(path)?.get(claim.sessionId) : undefined;
+  return bound && bound.claimKey === claimKey(claim) && store.validateTurnClaim(claim)
     ? bound.capability
     : undefined;
 }

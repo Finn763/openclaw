@@ -250,11 +250,9 @@ describe("worker environment service", () => {
     expect(receipts.map((receipt) => receipt.decision.reasonCode)).toEqual([
       "worker_admission_invalid_credential",
       "worker_admission_bundle_mismatch",
-      "worker_admission_owner_epoch_mismatch",
       "worker_admission_gate_allowed",
     ]);
     expect(receipts.map((receipt) => receipt.enforcement.coverageState)).toEqual([
-      "enforced",
       "enforced",
       "enforced",
       "enforced",
@@ -264,6 +262,95 @@ describe("worker environment service", () => {
     expect(serialized).not.toContain("b".repeat(64));
     expect(serialized).not.toContain(environmentId);
     expect(serialized).not.toContain(sessionId);
+  });
+
+  it("does not attribute a late admission result to a replacement using the same run id", async () => {
+    const environmentId = "worker-admission-replacement";
+    const sessionId = "session-admission-replacement";
+    const environmentIdentity = support.seedAttachedIdentity(environmentId, sessionId);
+    const { claim: first, store } = claimWorkerPlacement({
+      environmentId,
+      ownerEpoch: environmentIdentity.ownerEpoch,
+      runId: "run-admission-replacement",
+      sessionId,
+    });
+    const firstOperationalRun = createOperationalRunInstanceRef(first.runId);
+    const firstAuthority = claimAgentRunDelegatedAuthority(firstOperationalRun);
+    bindWorkerTurnExecutionIdentity(
+      store,
+      first,
+      createExecutionIdentityAdmissionToken(first.runId, {
+        contextId: "context-admission-first",
+        executionId: "execution-admission-first",
+        now: 100,
+      }),
+      firstOperationalRun,
+      { agentId: "main", sessionKey: `agent:main:${sessionId}` },
+    );
+    let resumeInstallation: (() => void) | undefined;
+    support.testState.prepareInstallation = vi.fn(
+      async () =>
+        await new Promise<typeof support.BUNDLE_ARTIFACT>((resolve) => {
+          resumeInstallation = () => resolve(support.BUNDLE_ARTIFACT);
+        }),
+    );
+    const gate = createWorkerSessionPlacementGate(store);
+    const workerService = support.createService(support.createProvider(), { placementStore: gate });
+    const firstCredential = await workerService.acquireTurnCredential(first);
+    const receipts: DecisionReceiptV1[] = [];
+    const clear = configureRuntimeActionDecisionSink((receipt) => {
+      receipts.push(receipt);
+      return true;
+    });
+    const admission = {
+      environmentId,
+      credential: firstCredential.credential,
+      sessionId,
+      runId: first.runId,
+      ownerEpoch: environmentIdentity.ownerEpoch,
+      rpcSetVersion: 1,
+      handshake: support.BOOTSTRAP_RECEIPT,
+    };
+    let secondAuthority: ReturnType<typeof claimAgentRunDelegatedAuthority> | undefined;
+    try {
+      const pendingAdmission = workerService.admitWorker(admission);
+      expect(support.testState.prepareInstallation).toHaveBeenCalledOnce();
+
+      store.releaseTurn(first);
+      releaseAgentRunDelegatedAuthority(firstAuthority);
+      const placement = store.get(sessionId)!;
+      const second = store.claimTurn({
+        sessionId,
+        agentId: placement.agentId,
+        sessionKey: placement.sessionKey,
+        claimId: "claim-admission-replacement",
+        runId: first.runId,
+        owner: { kind: "worker", environmentId, ownerEpoch: environmentIdentity.ownerEpoch },
+      });
+      const secondOperationalRun = createOperationalRunInstanceRef(second.runId);
+      secondAuthority = claimAgentRunDelegatedAuthority(secondOperationalRun);
+      bindWorkerTurnExecutionIdentity(
+        store,
+        second,
+        createExecutionIdentityAdmissionToken(second.runId, {
+          contextId: "context-admission-second",
+          executionId: "execution-admission-second",
+          now: 101,
+        }),
+        secondOperationalRun,
+        { agentId: "main", sessionKey: `agent:main:${sessionId}` },
+      );
+      resumeInstallation?.();
+
+      await expect(pendingAdmission).resolves.toEqual({ ok: false, reason: "invalid-credential" });
+      expect(receipts).toEqual([]);
+    } finally {
+      clear();
+      releaseAgentRunDelegatedAuthority(firstAuthority);
+      if (secondAuthority) {
+        releaseAgentRunDelegatedAuthority(secondAuthority);
+      }
+    }
   });
 
   it("keeps restart-inherited claims recovery-only across every worker authority surface", async () => {

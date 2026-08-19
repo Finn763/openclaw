@@ -6,7 +6,7 @@ import {
 } from "./placement-record.js";
 import type { WorkerSessionPlacementStore } from "./placement-store.js";
 import {
-  getWorkerTurnExecutionIdentityCapabilityForRun,
+  getWorkerTurnExecutionIdentityCapability,
   type WorkerTurnExecutionIdentityCapability,
 } from "./placement-turn-claim-events.js";
 
@@ -19,14 +19,9 @@ type WorkerPlacementBinding = Readonly<{
 export type WorkerSessionPlacementGate = {
   /** Credential verification only; this does not grant operational worker authority. */
   readWorkerTurnClaim(binding: WorkerPlacementBinding): WorkerSessionTurnClaim | undefined;
-  readWorkerTurnClaimForRun?(binding: {
-    sessionId: string;
-    runId: string;
-  }): WorkerSessionTurnClaim | undefined;
-  getExecutionIdentityCapability?(binding: {
-    sessionId: string;
-    runId: string;
-  }): WorkerTurnExecutionIdentityCapability | undefined;
+  getExecutionIdentityCapability?(
+    claim: WorkerSessionTurnClaim,
+  ): WorkerTurnExecutionIdentityCapability | undefined;
   validateWorkerTurn(claim: WorkerSessionTurnClaim): boolean;
   isWorkerTurnToolAuthorized(claim: WorkerSessionTurnClaim, toolName: string): boolean;
   updateAckCursors(input: {
@@ -70,19 +65,12 @@ export function createWorkerSessionPlacementGate(
     return claim && store.validateTurnClaim(claim) ? claim : undefined;
   };
 
-  const readWorkerTurnClaimForRun = (binding: { sessionId: string; runId: string }) => {
-    const record = store.get(binding.sessionId);
-    const claim = record ? projectWorkerSessionTurnClaim(record) : undefined;
-    return claim?.runId === binding.runId && isOperational(claim) ? claim : undefined;
-  };
-
   const validateWorkerTurn = (claim: WorkerSessionTurnClaim) => isOperational(claim);
 
   return {
     readWorkerTurnClaim,
-    readWorkerTurnClaimForRun,
-    getExecutionIdentityCapability: (binding) =>
-      getWorkerTurnExecutionIdentityCapabilityForRun(store, binding),
+    getExecutionIdentityCapability: (claim) =>
+      getWorkerTurnExecutionIdentityCapability(store, claim),
     validateWorkerTurn,
 
     isWorkerTurnToolAuthorized(claim, toolName): boolean {
