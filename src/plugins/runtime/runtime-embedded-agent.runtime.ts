@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import {
   createOperationalRunInstanceRef,
+  getAdmittedRunDelegatedAuthority,
   prepareAgentRunAdmission,
   type AdmittedRunContext,
 } from "../../agents/admitted-run-context.js";
@@ -23,7 +24,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   }
   params.abortSignal?.throwIfAborted();
   const decisionOccurrenceId = randomUUID();
-  let executionIdentityToken: AdmittedRunContext["executionIdentityToken"];
+  let admittedRunContext: AdmittedRunContext | undefined;
   const preparedRunAdmission = prepareAgentRunAdmission({
     cfg: params.config ?? getRuntimeConfig(),
     operationalRunInstance: createOperationalRunInstanceRef(params.runId),
@@ -38,8 +39,8 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
       },
     },
     onAdmitted: (context) => {
+      admittedRunContext = context;
       const token = context.executionIdentityToken;
-      executionIdentityToken = token;
       recordRuntimeActionDecision({
         token,
         family: "plugin",
@@ -69,19 +70,21 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   try {
     params.abortSignal?.throwIfAborted();
     const result = await runEmbeddedAgentCore({ ...params, preparedRunAdmission });
-    recordRuntimeActionDecision({
-      token: executionIdentityToken,
-      family: "plugin",
-      operation: "run",
-      outcome: "allowed",
-      coverageState: "attribution-only",
-      reasonCode: "plugin_runtime_completed",
-      owner: "plugin-runtime",
-      decisionBoundary: "plugin.runtime.run-embedded-agent",
-      summary: "The plugin-owned runtime completed; this is attribution, not authorization.",
-      remediation: [],
-      discriminator: JSON.stringify([pluginId, params.runId, decisionOccurrenceId, "completion"]),
-    });
+    if (admittedRunContext && getAdmittedRunDelegatedAuthority(admittedRunContext)) {
+      recordRuntimeActionDecision({
+        token: admittedRunContext.executionIdentityToken,
+        family: "plugin",
+        operation: "run",
+        outcome: "allowed",
+        coverageState: "attribution-only",
+        reasonCode: "plugin_runtime_completed",
+        owner: "plugin-runtime",
+        decisionBoundary: "plugin.runtime.run-embedded-agent",
+        summary: "The plugin-owned runtime completed; this is attribution, not authorization.",
+        remediation: [],
+        discriminator: JSON.stringify([pluginId, params.runId, decisionOccurrenceId, "completion"]),
+      });
+    }
     return result;
   } finally {
     params.abortSignal?.removeEventListener("abort", close);
