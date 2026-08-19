@@ -315,6 +315,14 @@ export async function runBeforeToolCallHook(args: {
       return allowed;
     }
     const hookEventParams = isPlainObject(policyAdjustedParams) ? policyAdjustedParams : {};
+    const callerIdentity = getGatewayToolCallerIdentity();
+    const receipt =
+      callerIdentity?.executionIdentityToken && callerIdentity.receiptAuthority
+        ? {
+            token: callerIdentity.executionIdentityToken,
+            assertAuthority: callerIdentity.receiptAuthority,
+          }
+        : undefined;
     const hookResult = await hookRunner.runBeforeToolCall(
       {
         toolName,
@@ -327,7 +335,7 @@ export async function runBeforeToolCallHook(args: {
           : {}),
       },
       policyAdjustedToolContext,
-      getGatewayToolCallerIdentity()?.executionIdentityToken,
+      receipt,
     );
 
     if (hookResult?.block) {

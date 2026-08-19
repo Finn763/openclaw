@@ -150,7 +150,13 @@ it("rejects retained worker lineage capabilities after either owner closes", asy
   if (!placementCapability) {
     throw new Error("expected placement-bound lineage capability");
   }
+  let placementReceiptAuthority: (() => void) | undefined;
+  await placementCapability.run((identity) => {
+    placementReceiptAuthority = identity.receiptAuthority;
+    identity.receiptAuthority();
+  });
   store.releaseTurn(placementClosedClaim);
+  expect(() => placementReceiptAuthority?.()).toThrow("worker turn authority changed");
   await expect(placementCapability.run(async () => "stale")).rejects.toThrow(
     "worker turn authority changed",
   );

@@ -452,6 +452,7 @@ export function createWorkerSessionToolExecutor(params: {
                 sessionKey: identity.sessionKey,
                 operationalRunInstance: identity.operationalRunInstance,
                 executionIdentityToken: identity.executionIdentityToken,
+                receiptAuthority: identity.receiptAuthority,
                 workerTurnClaim: identity.turnClaim,
                 workerTurnExecutionIdentityCapability: lineageCapability,
               },

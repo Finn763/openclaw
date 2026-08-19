@@ -537,11 +537,14 @@ describe("before_tool_call execution receipts", () => {
       await createHookRunner(registry).runBeforeToolCall(
         { toolName: "secret-tool-name", params: {} },
         { ...stubCtx, toolName: "secret-tool-name" },
-        createExecutionIdentityAdmissionToken("run-hook", {
-          contextId: "context-hook",
-          executionId: "execution-hook",
-          now: 100,
-        }),
+        {
+          token: createExecutionIdentityAdmissionToken("run-hook", {
+            contextId: "context-hook",
+            executionId: "execution-hook",
+            now: 100,
+          }),
+          assertAuthority: () => true,
+        },
       );
     } finally {
       clear();
@@ -624,11 +627,14 @@ describe("before_tool_call execution receipts", () => {
             params: sharedMemory ? { shared: new Uint8Array(new SharedArrayBuffer(4)) } : {},
           },
           stubCtx,
-          createExecutionIdentityAdmissionToken("run-hook-failure", {
-            contextId: "context-hook-failure",
-            executionId: "execution-hook-failure",
-            now: 100,
-          }),
+          {
+            token: createExecutionIdentityAdmissionToken("run-hook-failure", {
+              contextId: "context-hook-failure",
+              executionId: "execution-hook-failure",
+              now: 100,
+            }),
+            assertAuthority: () => true,
+          },
         );
         if (rejects) {
           await expect(run).rejects.toThrow(
@@ -649,6 +655,58 @@ describe("before_tool_call execution receipts", () => {
       });
       expect(JSON.stringify(receipts)).not.toContain("must-not-leak");
       expect(handler).toHaveBeenCalledTimes(sharedMemory ? 0 : 1);
+    },
+  );
+
+  it.each([
+    { settlement: "resolve", authority: "reports stale" },
+    { settlement: "resolve", authority: "throws" },
+    { settlement: "reject", authority: "reports stale" },
+    { settlement: "reject", authority: "throws" },
+  ] as const)(
+    "suppresses a deferred $settlement receipt when authority $authority",
+    async ({ settlement, authority }) => {
+      const registry = createEmptyPluginRegistry();
+      let settle: ((value: PluginHookBeforeToolCallResult) => void) | undefined;
+      let reject: ((error: Error) => void) | undefined;
+      const pending = new Promise<PluginHookBeforeToolCallResult>((resolve, rejectPromise) => {
+        settle = resolve;
+        reject = rejectPromise;
+      });
+      addTestHook({
+        registry,
+        pluginId: "deferred-plugin",
+        hookName: "before_tool_call",
+        handler: () => pending,
+      });
+      const receipts: DecisionReceiptV1[] = [];
+      const clear = configureRuntimeActionDecisionSink((receipt) => {
+        receipts.push(receipt);
+        return true;
+      });
+      try {
+        const run = createHookRunner(registry, {
+          failurePolicyByHook: { before_tool_call: "fail-closed" },
+        }).runBeforeToolCall({ toolName: "bash", params: {} }, stubCtx, {
+          token: createExecutionIdentityAdmissionToken("run-hook-stale"),
+          assertAuthority: () => {
+            if (authority === "throws") {
+              throw new Error("stale receipt authority");
+            }
+            return false;
+          },
+        });
+        if (settlement === "resolve") {
+          settle?.({});
+          await expect(run).resolves.toEqual({});
+        } else {
+          reject?.(new Error("deferred hook failure"));
+          await expect(run).rejects.toThrow("deferred-plugin failed");
+        }
+      } finally {
+        clear();
+      }
+      expect(receipts).toEqual([]);
     },
   );
 });

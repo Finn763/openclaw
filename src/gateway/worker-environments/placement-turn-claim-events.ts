@@ -37,6 +37,7 @@ export type WorkerTurnExecutionIdentity = Readonly<{
   delegatedAuthority: AgentRunDelegatedAuthority;
   executionIdentityToken: ExecutionIdentityAdmissionToken;
   operationalRunInstance: OperationalRunInstanceRef;
+  receiptAuthority: () => void;
   sessionKey: string;
   turnClaim: WorkerSessionTurnClaim;
 }>;
@@ -86,14 +87,6 @@ export function bindWorkerTurnExecutionIdentity(
   if (!path || !store.validateTurnClaim(claim) || !delegatedAuthority) {
     throw new Error(`Session ${claim.sessionId} worker turn authority changed`);
   }
-  const identity = Object.freeze({
-    agentId: source.agentId,
-    delegatedAuthority,
-    executionIdentityToken: token,
-    operationalRunInstance,
-    sessionKey: source.sessionKey,
-    turnClaim: claim,
-  });
   const assertActive = () => {
     if (
       !store.validateTurnClaim(claim) ||
@@ -102,6 +95,15 @@ export function bindWorkerTurnExecutionIdentity(
       throw new Error(`Session ${claim.sessionId} worker turn authority changed`);
     }
   };
+  const identity = Object.freeze({
+    agentId: source.agentId,
+    delegatedAuthority,
+    executionIdentityToken: token,
+    operationalRunInstance,
+    receiptAuthority: assertActive,
+    sessionKey: source.sessionKey,
+    turnClaim: claim,
+  });
   const capability = Object.freeze({
     async run<T>(callback: (current: WorkerTurnExecutionIdentity) => Promise<T> | T): Promise<T> {
       assertActive();

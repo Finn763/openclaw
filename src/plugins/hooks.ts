@@ -341,7 +341,18 @@ export function createHookRunner(
     token?: ExecutionIdentityAdmissionToken;
     result?: PluginHookBeforeToolCallResult;
     failOpen?: boolean;
+    receiptAuthority?: () => boolean | void;
   }): void => {
+    if (!params.receiptAuthority) {
+      return;
+    }
+    try {
+      if (params.receiptAuthority() === false) {
+        return;
+      }
+    } catch {
+      return;
+    }
     const failed = params.failOpen !== undefined;
     const blocked = params.result?.block === true || params.failOpen === false;
     recordRuntimeActionDecision({
@@ -1326,7 +1337,10 @@ export function createHookRunner(
   async function runBeforeToolCall(
     event: PluginHookBeforeToolCallEvent,
     ctx: PluginHookToolContext,
-    executionIdentityToken?: ExecutionIdentityAdmissionToken,
+    receipt?: Readonly<{
+      token: ExecutionIdentityAdmissionToken;
+      assertAuthority: () => boolean | void;
+    }>,
   ): Promise<PluginHookBeforeToolCallResult | undefined> {
     return runModifyingHook<"before_tool_call", PluginHookBeforeToolCallResult>(
       "before_tool_call",
@@ -1363,13 +1377,20 @@ export function createHookRunner(
         shouldStop: (result) => result.block === true,
         terminalLabel: "block=true",
         onHandlerResult: ({ hook, result }) =>
-          recordBeforeToolCallDecision({ event, hook, token: executionIdentityToken, result }),
+          recordBeforeToolCallDecision({
+            event,
+            hook,
+            token: receipt?.token,
+            result,
+            receiptAuthority: receipt?.assertAuthority,
+          }),
         onHandlerError: (hook, failOpen) =>
           recordBeforeToolCallDecision({
             event,
             hook,
-            token: executionIdentityToken,
+            token: receipt?.token,
             failOpen,
+            receiptAuthority: receipt?.assertAuthority,
           }),
       },
       event.toolName,
