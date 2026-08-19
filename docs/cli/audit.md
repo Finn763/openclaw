@@ -319,9 +319,8 @@ The closed request accepts exactly one of `executionId` or `runId`.
 accepts `executionLimit` from 1–50 and an optional `executionCursor`. A run
 with multiple retained executions returns the typed `ambiguous` identity state
 and no identity context or decisions until the caller selects an execution id.
-For one selected context, receipt paging starts with admission, then reads
-owner-native terminal approvals, merges outbound progress and terminal records,
-and finally reads generic facts for boundaries without a native durable record.
+For one selected context, receipt paging proceeds through admission, approval,
+message, generic, cron, task, and flow stages.
 The merge is deterministic across restart and rejects a cursor whose exact
 owner row has expired.
 Approval and delivery inspection never write generic duplicates. Generic fact
