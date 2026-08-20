@@ -673,6 +673,8 @@ function createChatProps(overrides: Partial<ChatProps> = {}): ChatProps {
     streamStartedAt: null,
     assistantAvatarUrl: null,
     draft: "",
+    modelCatalog: [],
+    modelSwitching: false,
     queue: [],
     realtimeTalkActive: false,
     realtimeTalkStatus: "idle",
@@ -4222,6 +4224,25 @@ describe("chat slash menu accessibility", () => {
         (option) => option.querySelector(".slash-menu-name")?.textContent?.trim(),
       ),
     ).toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  });
+
+  it("suppresses thinking arguments while the active model is switching", () => {
+    const sessions = createSessionsListResult({
+      model: "gpt-5.6-sol",
+      modelProvider: "openai",
+    });
+    const session = expectDefined(sessions.sessions[0], "active session");
+    session.thinkingLevels = [
+      { id: "low", label: "low" },
+      { id: "high", label: "high" },
+    ];
+    const { container } = createReactiveDraftHarness({ modelSwitching: true, sessions });
+
+    inputDraft(container, "/think");
+    keydownComposer(container, "Tab");
+
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/think ");
+    expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
   it("clears active descendant when suggestions close", () => {

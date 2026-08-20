@@ -43,11 +43,12 @@ export type ChatThinkingSelectState = {
 function resolveThinkingLevelOptionsForSession(
   session: ChatThinkingTarget | undefined,
   defaults: ThinkingSessionDefaults,
+  catalog: readonly ModelCatalogEntry[] = [],
   fallbackLabels?: readonly string[],
 ): GatewayThinkingLevelOption[] {
   const { provider, model } = resolveThinkingTargetModel({ defaults, session });
   return resolveThinkingLevelOptions({
-    catalog: [],
+    catalog,
     defaults,
     fallbackLabels,
     model,
@@ -59,9 +60,10 @@ function resolveThinkingLevelOptionsForSession(
 export function resolveThinkingCommandArgOptionsForSession(
   session: ChatThinkingTarget | undefined,
   defaults?: SessionsListResult["defaults"],
+  catalog: readonly ModelCatalogEntry[] = [],
 ): string[] {
-  const options = resolveThinkingLevelOptionsForSession(session, defaults, []).map((level) =>
-    normalizeThinkingOptionValue(level.id),
+  const options = resolveThinkingLevelOptionsForSession(session, defaults, catalog, []).map(
+    (level) => normalizeThinkingOptionValue(level.id),
   );
   return options.length > 0
     ? ["default", ...new Set(options.filter((option) => option && option !== "default"))]

@@ -29,7 +29,23 @@ suite.define(() => {
         page.on("pageerror", (error) => browserErrors.push(error.message));
 
         const gateway = await installMockGateway(page, {
-          models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai" }],
+          models: [
+            {
+              id: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              provider: "openai",
+              thinkingLevels: [
+                { id: "off", label: "off" },
+                { id: "minimal", label: "minimal" },
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium" },
+                { id: "high", label: "high" },
+                { id: "xhigh", label: "xhigh" },
+                { id: "max", label: "max" },
+                { id: "ultra", label: "ultra" },
+              ],
+            },
+          ],
           methodResponses: {
             "sessions.list": {
               count: 1,
@@ -37,16 +53,6 @@ suite.define(() => {
                 contextTokens: 200_000,
                 model: "gpt-5.6-sol",
                 modelProvider: "openai",
-                thinkingLevels: [
-                  { id: "off", label: "off" },
-                  { id: "minimal", label: "minimal" },
-                  { id: "low", label: "low" },
-                  { id: "medium", label: "medium" },
-                  { id: "high", label: "high" },
-                  { id: "xhigh", label: "xhigh" },
-                  { id: "max", label: "max" },
-                  { id: "ultra", label: "ultra" },
-                ],
               },
               path: "",
               sessions: [
@@ -55,16 +61,6 @@ suite.define(() => {
                   kind: "direct",
                   model: "gpt-5.6-sol",
                   modelProvider: "openai",
-                  thinkingLevels: [
-                    { id: "off", label: "off" },
-                    { id: "minimal", label: "minimal" },
-                    { id: "low", label: "low" },
-                    { id: "medium", label: "medium" },
-                    { id: "high", label: "high" },
-                    { id: "xhigh", label: "xhigh" },
-                    { id: "max", label: "max" },
-                    { id: "ultra", label: "ultra" },
-                  ],
                   updatedAt: Date.now(),
                 },
               ],

@@ -9,9 +9,9 @@ import {
   type SlashCommandCategory,
   type SlashCommandDef,
 } from "../../../lib/chat/commands.ts";
-import { paneDomId } from "./chat-composer-dom.ts";
 import { resolveThinkingCommandArgOptionsForSession } from "../../../lib/chat/thinking.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
+import { paneDomId } from "./chat-composer-dom.ts";
 import { commitComposerDraft, getChatComposerState } from "./chat-composer-state.ts";
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
 
@@ -48,10 +48,17 @@ function resolveSlashCommandArgOptions(
   if (command.key !== "think") {
     return command.argOptions ?? [];
   }
+  if (props.modelSwitching) {
+    return [];
+  }
   const session = props.sessions?.sessions.find((row) =>
     areUiSessionKeysEquivalent(row.key, props.sessionKey),
   );
-  return resolveThinkingCommandArgOptionsForSession(session, props.sessions?.defaults);
+  return resolveThinkingCommandArgOptionsForSession(
+    session,
+    props.sessions?.defaults,
+    props.modelCatalog,
+  );
 }
 
 function requestSlashCommandRefresh(
