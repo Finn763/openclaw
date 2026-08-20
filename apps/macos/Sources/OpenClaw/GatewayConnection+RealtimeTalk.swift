@@ -20,7 +20,16 @@ extension GatewayConnection {
                     let task = Task {
                         for await push in pushes {
                             guard case let .event(event) = push else { continue }
-                            continuation.yield(event)
+                            switch continuation.yield(event) {
+                            case .enqueued:
+                                continue
+                            case .dropped, .terminated:
+                                continuation.finish()
+                                return
+                            @unknown default:
+                                continuation.finish()
+                                return
+                            }
                         }
                         continuation.finish()
                     }
@@ -53,7 +62,16 @@ extension GatewayConnection {
                 return
             }
             if let snapshot = self.lastSnapshot {
-                continuation.yield(.snapshot(snapshot))
+                switch continuation.yield(.snapshot(snapshot)) {
+                case .enqueued:
+                    break
+                case .dropped, .terminated:
+                    continuation.finish()
+                    return
+                @unknown default:
+                    continuation.finish()
+                    return
+                }
             }
             self.realtimeTalkSubscribers[lease.socketGeneration, default: [:]][id] = continuation
             continuation.onTermination = { @Sendable _ in
@@ -66,7 +84,7 @@ extension GatewayConnection {
         }
     }
 
-    private func removeRealtimeTalkSubscriber(_ id: UUID, socketGeneration: UInt64) {
+    func removeRealtimeTalkSubscriber(_ id: UUID, socketGeneration: UInt64) {
         self.realtimeTalkSubscribers[socketGeneration]?[id] = nil
         if self.realtimeTalkSubscribers[socketGeneration]?.isEmpty == true {
             self.realtimeTalkSubscribers[socketGeneration] = nil

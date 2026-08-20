@@ -63,6 +63,9 @@ import {
   registerTalkConnectionCleanup,
 } from "./talk-session-registry.js";
 
+const MAX_PROVIDER_OUTPUT_AUDIO_BYTES = 1_048_576;
+const RELAY_OUTPUT_AUDIO_FRAME_BYTES = 960;
+
 function isRelayAssistantEchoTranscript(session: RelaySession | undefined, text: string): boolean {
   return session?.harness.isLikelyAssistantEchoTranscript(text) ?? false;
 }
@@ -218,21 +221,33 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
+        if (audio.byteLength > MAX_PROVIDER_OUTPUT_AUDIO_BYTES) {
+          failSession(
+            `Realtime provider audio callback exceeded ${MAX_PROVIDER_OUTPUT_AUDIO_BYTES} bytes`,
+          );
+          return;
+        }
         const turnId = ensureRelayTurn(relay);
-        emit(
-          {
-            relaySessionId,
-            type: "audio",
-            audioBase64: audio.toString("base64"),
-            ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
-            ...(currentOutputResponseId ? { responseId: currentOutputResponseId } : {}),
-          },
-          {
-            type: "output.audio.delta",
-            turnId,
-            payload: { byteLength: audio.length },
-          },
-        );
+        for (let offset = 0; offset < audio.byteLength; offset += RELAY_OUTPUT_AUDIO_FRAME_BYTES) {
+          const frame = audio.subarray(
+            offset,
+            Math.min(offset + RELAY_OUTPUT_AUDIO_FRAME_BYTES, audio.byteLength),
+          );
+          emit(
+            {
+              relaySessionId,
+              type: "audio",
+              audioBase64: frame.toString("base64"),
+              ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
+              ...(currentOutputResponseId ? { responseId: currentOutputResponseId } : {}),
+            },
+            {
+              type: "output.audio.delta",
+              turnId,
+              payload: { byteLength: frame.byteLength },
+            },
+          );
+        }
       },
       clearAudio: (reason) => {
         const relay = getActiveRelay();

@@ -42,6 +42,15 @@ private final class RealtimePCMPlaybackBackend {
 }
 
 @MainActor
+private final class RealtimePCMPlaybackResultProbe {
+    private(set) var results: [StreamingPlaybackResult] = []
+
+    func record(_ result: StreamingPlaybackResult) {
+        self.results.append(result)
+    }
+}
+
+@MainActor
 private func makeRealtimePCMPlayer(
     backend: RealtimePCMPlaybackBackend) -> RealtimePCMStreamingAudioPlayer
 {
@@ -75,7 +84,7 @@ struct RealtimePCMStreamingAudioPlayerTests {
         let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
         let playback = Task { await player.play(stream: stream, sampleRate: self.sampleRate) }
 
-        continuation?.yield(Data(repeating: 1, count: self.frameBytes * 4))
+        continuation?.yield(Data(repeating: 1, count: self.frameBytes * 5))
         await waitUntil { backend.scheduledFrames.count == 3 }
         #expect(backend.scheduledFrames.count == 3)
         #expect(backend.maxActiveCount == 3)
@@ -83,6 +92,10 @@ struct RealtimePCMStreamingAudioPlayerTests {
         backend.complete()
         await waitUntil { backend.scheduledFrames.count == 4 }
         #expect(backend.scheduledFrames.count == 4)
+        #expect(backend.maxActiveCount == 3)
+        backend.complete()
+        await waitUntil { backend.scheduledFrames.count == 5 }
+        #expect(backend.scheduledFrames.count == 5)
         #expect(backend.maxActiveCount == 3)
 
         continuation?.finish()
@@ -138,6 +151,27 @@ struct RealtimePCMStreamingAudioPlayerTests {
         #expect(backend.completions.count == 1)
         backend.complete()
         #expect(await (secondPlayback.value).finished)
+    }
+
+    @Test func `stop resumes the active playback exactly once`() async {
+        let backend = RealtimePCMPlaybackBackend()
+        let player = makeRealtimePCMPlayer(backend: backend)
+        let probe = RealtimePCMPlaybackResultProbe()
+        var continuation: AsyncThrowingStream<Data, Error>.Continuation?
+        let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
+        let playback = Task {
+            let result = await player.play(stream: stream, sampleRate: self.sampleRate)
+            probe.record(result)
+        }
+        continuation?.yield(Data(repeating: 1, count: self.frameBytes * 5))
+        await waitUntil { backend.scheduledFrames.count == 3 }
+
+        _ = player.stop()
+        _ = player.stop()
+        await playback.value
+
+        #expect(probe.results.count == 1)
+        #expect(probe.results.first?.finished == false)
     }
 }
 #endif

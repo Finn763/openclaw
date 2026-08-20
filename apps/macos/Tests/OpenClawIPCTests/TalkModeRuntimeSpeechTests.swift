@@ -605,23 +605,27 @@ struct TalkModeRuntimeSpeechTests {
         sessionB.stop()
     }
 
-    @Test @MainActor func `current relay start failure selects native fallback`() async {
+    @Test @MainActor func `current relay failure owner can transition to native fallback`() async {
         let runtime = TalkModeRuntime()
         let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()
-        await runtime._test_enableRealtimeRelaySelection()
         let fallbackProbe = RuntimeCommitProbe()
         let player = RuntimeTestPCMPlayer()
         let session = makeRuntimeTestRealtimeSession(player: player)
-        await runtime._test_setStartDependencies(
-            startRealtimeRelay: { lifecycleGeneration in
-                try await runtime._test_startRealtimeRelay(
-                    lifecycleGeneration: lifecycleGeneration,
-                    makeSession: { session },
-                    start: { _ in throw RuntimeRelayStartError.failed })
-            },
-            startNativeFallback: { _ in fallbackProbe.record("native") })
+        do {
+            try await runtime._test_startRealtimeRelay(
+                lifecycleGeneration: lifecycleGeneration,
+                makeSession: { session },
+                start: { _ in throw RuntimeRelayStartError.failed })
+            Issue.record("Expected relay start failure")
+        } catch {}
+        let owner = await TalkModeRuntime.NativeFallbackOwner(
+            lifecycleGeneration: lifecycleGeneration,
+            recognitionGeneration: runtime.recognitionGeneration,
+            realtimeRelayGeneration: runtime.realtimeRelayGeneration)
 
-        await runtime.start()
+        if await runtime.transitionToNativeFallback(owner: owner, projectFailure: {}) {
+            fallbackProbe.record("native")
+        }
 
         #expect(fallbackProbe.values() == ["native"])
         #expect(await runtime._test_realtimeSessionIsActive() == false)
@@ -635,33 +639,41 @@ struct TalkModeRuntimeSpeechTests {
     @Test @MainActor func `stale relay fallback cannot replace successor recognition owner`() async {
         let runtime = TalkModeRuntime()
         let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()
-        await runtime._test_enableRealtimeRelaySelection()
         let fallbackProjectionBarrier = RuntimeContinuationBarrier()
         let fallbackProbe = RuntimeCommitProbe()
         let player = RuntimeTestPCMPlayer()
         let session = makeRuntimeTestRealtimeSession(player: player)
-        await runtime._test_setStartDependencies(
-            startRealtimeRelay: { lifecycleGeneration in
-                try await runtime._test_startRealtimeRelay(
-                    lifecycleGeneration: lifecycleGeneration,
-                    makeSession: { session },
-                    start: { _ in throw RuntimeRelayStartError.failed })
-            },
-            projectNativeFallback: {
-                await MainActor.run {
-                    TalkModeController.shared.updatePartialTranscript("stale fallback")
-                }
-                await fallbackProjectionBarrier.wait()
-            },
-            startNativeFallback: { _ in fallbackProbe.record("native") })
+        do {
+            try await runtime._test_startRealtimeRelay(
+                lifecycleGeneration: lifecycleGeneration,
+                makeSession: { session },
+                start: { _ in throw RuntimeRelayStartError.failed })
+            Issue.record("Expected relay start failure")
+        } catch {}
+        let owner = await TalkModeRuntime.NativeFallbackOwner(
+            lifecycleGeneration: lifecycleGeneration,
+            recognitionGeneration: runtime.recognitionGeneration,
+            realtimeRelayGeneration: runtime.realtimeRelayGeneration)
 
-        let start = Task { await runtime.start() }
+        let transition = Task {
+            let accepted = await runtime.transitionToNativeFallback(
+                owner: owner,
+                projectFailure: {
+                    await MainActor.run {
+                        TalkModeController.shared.updatePartialTranscript("stale fallback")
+                    }
+                    await fallbackProjectionBarrier.wait()
+                })
+            if accepted {
+                fallbackProbe.record("native")
+            }
+        }
         await fallbackProjectionBarrier.waitUntilEntered()
         let successorRecognition = await runtime._test_beginRecognitionAttempt(
             lifecycleGeneration: lifecycleGeneration)
         TalkModeController.shared.updatePartialTranscript("successor")
         await fallbackProjectionBarrier.release()
-        await start.value
+        await transition.value
 
         #expect(successorRecognition != nil)
         #expect(await runtime.recognitionGeneration == successorRecognition)

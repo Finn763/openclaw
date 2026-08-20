@@ -22,12 +22,7 @@ actor TalkModeRuntime {
         case fallback
     }
 
-    typealias StartDependencies = (
-        realtime: @Sendable (Int) async throws -> Void,
-        projectFallback: @Sendable () async -> Void,
-        fallback: @Sendable (Int) async -> Void)
-
-    private struct NativeFallbackOwner {
+    struct NativeFallbackOwner {
         let lifecycleGeneration: Int
         let recognitionGeneration: Int
         let realtimeRelayGeneration: UInt64
@@ -107,7 +102,6 @@ actor TalkModeRuntime {
     private var pendingRealtimeRelayStartLifecycleGeneration: Int?
     var realtimeRestartGeneration: UInt64 = 0
     var realtimeRestartTask: Task<Void, Never>?
-    var startDependencies: StartDependencies?
     private var speechLocaleID: String?
     private var lastInterruptedAtSeconds: Double?
     private var voiceAliases: [String: String] = [:]
@@ -261,18 +255,26 @@ actor TalkModeRuntime {
             self.realtimeSession == nil
     }
 
+    func transitionToNativeFallback(
+        owner: NativeFallbackOwner,
+        projectFailure: @Sendable () async -> Void) async -> Bool
+    {
+        guard self.canOwnNativeFallback(owner) else { return false }
+        await projectFailure()
+        // Projection crosses actors. Revalidate before native capture can replace
+        // a newer realtime or recognition owner.
+        return self.canOwnNativeFallback(owner)
+    }
+
     func start() async {
         let gen = self.lifecycleGeneration
         guard voiceWakeSupported else { return }
 
-        let startDependencies = self.startDependencies
-        if startDependencies == nil {
-            guard await PermissionManager.ensureVoiceWakePermissions(interactive: true) else {
-                self.logger.error("talk runtime not starting: permissions missing")
-                return
-            }
-            await reloadConfig()
+        guard await PermissionManager.ensureVoiceWakePermissions(interactive: true) else {
+            self.logger.error("talk runtime not starting: permissions missing")
+            return
         }
+        await reloadConfig()
         guard self.isCurrent(gen) else { return }
         if self.isPaused {
             self.phase = .idle
@@ -290,11 +292,7 @@ actor TalkModeRuntime {
                 recognitionGeneration: self.recognitionGeneration,
                 realtimeRelayGeneration: self.realtimeRelayGeneration &+ 1)
             do {
-                if let startDependencies {
-                    try await startDependencies.realtime(gen)
-                } else {
-                    try await self.startRealtimeRelay(generation: gen)
-                }
+                try await self.startRealtimeRelay(generation: gen)
                 return
             } catch is CancellationError {
                 if self.consumePendingRealtimeRelayStart() {
@@ -307,24 +305,18 @@ actor TalkModeRuntime {
                 self.logger.error(
                     "talk realtime unavailable; using native fallback: " +
                         "\(error.localizedDescription, privacy: .public)")
-                if let startDependencies {
-                    await startDependencies.projectFallback()
-                } else {
-                    await MainActor.run {
-                        TalkModeController.shared.updatePartialTranscript(
-                            "Realtime unavailable — using native speech")
-                    }
-                }
-                // The UI projection crosses actors. A newer relay or recognition owner
-                // must keep the failed attempt from tearing down or replacing its capture.
-                guard self.canOwnNativeFallback(fallbackOwner) else { return }
+                guard await self.transitionToNativeFallback(
+                    owner: fallbackOwner,
+                    projectFailure: {
+                        await MainActor.run {
+                            TalkModeController.shared.updatePartialTranscript(
+                                String(localized: "Realtime unavailable — using native speech"))
+                        }
+                    })
+                else { return }
             }
         }
-        if let startDependencies {
-            await startDependencies.fallback(gen)
-        } else {
-            await self.startNativeFallback(generation: gen)
-        }
+        await self.startNativeFallback(generation: gen)
     }
 
     private func stop() async {
@@ -370,17 +362,6 @@ actor TalkModeRuntime {
     #if DEBUG
     func _test_enableRealtimeRelaySelection() {
         (self.macOSRealtimeRelayOptIn, self.hasGatewayRealtimeRelayTuple) = (true, true)
-    }
-
-    func _test_setStartDependencies(
-        startRealtimeRelay: @escaping @Sendable (Int) async throws -> Void,
-        projectNativeFallback: @escaping @Sendable () async -> Void = {},
-        startNativeFallback: @escaping @Sendable (Int) async -> Void)
-    {
-        self.startDependencies = (
-            realtime: startRealtimeRelay,
-            projectFallback: projectNativeFallback,
-            fallback: startNativeFallback)
     }
 
     func _test_beginRecognitionAttempt(lifecycleGeneration: Int) -> Int? {
@@ -1461,10 +1442,10 @@ extension TalkModeRuntime {
             case .speech: "barge-in"
             case .manual: "shutdown"
             }
-            await MainActor.run {
+            let cancelled = await MainActor.run {
                 realtimeSession.cancelOutput(reason: relayReason)
             }
-            if reason != .manual, !self.isPaused {
+            if cancelled, reason != .manual, !self.isPaused {
                 self.phase = .listening
                 await MainActor.run { TalkModeController.shared.updatePhase(.listening) }
             }

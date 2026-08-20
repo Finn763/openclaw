@@ -1228,8 +1228,21 @@ extension GatewayConnection {
             continuation.yield(push)
         }
         if let socketGeneration = self.activeSocketGeneration {
-            for (_, continuation) in self.realtimeTalkSubscribers[socketGeneration] ?? [:] {
-                continuation.yield(push)
+            var terminatedSubscriberIDs: [UUID] = []
+            for (id, continuation) in self.realtimeTalkSubscribers[socketGeneration] ?? [:] {
+                switch continuation.yield(push) {
+                case .enqueued:
+                    break
+                case .dropped, .terminated:
+                    continuation.finish()
+                    terminatedSubscriberIDs.append(id)
+                @unknown default:
+                    continuation.finish()
+                    terminatedSubscriberIDs.append(id)
+                }
+            }
+            for id in terminatedSubscriberIDs {
+                self.removeRealtimeTalkSubscriber(id, socketGeneration: socketGeneration)
             }
         }
     }

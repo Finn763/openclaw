@@ -296,6 +296,55 @@ private func assertConfigLookupCannotRecreateRoute(
         }
     }
 
+    @Test func `realtime talk event overflow terminates its bounded subscription`() async throws {
+        let session = GatewayTestWebSocketSession(taskFactory: {
+            GatewayTestWebSocketTask(
+                sendHook: { task, message, sendIndex in
+                    guard sendIndex > 0,
+                          let data = Self.messageData(message),
+                          let frame = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let id = frame["id"] as? String
+                    else { return }
+                    task.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.okResponseData(id: id)))
+                },
+                receiveHook: { task, receiveIndex in
+                    if receiveIndex == 0 {
+                        return .data(GatewayWebSocketTestSupport.connectChallengeData())
+                    }
+                    let id = task.snapshotConnectRequestID() ?? "connect"
+                    return .data(GatewayWebSocketTestSupport.connectOkData(id: id))
+                })
+        })
+        let connection = GatewayConnection(
+            configProvider: {
+                (
+                    url: URL(string: "wss://gateway.example.invalid:9443")!,
+                    token: "test-token-placeholder",
+                    password: nil)
+            },
+            sessionBox: WebSocketSessionBox(session: session))
+        try await connection.refresh()
+        let transport = try await connection.acquireRealtimeTalkTransport()
+        let events = await transport.subscribeServerEvents(1)
+        let socketGeneration = try #require(await connection._test_activeSocketGeneration())
+
+        for seq in 1...20 {
+            await connection._test_handlePush(
+                .event(EventFrame(
+                    type: "event",
+                    event: "talk.event",
+                    payload: AnyCodable(["seq": seq]),
+                    seq: seq,
+                    stateversion: nil)),
+                socketGeneration: socketGeneration)
+        }
+
+        var iterator = events.makeAsyncIterator()
+        #expect(await iterator.next() != nil)
+        #expect(await iterator.next() == nil)
+        await connection.shutdown()
+    }
+
     @Test func `operator widget capability refresh is shared and retained`() async throws {
         let rawOldSurface = "http://127.0.0.1:18789/__openclaw__/cap/old-token"
         let rawNewSurface = "http://127.0.0.1:18789/__openclaw__/cap/new-token"

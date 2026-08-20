@@ -91,6 +91,20 @@ then 2 s). If those attempts are exhausted, the overlay reports
 `Realtime disconnected repeatedly — using native speech` and the next start bypasses realtime.
 Losing the microphone mid-session closes the relay and takes the same route.
 
+Relay output cancellation is turn-scoped. Clients copy the current `turnId` from the
+`talk.event` audio envelope; missing, empty, or stale turn ids are ignored:
+
+```json
+{
+  "method": "talk.session.cancelOutput",
+  "params": {
+    "sessionId": "relay-session-id",
+    "turnId": "turn-7",
+    "reason": "barge-in"
+  }
+}
+```
+
 ## Voice directives in replies
 
 The assistant can prefix a reply with a single JSON line to control voice:

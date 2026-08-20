@@ -522,10 +522,10 @@ export function cancelTalkRealtimeRelayTurn(params: {
 }): void {
   const session = getRelaySession(params.relaySessionId, params.connId);
   const requestedTurnId = normalizeOptionalString(params.turnId);
-  if (requestedTurnId && session.harness.talk.activeTurnId !== requestedTurnId) {
+  if (!requestedTurnId || session.harness.talk.activeTurnId !== requestedTurnId) {
     return;
   }
-  const turnId = requestedTurnId ?? ensureRelayTurn(session);
+  const turnId = requestedTurnId;
   session.toolResultEpoch += 1;
   session.forcedTerminalProviderResults.clear();
   const reason = params.reason ?? "client-cancelled";
