@@ -2179,7 +2179,8 @@ final class TalkModeManager: NSObject {
             return .started
         }
         guard let gateway else {
-            return .unavailable(realtimeIssue(message: "Gateway not connected", phase: "start"))
+            return .unavailable(
+                realtimeIssue(message: String(localized: "Gateway is not connected"), phase: "start"))
         }
         let startedAt = Self.nowSeconds()
         if self.prefetchedRealtimeSession == nil, let prefetchTask = realtimePrefetchTask {
@@ -2310,7 +2311,8 @@ final class TalkModeManager: NSObject {
 
     private func startRealtimeRelayIfAvailable(attemptID: Int) async -> RealtimeStartResult {
         guard let gateway else {
-            return .unavailable(realtimeIssue(message: "Gateway not connected", phase: "start"))
+            return .unavailable(
+                realtimeIssue(message: String(localized: "Gateway is not connected"), phase: "start"))
         }
         guard self.foregroundAudioCaptureAllowed else {
             self.setStatus(
@@ -2322,7 +2324,8 @@ final class TalkModeManager: NSObject {
         }
         guard self.isCurrentStartAttempt(attemptID) else { return .ignored }
         guard let gatewayRoute = await gateway.currentRoute() else {
-            return .unavailable(realtimeIssue(message: "Gateway not connected", phase: "start"))
+            return .unavailable(
+                realtimeIssue(message: String(localized: "Gateway is not connected"), phase: "start"))
         }
         guard self.isCurrentStartAttempt(attemptID) else { return .ignored }
         if self.realtimeRelaySession != nil {

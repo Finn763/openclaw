@@ -102,12 +102,13 @@ describe("Talk relay audio base64", () => {
     realtime.set(session.relaySessionId, "conn");
     await Promise.resolve();
     events.length = 0;
-    expect(() =>
-      sendTalkRealtimeRelayAudio({
-        relaySessionId: session.relaySessionId,
-        connId: "conn",
-        audioBase64: "AB",
-      }),
+    expect(
+      () =>
+        void sendTalkRealtimeRelayAudio({
+          relaySessionId: session.relaySessionId,
+          connId: "conn",
+          audioBase64: "AB",
+        }),
     ).toThrow("Realtime relay audio frame is invalid base64");
     expect(sendAudio).not.toHaveBeenCalled();
     expect(events).toEqual([]);
@@ -127,7 +128,7 @@ describe("Talk relay audio base64", () => {
     realtime.set(session.relaySessionId, "conn");
     await Promise.resolve();
     events.length = 0;
-    sendTalkRealtimeRelayAudio({
+    void sendTalkRealtimeRelayAudio({
       relaySessionId: session.relaySessionId,
       connId: "conn",
       audioBase64: "YXVkaW8taW4=",

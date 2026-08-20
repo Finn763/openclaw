@@ -40,6 +40,7 @@ extension TalkModeRuntime {
             lifecycleGeneration: generation,
             relayGeneration: relayGeneration,
             start: { session in try await session.start() })
+        self.realtimeSessionReadyAt = Date()
         self.phase = .listening
         await MainActor.run {
             TalkModeController.shared.updatePartialTranscript("")
@@ -172,9 +173,6 @@ extension TalkModeRuntime {
               self.realtimeSession != nil
         else { return }
         self.logger.debug("talk realtime status=\(status, privacy: .public)")
-        if status == "Listening (Realtime)", self.realtimeSessionReadyAt == nil {
-            self.realtimeSessionReadyAt = Date()
-        }
     }
 
     private func handleRealtimeIssue(_ issue: RealtimeTalkRelayIssue, relayGeneration: UInt64) async {
@@ -259,7 +257,8 @@ extension TalkModeRuntime {
         let lifecycleGeneration = self.lifecycleGeneration
         if let delay = Self.realtimeRestartDelayNanoseconds(attempt: attempt) {
             await MainActor.run {
-                TalkModeController.shared.updatePartialTranscript("Realtime disconnected — reconnecting…")
+                TalkModeController.shared.updatePartialTranscript(
+                    String(localized: "Realtime disconnected — reconnecting…"))
             }
             self.scheduleRealtimeRecovery(
                 after: delay,
@@ -269,7 +268,7 @@ extension TalkModeRuntime {
             self.bypassRealtimeOnNextStart = true
             await MainActor.run {
                 TalkModeController.shared.updatePartialTranscript(
-                    "Realtime disconnected repeatedly — using native speech")
+                    String(localized: "Realtime disconnected repeatedly — using native speech"))
             }
             self.scheduleRealtimeRecovery(
                 after: nil,

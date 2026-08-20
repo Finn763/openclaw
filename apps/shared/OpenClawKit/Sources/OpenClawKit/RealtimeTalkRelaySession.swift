@@ -636,7 +636,8 @@ extension RealtimeTalkRelaySession {
                 ? suppressed.isEmpty()
                 : suppressed.isEmpty() || suppressed.relation(to: clearIdentity) == .same
             if clearsSuppressed {
-                self.retireOutputCancellation()
+                self.awaitingOutputClear = false
+                if self.outputCancellationTask == nil { self.retireOutputCancellation() }
             }
         }
         let currentMatches =
@@ -1190,7 +1191,14 @@ extension RealtimeTalkRelaySession {
                 "turnId": AnyCodable(turnId),
             ]
             do {
-                _ = try await transport.request("talk.session.cancelOutput", payload, 8000)
+                let response = try await transport.request("talk.session.cancelOutput", payload, 8000)
+                let status = try? JSONDecoder().decode([String: String].self, from: response)["status"]
+                guard let self, self.isCurrentOutputCancellation(cancellationGeneration) else { return }
+                if status == "stale" || status == "idle" || !self.awaitingOutputClear {
+                    self.retireOutputCancellation()
+                } else {
+                    self.outputCancellationTask = nil
+                }
             } catch {
                 guard let self, self.isCurrentOutputCancellation(cancellationGeneration) else { return }
                 let issue = RealtimeTalkRelayIssue(
@@ -1354,7 +1362,7 @@ extension RealtimeTalkRelaySession {
     {
         guard self.isCurrentLifecycleLocally(lifecycleGeneration),
               self.audioCaptureGeneration == audioCaptureGeneration,
-              !self.isInputPaused,
+              !self.isInputPaused, self.suppressedOutputIdentity == nil,
               let audioSender = self.audioSender
         else { return nil }
         self.recordMicrophoneFrame(byteCount: encoded.count, rms: rms, timestampMs: timestampMs)
@@ -1378,7 +1386,7 @@ extension RealtimeTalkRelaySession {
             defer { self.audioSendTasks.removeValue(forKey: taskID) }
             guard self.isCurrentLifecycleLocally(lifecycleGeneration),
                   self.audioCaptureGeneration == audioCaptureGeneration,
-                  !self.isInputPaused
+                  !self.isInputPaused, self.suppressedOutputIdentity == nil
             else { return }
             guard let message = await audioSender.send(encoded, timestampMs: timestampMs) else { return }
             guard self.isCurrentLifecycleLocally(lifecycleGeneration),

@@ -92,7 +92,9 @@ then 2 s). If those attempts are exhausted, the overlay reports
 Losing the microphone mid-session closes the relay and takes the same route.
 
 Relay output cancellation is turn-scoped. Clients copy the current `turnId` from the
-`talk.event` audio envelope; missing, empty, or stale turn ids are ignored:
+`talk.event` audio envelope. Matching ids return `applied`, stale ids return `stale`, and
+sessions without an active turn return `idle`. Older clients that omit `turnId` still cancel
+the current turn:
 
 ```json
 {

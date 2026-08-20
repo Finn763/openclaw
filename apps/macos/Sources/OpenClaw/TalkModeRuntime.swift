@@ -22,12 +22,6 @@ actor TalkModeRuntime {
         case fallback
     }
 
-    struct NativeFallbackOwner {
-        let lifecycleGeneration: Int
-        let recognitionGeneration: Int
-        let realtimeRelayGeneration: UInt64
-    }
-
     let logger = Logger(subsystem: "ai.openclaw", category: "talk.runtime")
     let ttsLogger = Logger(subsystem: "ai.openclaw", category: "talk.tts")
     static let defaultModelIdFallback = "eleven_v3"
@@ -246,26 +240,6 @@ actor TalkModeRuntime {
         generation == self.lifecycleGeneration && self.isEnabled
     }
 
-    private func canOwnNativeFallback(_ owner: NativeFallbackOwner) -> Bool {
-        self.isCurrent(owner.lifecycleGeneration) &&
-            !self.isPaused &&
-            self.recognitionGeneration == owner.recognitionGeneration &&
-            self.realtimeRelayGeneration == owner.realtimeRelayGeneration &&
-            self.realtimeRelayStartGeneration == nil &&
-            self.realtimeSession == nil
-    }
-
-    func transitionToNativeFallback(
-        owner: NativeFallbackOwner,
-        projectFailure: @Sendable () async -> Void) async -> Bool
-    {
-        guard self.canOwnNativeFallback(owner) else { return false }
-        await projectFailure()
-        // Projection crosses actors. Revalidate before native capture can replace
-        // a newer realtime or recognition owner.
-        return self.canOwnNativeFallback(owner)
-    }
-
     func start() async {
         let gen = self.lifecycleGeneration
         guard voiceWakeSupported else { return }
@@ -286,11 +260,10 @@ actor TalkModeRuntime {
         }
         let bypassRealtime = self.bypassRealtimeOnNextStart
         self.bypassRealtimeOnNextStart = false
+        var nativeFallbackStatus: String?
         if self.shouldAttemptRealtimeRelay(), !bypassRealtime {
-            let fallbackOwner = NativeFallbackOwner(
-                lifecycleGeneration: gen,
-                recognitionGeneration: self.recognitionGeneration,
-                realtimeRelayGeneration: self.realtimeRelayGeneration &+ 1)
+            let fallbackRecognitionGeneration = self.recognitionGeneration
+            let fallbackRealtimeRelayGeneration = self.realtimeRelayGeneration &+ 1
             do {
                 try await self.startRealtimeRelay(generation: gen)
                 return
@@ -301,22 +274,19 @@ actor TalkModeRuntime {
                 return
             } catch {
                 self.pendingRealtimeRelayStartLifecycleGeneration = nil
-                guard self.canOwnNativeFallback(fallbackOwner) else { return }
+                guard self.isCurrent(gen), !self.isPaused,
+                      self.recognitionGeneration == fallbackRecognitionGeneration,
+                      self.realtimeRelayGeneration == fallbackRealtimeRelayGeneration,
+                      self.realtimeRelayStartGeneration == nil,
+                      self.realtimeSession == nil
+                else { return }
                 self.logger.error(
                     "talk realtime unavailable; using native fallback: " +
                         "\(error.localizedDescription, privacy: .public)")
-                guard await self.transitionToNativeFallback(
-                    owner: fallbackOwner,
-                    projectFailure: {
-                        await MainActor.run {
-                            TalkModeController.shared.updatePartialTranscript(
-                                String(localized: "Realtime unavailable — using native speech"))
-                        }
-                    })
-                else { return }
+                nativeFallbackStatus = String(localized: "Realtime unavailable — using native speech")
             }
         }
-        await self.startNativeFallback(generation: gen)
+        await self.startNativeFallback(generation: gen, status: nativeFallbackStatus)
     }
 
     private func stop() async {
@@ -369,13 +339,39 @@ actor TalkModeRuntime {
     }
     #endif
 
-    private func startNativeFallback(generation: Int) async {
+    private func startNativeFallback(generation: Int, status: String? = nil) async {
+        let relayGeneration = self.realtimeRelayGeneration
         guard await self.startRecognition(lifecycleGeneration: generation),
-              self.isCurrent(generation), !self.isPaused else { return }
+              await self.commitNativeFallback(
+                  lifecycleGeneration: generation,
+                  recognitionGeneration: self.recognitionGeneration,
+                  relayGeneration: relayGeneration,
+                  status: status)
+        else { return }
         self.startAudioInputObserver()
-        self.phase = .listening
-        await MainActor.run { TalkModeController.shared.updatePhase(.listening) }
         self.startSilenceMonitor()
+    }
+
+    func commitNativeFallback(
+        lifecycleGeneration: Int,
+        recognitionGeneration: Int,
+        relayGeneration: UInt64,
+        status: String?) async -> Bool
+    {
+        let ownsFallback = {
+            self.canCommitRecognitionStart(
+                lifecycleGeneration: lifecycleGeneration,
+                recognitionAttempt: recognitionGeneration) &&
+                self.realtimeRelayGeneration == relayGeneration &&
+                self.realtimeRelayStartGeneration == nil && self.realtimeSession == nil
+        }
+        guard ownsFallback() else { return false }
+        self.phase = .listening
+        await MainActor.run {
+            if let status { TalkModeController.shared.updatePartialTranscript(status) }
+            TalkModeController.shared.updatePhase(.listening)
+        }
+        return ownsFallback()
     }
 
     func inputDeviceSelectionDidChange() async {

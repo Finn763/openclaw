@@ -142,7 +142,14 @@ function emitGatewayFrame(frame: GatewayFrame): void {
 }
 
 function emitTalkEvent(payload: unknown): void {
-  emitGatewayFrame({ event: "talk.event", payload });
+  let eventPayload = payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const event = payload as Record<string, unknown>;
+    if ((event.type === "audio" || event.type === "clear") && event.talkEvent === undefined) {
+      eventPayload = { ...event, talkEvent: { turnId: "turn-1" } };
+    }
+  }
+  emitGatewayFrame({ event: "talk.event", payload: eventPayload });
 }
 
 function pumpMicrophone(samples: Float32Array): void {
@@ -507,6 +514,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
           {
             sessionId: "relay-1",
             reason: "playback-overflow",
+            turnId: "turn-1",
           },
         ],
       ]),
@@ -551,6 +559,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
           {
             sessionId: "relay-1",
             reason: "playback-overflow",
+            turnId: "turn-1",
           },
         ],
       ]),
@@ -899,6 +908,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
         {
           sessionId: "relay-1",
           reason: "barge-in",
+          turnId: "turn-1",
         },
       ],
     ]);
@@ -1257,9 +1267,17 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
         {
           sessionId: "relay-1",
           reason: "barge-in",
+          turnId: "turn-1",
         },
       ],
     ]);
+    const appendCountBeforeClear = requestCallsFor(client, "talk.session.appendAudio").length;
+    emitTalkEvent({ relaySessionId: "relay-1", type: "clear" });
+    pumpMicrophone(speech);
+    await Promise.resolve();
+    expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(
+      appendCountBeforeClear,
+    );
     emitTalkEvent({
       relaySessionId: "relay-1",
       type: "audio",
@@ -1269,6 +1287,12 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     pumpMicrophone(speech);
     pumpMicrophone(speech);
     expect(requestCallsFor(client, "talk.session.cancelOutput")).toHaveLength(2);
+    emitTalkEvent({ relaySessionId: "relay-1", type: "clear" });
+    pumpMicrophone(speech);
+    await Promise.resolve();
+    expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(
+      appendCountBeforeClear,
+    );
     emitGatewayFrame({
       event: "chat",
       payload: { runId: "run-1", state: "final", message: { text: "ready" } },
@@ -1278,10 +1302,20 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
 
     resolveCancellations[0]?.();
     await vi.advanceTimersByTimeAsync(0);
+    pumpMicrophone(speech);
+    await Promise.resolve();
+    expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(
+      appendCountBeforeClear,
+    );
     expect(requestCallsFor(client, "talk.session.submitToolResult")).toHaveLength(0);
 
     resolveCancellations[1]?.();
     await vi.advanceTimersByTimeAsync(0);
+    pumpMicrophone(speech);
+    await Promise.resolve();
+    expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(
+      appendCountBeforeClear + 1,
+    );
 
     expect(requestCallsFor(client, "talk.session.submitToolResult")).toEqual([
       [

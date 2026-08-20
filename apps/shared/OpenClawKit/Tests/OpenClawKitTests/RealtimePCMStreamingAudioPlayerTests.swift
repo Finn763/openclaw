@@ -80,50 +80,65 @@ struct RealtimePCMStreamingAudioPlayerTests {
     @Test func `withheld completions cap scheduling and one completion admits one frame`() async {
         let backend = RealtimePCMPlaybackBackend()
         let player = makeRealtimePCMPlayer(backend: backend)
+        let probe = RealtimePCMPlaybackResultProbe()
         var continuation: AsyncThrowingStream<Data, Error>.Continuation?
         let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
-        let playback = Task { await player.play(stream: stream, sampleRate: self.sampleRate) }
+        let playback = Task {
+            let result = await player.play(stream: stream, sampleRate: self.sampleRate)
+            probe.record(result)
+        }
 
         continuation?.yield(Data(repeating: 1, count: self.frameBytes * 5))
+        continuation?.finish()
         await waitUntil { backend.scheduledFrames.count == 3 }
         #expect(backend.scheduledFrames.count == 3)
         #expect(backend.maxActiveCount == 3)
+        #expect(probe.results.isEmpty)
 
         backend.complete()
         await waitUntil { backend.scheduledFrames.count == 4 }
         #expect(backend.scheduledFrames.count == 4)
         #expect(backend.maxActiveCount == 3)
-        backend.complete()
-        await waitUntil { backend.scheduledFrames.count == 5 }
-        #expect(backend.scheduledFrames.count == 5)
-        #expect(backend.maxActiveCount == 3)
+        #expect(probe.results.isEmpty)
 
-        continuation?.finish()
         while !backend.completions.isEmpty {
             backend.complete()
             await Task.yield()
         }
-        #expect(await (playback.value).finished)
+        await playback.value
+        #expect(probe.results.count == 1)
+        #expect(probe.results.first?.finished == true)
+        #expect(probe.results.first?.interruptedAt == nil)
+        #expect(backend.scheduledFrames.count == 5)
         #expect(backend.scheduledFrames.allSatisfy { $0.count == self.frameBytes })
     }
 
     @Test func `playback finishes only after input and every scheduled frame complete`() async {
         let backend = RealtimePCMPlaybackBackend()
         let player = makeRealtimePCMPlayer(backend: backend)
+        let probe = RealtimePCMPlaybackResultProbe()
         var continuation: AsyncThrowingStream<Data, Error>.Continuation?
         let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
-        let playback = Task { await player.play(stream: stream, sampleRate: self.sampleRate) }
+        let playback = Task {
+            let result = await player.play(stream: stream, sampleRate: self.sampleRate)
+            probe.record(result)
+        }
 
         continuation?.yield(Data(repeating: 1, count: self.frameBytes * 2))
         continuation?.finish()
         await waitUntil { backend.scheduledFrames.count == 2 }
         #expect(backend.completions.count == 2)
+        #expect(probe.results.isEmpty)
 
         backend.complete()
         await Task.yield()
         #expect(backend.completions.count == 1)
+        #expect(probe.results.isEmpty)
         backend.complete()
-        #expect(await (playback.value).finished)
+        await playback.value
+        #expect(probe.results.count == 1)
+        #expect(probe.results.first?.finished == true)
+        #expect(probe.results.first?.interruptedAt == nil)
     }
 
     @Test func `stop restart ignores stale buffer completions`() async {
@@ -141,16 +156,32 @@ struct RealtimePCMStreamingAudioPlayerTests {
 
         var secondContinuation: AsyncThrowingStream<Data, Error>.Continuation?
         let secondStream = AsyncThrowingStream<Data, Error> { secondContinuation = $0 }
-        let secondPlayback = Task { await player.play(stream: secondStream, sampleRate: self.sampleRate) }
-        secondContinuation?.yield(Data(repeating: 2, count: self.frameBytes))
+        let probe = RealtimePCMPlaybackResultProbe()
+        let secondPlayback = Task {
+            let result = await player.play(stream: secondStream, sampleRate: self.sampleRate)
+            probe.record(result)
+        }
+        secondContinuation?.yield(Data(repeating: 2, count: self.frameBytes * 5))
         secondContinuation?.finish()
-        await waitUntil { backend.completions.count == 1 }
+        await waitUntil { backend.completions.count == 3 }
 
         staleCompletion()
         await Task.yield()
-        #expect(backend.completions.count == 1)
+        #expect(backend.scheduledFrames.count == 4)
+        #expect(backend.completions.count == 3)
+        #expect(probe.results.isEmpty)
         backend.complete()
-        #expect(await (secondPlayback.value).finished)
+        await waitUntil { backend.scheduledFrames.count == 5 }
+        #expect(backend.scheduledFrames.count == 5)
+        #expect(probe.results.isEmpty)
+        while !backend.completions.isEmpty {
+            backend.complete()
+            await Task.yield()
+        }
+        await secondPlayback.value
+        #expect(probe.results.count == 1)
+        #expect(probe.results.first?.finished == true)
+        #expect(probe.results.first?.interruptedAt == nil)
     }
 
     @Test func `stop resumes the active playback exactly once`() async {

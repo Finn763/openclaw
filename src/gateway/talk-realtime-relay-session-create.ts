@@ -46,6 +46,7 @@ import {
   relaySessions,
   type CreateTalkRealtimeRelaySessionParams,
   type RelaySession,
+  TalkRealtimeRelayOutputOwnership,
   type TalkRealtimeRelayEventPayload,
   type TalkRealtimeRelaySessionResult,
 } from "./talk-realtime-relay-state.js";
@@ -108,7 +109,6 @@ export function createTalkRealtimeRelaySession(
       ...(talkEvent ? { talkEvent: harness.emit(talkEvent) } : {}),
     });
   let currentOutputItemId: string | undefined;
-  let currentOutputResponseId: string | undefined;
   let ready = false;
   let continuityResetActive = false;
   let failureEmitted = false;
@@ -122,6 +122,16 @@ export function createTalkRealtimeRelaySession(
     return relay && relaySessions.get(relay.id) === relay ? relay : undefined;
   };
   const bridgeRef: { current?: ReturnType<typeof harness.createBridge> } = {};
+  const outputOwnership = new TalkRealtimeRelayOutputOwnership(
+    () => harness.talk.activeTurnId,
+    (message) => {
+      const relay = getActiveRelay();
+      relay?.failSession(message);
+      if (!relay) {
+        constructionTerminal.current ??= { kind: "error", error: new Error(message) };
+      }
+    },
+  );
   const relaySessionKey = params.sessionKey?.trim();
   const relayAgentId = relaySessionKey
     ? resolveTalkSessionAgentId(params.cfg ?? params.context.getRuntimeConfig(), relaySessionKey)
@@ -192,16 +202,7 @@ export function createTalkRealtimeRelaySession(
       );
     },
   });
-  // The generic harness should stay transport-neutral. Wrap only this relay provider
-  // invocation so provider-owned delegations cannot acquire the host runner elsewhere.
-  const relayProvider = {
-    ...params.provider,
-    createBridge: (request: Parameters<typeof params.provider.createBridge>[0]) =>
-      params.provider.createBridge({
-        ...request,
-        runAgentConsult,
-      }),
-  };
+  const relayProvider = outputOwnership.bind(params.provider, runAgentConsult);
   const bridge = harness.createBridge({
     provider: relayProvider,
     cfg: params.cfg,
@@ -227,7 +228,13 @@ export function createTalkRealtimeRelaySession(
           );
           return;
         }
-        const turnId = ensureRelayTurn(relay);
+        if (outputOwnership.phase === "cancelling") {
+          return;
+        }
+        const outputTurnId = outputOwnership.resolve(true);
+        if (!outputTurnId) {
+          return;
+        }
         for (let offset = 0; offset < audio.byteLength; offset += RELAY_OUTPUT_AUDIO_FRAME_BYTES) {
           const frame = audio.subarray(
             offset,
@@ -239,11 +246,11 @@ export function createTalkRealtimeRelaySession(
               type: "audio",
               audioBase64: frame.toString("base64"),
               ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
-              ...(currentOutputResponseId ? { responseId: currentOutputResponseId } : {}),
+              ...(outputOwnership.responseId ? { responseId: outputOwnership.responseId } : {}),
             },
             {
               type: "output.audio.delta",
-              turnId,
+              turnId: outputTurnId,
               payload: { byteLength: frame.byteLength },
             },
           );
@@ -254,12 +261,15 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        const turnId = ensureRelayTurn(relay);
+        const outputTurnId = outputOwnership.resolve(false);
+        if (!outputTurnId) {
+          return;
+        }
         emit(
           { relaySessionId, type: "clear", ...(reason ? { reason } : {}) },
           {
             type: "output.audio.done",
-            turnId,
+            turnId: outputTurnId,
             payload: { reason: reason ?? "clear" },
             final: true,
           },
@@ -270,12 +280,18 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        const turnId = ensureRelayTurn(relay);
+        const outputTurnId = outputOwnership.resolve(false);
+        if (!outputTurnId) {
+          if (outputOwnership.phase !== "owned") {
+            bridgeRef.current?.acknowledgeMark(markName);
+          }
+          return;
+        }
         emit(
           { relaySessionId, type: "mark", markName },
           {
             type: "output.audio.done",
-            turnId,
+            turnId: outputTurnId,
             payload: { markName },
             final: true,
           },
@@ -294,7 +310,10 @@ export function createTalkRealtimeRelaySession(
         continuityResetActive = true;
         ready = false;
         currentOutputItemId = undefined;
-        currentOutputResponseId = undefined;
+        outputOwnership.outputGeneration += 1;
+        outputOwnership.drain?.resolve();
+        outputOwnership.phase = "unowned";
+        outputOwnership.turnId = outputOwnership.responseId = undefined;
         const talkEvent = resetTalkRealtimeRelayContinuity(relay, event.type);
         if (!getActiveRelay()) {
           return;
@@ -311,6 +330,13 @@ export function createTalkRealtimeRelaySession(
       }
       if (event.type === "session.created") {
         continuityResetActive = false;
+      }
+      if (
+        (event.type === "response.done" || event.type === "response.cancelled") &&
+        outputOwnership.finish(event.responseId, true) === "cancelled"
+      ) {
+        currentOutputItemId = undefined;
+        return;
       }
       if (event.type === "tool.call.cancelled" && event.itemId) {
         const relayCallId = cancelTalkRealtimeRelayProviderToolCall(relay, event.itemId);
@@ -330,7 +356,7 @@ export function createTalkRealtimeRelaySession(
         event.type === "response.output_audio.delta"
       ) {
         currentOutputItemId = event.itemId ?? currentOutputItemId;
-        currentOutputResponseId = event.responseId ?? currentOutputResponseId;
+        outputOwnership.responseId = event.responseId ?? outputOwnership.responseId;
       }
     },
     onResponseDone: (outcome) => {
@@ -338,21 +364,27 @@ export function createTalkRealtimeRelaySession(
       if (!relay) {
         return;
       }
+      const responseId = outcome.responseId ?? outputOwnership.responseId;
+      const disposition = outputOwnership.finish(responseId);
+      if (disposition === "ignore") {
+        return;
+      }
+      if (disposition === "cancelled") {
+        currentOutputItemId = undefined;
+        return;
+      }
       const terminalTalkEvent = harness.talk.recentEvents.at(-1);
       broadcastToOwner(params.context, params.connId, {
         relaySessionId,
         type: "audioDone",
         ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
-        ...((outcome.responseId ?? currentOutputResponseId)
-          ? { responseId: outcome.responseId ?? currentOutputResponseId }
-          : {}),
+        ...(responseId ? { responseId } : {}),
         ...(terminalTalkEvent &&
         (terminalTalkEvent.type === "turn.ended" || terminalTalkEvent.type === "turn.cancelled")
           ? { talkEvent: terminalTalkEvent }
           : {}),
       });
       currentOutputItemId = undefined;
-      currentOutputResponseId = undefined;
       if (outcome.status === "failed" || outcome.status === "incomplete") {
         const issue = realtimeRelayIssue({
           message: outcome.message,
@@ -374,10 +406,17 @@ export function createTalkRealtimeRelaySession(
       if (!relay) {
         return;
       }
+      if (role === "assistant" && outputOwnership.phase === "cancelling") {
+        return;
+      }
       if (final && !enqueueRelayVoiceTranscript(relay, role, text)) {
         return;
       }
-      const turnId = ensureRelayTurn(relay);
+      const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
+      if (role === "assistant" && !outputTurnId) {
+        return;
+      }
+      const turnId = outputTurnId ?? ensureRelayTurn(relay);
       const eventType =
         role === "assistant"
           ? final
@@ -414,6 +453,13 @@ export function createTalkRealtimeRelaySession(
       if (!relay) {
         return;
       }
+      if (outputOwnership.phase === "cancelling") {
+        return;
+      }
+      const outputTurnId = outputOwnership.resolve(true);
+      if (!outputTurnId) {
+        return;
+      }
       const providerCallId = toolCall.callId;
       const relayCallId = adoptRelayProviderToolCallId(relay, providerCallId);
       if (!relayCallId) {
@@ -446,7 +492,6 @@ export function createTalkRealtimeRelaySession(
         }
         shouldSubmitWorkingResult = true;
       }
-      const turnId = ensureRelayTurn(relay);
       emit(
         {
           relaySessionId,
@@ -460,12 +505,12 @@ export function createTalkRealtimeRelaySession(
           type: "tool.call",
           itemId: toolCall.itemId,
           callId: relayCallId,
-          turnId,
+          turnId: outputTurnId,
           payload: { name: toolCall.name, args: toolCall.args },
         },
       );
       if (shouldSubmitWorkingResult) {
-        return submitRealtimeAgentConsultWorkingResponse(relay, relayCallId, turnId);
+        return submitRealtimeAgentConsultWorkingResponse(relay, relayCallId, outputTurnId);
       }
     },
     onReady: () => {
@@ -573,6 +618,7 @@ export function createTalkRealtimeRelaySession(
     context: params.context,
     bridge,
     harness,
+    outputOwnership,
     sessionKey: initialSessionKey,
     ...(initialSessionKey
       ? {

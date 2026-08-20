@@ -5948,6 +5948,7 @@ export const en: TranslationMap = {
       dictationProviderUnavailable: "No transcription provider is configured for dictation.",
       dictationRecording: "Recording {elapsed}",
       dictationReleaseToInsert: "Release to insert dictation",
+      realtimeTalkMissingTurnIdentity: "Realtime output is missing its turn identity.",
       realtimeTalkRequiresMicrophone: "Realtime voice input requires browser microphone access.",
       selectedMicrophoneUnavailable:
         "The selected microphone is unavailable. Choose another input or System default.",

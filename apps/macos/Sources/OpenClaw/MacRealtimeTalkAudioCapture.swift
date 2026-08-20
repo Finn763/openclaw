@@ -265,7 +265,9 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
                 "realtime input restart failed: \(error.localizedDescription, privacy: .public)")
             let onFailure = self.onFailure
             self.stop()
-            onFailure?("Realtime microphone became unavailable: \(error.localizedDescription)")
+            onFailure?(String(
+                format: String(localized: "Realtime microphone became unavailable: %@"),
+                error.localizedDescription))
         }
     }
 

@@ -29953,6 +29953,10 @@
         {
           "kind": "ui-localized-call",
           "path": "apps/ios/Sources/Design/SettingsSystemAgentChat.swift"
+        },
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/ios/Sources/Voice/TalkModeManager.swift"
         }
       ]
     },
@@ -39427,6 +39431,28 @@
       ]
     },
     {
+      "id": "native.apple.48e407d88c565c02",
+      "source": "Realtime disconnected repeatedly — using native speech",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/TalkModeRuntime+Realtime.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.ab73f15b8147eb41",
+      "source": "Realtime disconnected — reconnecting…",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/TalkModeRuntime+Realtime.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.ca3a762269827f37",
       "source": "Realtime failed",
       "surface": "apple",
@@ -39449,6 +39475,17 @@
         {
           "kind": "ui-localized-call",
           "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/RealtimeTalkRelaySession.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.b5b843b6a0a96cc5",
+      "source": "Realtime microphone became unavailable: %@",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/MacRealtimeTalkAudioCapture.swift"
         }
       ]
     },

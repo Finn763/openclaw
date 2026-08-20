@@ -339,9 +339,18 @@ private func assertConfigLookupCannotRecreateRoute(
                 socketGeneration: socketGeneration)
         }
 
-        var iterator = events.makeAsyncIterator()
-        #expect(await iterator.next() != nil)
-        #expect(await iterator.next() == nil)
+        let terminalRead = Task {
+            var iterator = events.makeAsyncIterator()
+            let first = await iterator.next()
+            let terminal = await iterator.next()
+            return (first, terminal)
+        }
+        let (first, terminal) = try await AsyncTimeout.withTimeout(
+            seconds: 1,
+            onTimeout: { CancellationError() },
+            operation: { await terminalRead.value })
+        #expect(first != nil)
+        #expect(terminal == nil)
         await connection.shutdown()
     }
 
