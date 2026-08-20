@@ -2389,7 +2389,17 @@ body.update-dialog-open .sidebar-update-card__status {
   right: calc(var(--sidebar-child-session-toggle-width) + 4px);
 }
 
-/* Centered actions overlap both lines, so the full text column yields their width. */
+/* A 24px control centred on the 18px title line hangs into the row below, and
+   its hover fill would clip the top of the badges that now stay lit there. Two
+   line rows shrink the box to the line it sits on; the 14px glyph is unchanged
+   and coarse pointers keep the full 24px target. */
+.sidebar-recent-session:not(.sidebar-recent-session--child):not(
+    .sidebar-recent-session--single-line
+  )
+  .session-action {
+  height: var(--sidebar-session-title-line-height);
+}
+
 /* Only the title yields width to the actions. The second line keeps subtitle,
    badges, state and time visible, which is the point of moving the buttons up. */
 .sidebar-recent-session:not(.sidebar-recent-session--child):is(:hover, :focus-within)

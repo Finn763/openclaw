@@ -69,7 +69,7 @@ suite.define(() => {
     }
   });
 
-  it("keeps action-only text widest at rest and swaps active state for actions", async () => {
+  it("keeps action-only text widest at rest and keeps active state lit", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -140,18 +140,19 @@ suite.define(() => {
       await row.hover();
       // The spinner is the signal that the row is still working; hovering to
       // reach the actions must not take it away on a two-line row.
-      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => state.locator(".session-run-spinner").isVisible()).toBe(true);
-      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
 
-      const [nameBounds, pinBounds, menuBounds] = await Promise.all([
+      const [nameBounds, pinBounds, menuBounds, stateBounds] = await Promise.all([
         row.locator(".sidebar-recent-session__name").boundingBox(),
         pin.boundingBox(),
         menu.boundingBox(),
+        state.boundingBox(),
       ]);
-      if (!nameBounds || !pinBounds || !menuBounds) {
+      if (!nameBounds || !pinBounds || !menuBounds || !stateBounds) {
         throw new Error("Expected visible hovered action geometry");
       }
       expect(nameBounds.y + nameBounds.height / 2).toBeCloseTo(
@@ -159,10 +160,13 @@ suite.define(() => {
         1,
       );
       expect(pinBounds.x + pinBounds.width).toBeLessThanOrEqual(menuBounds.x);
+      // The reservation slides the endcap clear instead of hiding it, so the
+      // run spinner and unread dot survive the hover that reveals the buttons.
+      expect(stateBounds.x + stateBounds.width).toBeLessThanOrEqual(pinBounds.x);
 
       await page.mouse.move(0, 0);
       await pin.focus();
-      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
 
@@ -440,6 +444,13 @@ suite.define(() => {
         throw new Error("Expected visible combined session action geometry");
       }
       expect(textBounds.width).toBeCloseTo(restingTextBounds.width, 1);
+      // A control taller than the title line would paint its hover fill over the
+      // badges that now stay lit directly below it.
+      const detailsBounds = await row.locator(".sidebar-recent-session__details").boundingBox();
+      if (!detailsBounds) {
+        throw new Error("Expected a visible second line");
+      }
+      expect(pinBounds.y + pinBounds.height).toBeLessThanOrEqual(detailsBounds.y);
       // The actions ride the title's midline now, and the title ends before them.
       expect(
         Math.abs(nameBounds.y + nameBounds.height / 2 - (pinBounds.y + pinBounds.height / 2)),
