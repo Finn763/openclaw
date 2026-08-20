@@ -645,6 +645,49 @@ struct TalkModeRuntimeSpeechTests {
         await runtime.setEnabled(false)
     }
 
+    @Test func `blocked fallback projection cannot overwrite a successor`() async throws {
+        let runtime = TalkModeRuntime()
+        let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()
+        let recognitionGeneration = try #require(await runtime._test_beginRecognitionAttempt(
+            lifecycleGeneration: lifecycleGeneration))
+        let relayGeneration = await runtime.realtimeRelayGeneration
+        await MainActor.run {
+            TalkModeController.shared.updatePartialTranscript("successor")
+        }
+        let mainActorProbe = RuntimeCommitProbe()
+        let releaseMainActor = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            mainActorProbe.record("blocked")
+            releaseMainActor.wait()
+        }
+        for _ in 0..<100 where mainActorProbe.values().isEmpty {
+            await Task.yield()
+        }
+        #expect(mainActorProbe.values() == ["blocked"])
+
+        let staleCommit = Task {
+            await runtime.commitNativeFallback(
+                lifecycleGeneration: lifecycleGeneration,
+                recognitionGeneration: recognitionGeneration,
+                relayGeneration: relayGeneration,
+                status: "stale fallback")
+        }
+        for _ in 0..<100 where await runtime.phase != .listening {
+            await Task.yield()
+        }
+        #expect(await runtime.phase == .listening)
+        let successor = Task { await runtime.setEnabled(false) }
+        for _ in 0..<100 where await runtime.realtimeRelayGeneration == relayGeneration {
+            await Task.yield()
+        }
+        #expect(await runtime.realtimeRelayGeneration != relayGeneration)
+        releaseMainActor.signal()
+
+        #expect(await staleCommit.value == false)
+        await successor.value
+        #expect(await MainActor.run { TalkModeController.shared.partialTranscript }.isEmpty)
+    }
+
     @Test func `stale recognition attempt preserves current owner`() async {
         let runtime = TalkModeRuntime()
         let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()

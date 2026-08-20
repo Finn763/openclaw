@@ -146,13 +146,18 @@ struct RealtimePCMStreamingAudioPlayerTests {
         let player = makeRealtimePCMPlayer(backend: backend)
         var firstContinuation: AsyncThrowingStream<Data, Error>.Continuation?
         let firstStream = AsyncThrowingStream<Data, Error> { firstContinuation = $0 }
-        let firstPlayback = Task { await player.play(stream: firstStream, sampleRate: self.sampleRate) }
+        let firstProbe = RealtimePCMPlaybackResultProbe()
+        let firstPlayback = Task {
+            let result = await player.play(stream: firstStream, sampleRate: self.sampleRate)
+            firstProbe.record(result)
+        }
         firstContinuation?.yield(Data(repeating: 1, count: self.frameBytes))
         await waitUntil { backend.completions.count == 1 }
         let staleCompletion = backend.takeCompletion()
 
         _ = player.stop()
-        #expect(await !(firstPlayback.value).finished)
+        await firstPlayback.value
+        #expect(firstProbe.results.map(\.finished) == [false])
 
         var secondContinuation: AsyncThrowingStream<Data, Error>.Continuation?
         let secondStream = AsyncThrowingStream<Data, Error> { secondContinuation = $0 }
@@ -169,6 +174,7 @@ struct RealtimePCMStreamingAudioPlayerTests {
         await Task.yield()
         #expect(backend.scheduledFrames.count == 4)
         #expect(backend.completions.count == 3)
+        #expect(firstProbe.results.map(\.finished) == [false])
         #expect(probe.results.isEmpty)
         backend.complete()
         await waitUntil { backend.scheduledFrames.count == 5 }

@@ -26,7 +26,6 @@ import {
   createTalkRealtimeRelayIssue as realtimeRelayIssue,
 } from "./talk-realtime-relay-issues.js";
 import {
-  abortRelayAgentRuns,
   cancelTalkRealtimeRelayProviderToolCall,
   closeRelaySession,
   closeTalkRealtimeRelaySessionsForConnection,
@@ -55,14 +54,8 @@ import {
   MAX_RELAY_TOOL_CALL_IDENTITY_BYTES,
   RelayToolCallLedger,
 } from "./talk-realtime-relay-tool-call-ledger.js";
-import {
-  closeRelayVoiceSession,
-  enqueueRelayVoiceTranscript,
-} from "./talk-realtime-relay-voice.js";
-import {
-  forgetUnifiedTalkSession,
-  registerTalkConnectionCleanup,
-} from "./talk-session-registry.js";
+import { enqueueRelayVoiceTranscript } from "./talk-realtime-relay-voice.js";
+import { registerTalkConnectionCleanup } from "./talk-session-registry.js";
 
 const MAX_PROVIDER_OUTPUT_AUDIO_BYTES = 1_048_576;
 const RELAY_OUTPUT_AUDIO_FRAME_BYTES = 960;
@@ -544,19 +537,13 @@ export function createTalkRealtimeRelaySession(
     },
     onClose: (reason) => {
       void runControl.close();
-      const active = relaySessions.get(relaySessionId);
-      if (!active || active !== relayRef.current) {
+      const active = getActiveRelay();
+      if (!active) {
         if (!relayRef.current) {
           constructionTerminal.current ??= { kind: "close", reason };
         }
         return;
       }
-      active.harness.close();
-      relaySessions.delete(relaySessionId);
-      forgetUnifiedTalkSession(relaySessionId);
-      clearTimeout(active.cleanupTimer);
-      abortRelayAgentRuns(active, "relay-closed");
-      void closeRelayVoiceSession(active);
       if (!ready && !failureEmitted) {
         const issue = realtimeRelayIssue({
           message: "Realtime provider closed before the session became ready.",
@@ -570,10 +557,7 @@ export function createTalkRealtimeRelaySession(
           final: true,
         });
       }
-      emit(
-        { relaySessionId, type: "close", reason },
-        { type: "session.closed", payload: { reason }, final: true },
-      );
+      closeRelaySession(active, "completed");
     },
   });
   bridgeRef.current = bridge;

@@ -39335,6 +39335,17 @@
       ]
     },
     {
+      "id": "native.apple.11f6f4fa597f9df4",
+      "source": "Realtime Talk requested an invalid audio sample rate",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/MacRealtimeTalkAudioCapture.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.400963cb08a3c253",
       "source": "Realtime Voice",
       "surface": "apple",
@@ -39486,6 +39497,17 @@
         {
           "kind": "ui-localized-call",
           "path": "apps/macos/Sources/OpenClaw/MacRealtimeTalkAudioCapture.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.96ece1b431ac3f96",
+      "source": "Realtime output cancellation failed: %@",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/RealtimeTalkRelaySession.swift"
         }
       ]
     },
@@ -42871,6 +42893,28 @@
         {
           "kind": "ui-localized-call",
           "path": "apps/macos/Sources/OpenClaw/QuickChatWindowPicker.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.d40597f2d391f8cf",
+      "source": "Selected audio input has no usable Float32 format",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/MacRealtimeTalkAudioCapture.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.8a4aa2d658ca95a3",
+      "source": "Selected input and system default are unavailable",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/macos/Sources/OpenClaw/MacRealtimeTalkAudioCapture.swift"
         }
       ]
     },

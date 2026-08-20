@@ -1929,7 +1929,7 @@ describe("talk realtime gateway relay", () => {
     expectRecordFields(closePayload, {
       relaySessionId: session.relaySessionId,
       type: "close",
-      reason: "error",
+      reason: "completed",
     });
   });
 
@@ -2934,6 +2934,41 @@ describe("talk realtime gateway relay", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  it("settles an in-flight exact-response cancellation once when the provider closes", async () => {
+    let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+    const close = vi.fn();
+    const provider = createIdleRelayProvider();
+    provider.createBridge = (request) => {
+      bridgeRequest = request;
+      return makeRelayTransport({ close });
+    };
+    const { broadcastToConnIds, session } = createAbortableRelayRunFixture(provider);
+    bridgeRequest?.onEvent?.({
+      direction: "server",
+      type: "response.created",
+      responseId: "response-1",
+    });
+    const cancellation = cancelTalkRealtimeRelayTurn({
+      relaySessionId: session.relaySessionId,
+      connId: "conn-1",
+      turnId: ensureActiveRelayTurnId(session.relaySessionId),
+    });
+
+    bridgeRequest?.onClose?.("completed");
+
+    await expect(cancellation).resolves.toEqual({
+      status: "applied",
+      turnId: expect.any(String),
+    });
+    expect(close).toHaveBeenCalledOnce();
+    expect(relaySessions.has(session.relaySessionId)).toBe(false);
+    expect(
+      broadcastToConnIds.mock.calls.filter(
+        (call) => (call[1] as { type?: string }).type === "close",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("closes an exact-response relay when cancellation is never confirmed", async () => {
     vi.useFakeTimers();
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
@@ -3038,6 +3073,45 @@ describe("talk realtime gateway relay", () => {
     expect(relaySessions.has(session.relaySessionId)).toBe(false);
     expect(close).toHaveBeenCalledOnce();
     pending.resolve();
+  });
+
+  it("provider close owns turn-bound drain teardown and late drain cannot touch a successor", async () => {
+    const pending = createDeferred();
+    let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+    const close = vi.fn();
+    const provider = createIdleRelayProvider();
+    provider.createBridge = (request) => {
+      bridgeRequest = request;
+      return makeRelayTransport({ close, submitToolResult: vi.fn(() => pending.promise) });
+    };
+    const { session } = createAbortableRelayRunFixture(provider);
+    const cancellation = cancelTalkRealtimeRelayTurn({
+      relaySessionId: session.relaySessionId,
+      connId: "conn-1",
+      turnId: ensureActiveRelayTurnId(session.relaySessionId),
+    });
+
+    bridgeRequest?.onClose?.("completed");
+    await expect(cancellation).resolves.toEqual({
+      status: "applied",
+      turnId: expect.any(String),
+    });
+    expect(close).toHaveBeenCalledOnce();
+
+    const successor = createTalkRealtimeRelaySession({
+      context: { broadcastToConnIds: vi.fn() } as never,
+      connId: "conn-1",
+      provider: createIdleRelayProvider(),
+      providerConfig: {},
+      instructions: "brief",
+      tools: [],
+    });
+    pending.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(relaySessions.has(successor.relaySessionId)).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("terminally satisfies a late normal result after turn cancellation without a new turn", async () => {

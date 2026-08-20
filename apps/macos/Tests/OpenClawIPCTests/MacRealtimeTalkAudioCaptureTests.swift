@@ -56,7 +56,7 @@ struct MacRealtimeTalkAudioCaptureTests {
     }
 
     @Test func `delivery gate invalidates prior capture generations`() {
-        let gate = MacRealtimeTalkCaptureDeliveryGate()
+        let gate = TalkGenerationDeliveryGate()
         let first = gate.activate()
         var deliveries = 0
 
@@ -76,7 +76,7 @@ struct MacRealtimeTalkAudioCaptureTests {
         let buffer = try makeFloatBuffer(
             sampleRate: 48000,
             channels: [[0, 0.5, -0.5, 0]])
-        let gate = MacRealtimeTalkCaptureDeliveryGate()
+        let gate = TalkGenerationDeliveryGate()
         let token = gate.activate()
         let sink = RealtimeTalkFrameSink()
         let handler = MacRealtimeTalkTapHandlerFactory.make(

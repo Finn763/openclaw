@@ -91,7 +91,11 @@ actor TalkModeRuntime {
     var realtimeSessionReadyAt: Date?
     var rapidRealtimeRestartCount = 0
     var bypassRealtimeOnNextStart = false
-    var realtimeRelayGeneration: UInt64 = 0
+    let realtimeRelayDeliveryGate = TalkGenerationDeliveryGate()
+    var realtimeRelayGeneration: UInt64 = 0 {
+        didSet { _ = self.realtimeRelayDeliveryGate.activate() }
+    }
+
     var realtimeRelayStartGeneration: UInt64?
     private var pendingRealtimeRelayStartLifecycleGeneration: Int?
     var realtimeRestartGeneration: UInt64 = 0
@@ -367,11 +371,12 @@ actor TalkModeRuntime {
         }
         guard ownsFallback() else { return false }
         self.phase = .listening
-        await MainActor.run {
-            if let status { TalkModeController.shared.updatePartialTranscript(status) }
-            TalkModeController.shared.updatePhase(.listening)
+        return await MainActor.run {
+            self.realtimeRelayDeliveryGate.deliver(ifActive: relayGeneration) {
+                if let status { TalkModeController.shared.updatePartialTranscript(status) }
+                TalkModeController.shared.updatePhase(.listening)
+            }
         }
-        return ownsFallback()
     }
 
     func inputDeviceSelectionDidChange() async {

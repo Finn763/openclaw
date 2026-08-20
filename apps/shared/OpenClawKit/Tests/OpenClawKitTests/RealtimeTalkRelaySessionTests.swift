@@ -598,6 +598,7 @@ extension RealtimeTalkRelaySessionTests {
     func `non applied cancellation retires the wait without reopening the old turn`(
         status: String) async
     {
+        let barrier = RealtimeRelayStartupBarrier()
         var speakingStates: [Bool] = []
         let requests = RealtimeRelayStartupRequestLog()
         let session = RealtimeTalkRelaySession(
@@ -605,6 +606,7 @@ extension RealtimeTalkRelaySessionTests {
                 subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
                 request: { method, params, _ in
                     await requests.record(method: method, params: params)
+                    await barrier.suspend()
                     return Data("{\"status\":\"\(status)\"}".utf8)
                 }),
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
@@ -616,12 +618,10 @@ extension RealtimeTalkRelaySessionTests {
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
 
         #expect(session.cancelOutput())
-        while await requests.snapshot().isEmpty {
-            await Task.yield()
-        }
-        for _ in 0..<5 {
-            await Task.yield()
-        }
+        await barrier.waitUntilEntered()
+        #expect(await requests.snapshot().map(\.method) == ["talk.session.cancelOutput"])
+        await barrier.release()
+        try? await Task.sleep(for: .milliseconds(10))
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
 
@@ -783,12 +783,13 @@ extension RealtimeTalkRelaySessionTests {
         var issues: [RealtimeTalkRelayIssue] = []
         var terminations: [RealtimeTalkRelayTermination] = []
         var speakingStates: [Bool] = []
+        let cancellationError = URLError(.cannotConnectToHost)
         let transport = RealtimeTalkRelayTransport(
             subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
             request: { method, params, _ in
                 await requests.record(method: method, params: params)
                 if method == "talk.session.cancelOutput" {
-                    throw URLError(.cannotConnectToHost)
+                    throw cancellationError
                 }
                 return Data("{\"ok\":true}".utf8)
             })
@@ -817,6 +818,9 @@ extension RealtimeTalkRelaySessionTests {
 
         #expect(issues.map(\.code) == ["realtime_output_cancel_failed"])
         #expect(issues.map(\.phase) == ["output-cancel"])
+        #expect(issues.first?.message == String(
+            format: String(localized: "Realtime output cancellation failed: %@"),
+            cancellationError.localizedDescription))
         #expect(terminations == [.outputCancellationFailed])
         #expect(await requests.snapshot().map(\.method) == [
             "talk.session.cancelOutput",

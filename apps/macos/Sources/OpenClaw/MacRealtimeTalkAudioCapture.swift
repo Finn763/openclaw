@@ -11,7 +11,7 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
 
     private let logger = Logger(subsystem: "ai.openclaw", category: "talk.realtime.capture")
     private let selectedInputUID: @MainActor () -> String?
-    private let deliveryGate = MacRealtimeTalkCaptureDeliveryGate()
+    private let deliveryGate = TalkGenerationDeliveryGate()
 
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
@@ -773,9 +773,9 @@ enum MacRealtimeTalkAudioCaptureError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidTargetSampleRate: "Realtime Talk requested an invalid audio sample rate"
-        case .inputUnavailable: "Selected input and system default are unavailable"
-        case .invalidInputFormat: "Selected audio input has no usable Float32 format"
+        case .invalidTargetSampleRate: String(localized: "Realtime Talk requested an invalid audio sample rate")
+        case .inputUnavailable: String(localized: "Selected input and system default are unavailable")
+        case .invalidInputFormat: String(localized: "Selected audio input has no usable Float32 format")
         }
     }
 }
@@ -807,7 +807,7 @@ enum MacRealtimeTalkTapHandlerFactory {
     /// executor and trap when Core Audio calls it off the main thread.
     nonisolated static func make(
         targetSampleRate: Double,
-        deliveryGate: MacRealtimeTalkCaptureDeliveryGate,
+        deliveryGate: TalkGenerationDeliveryGate,
         deliveryToken: UInt64,
         onAudio: @escaping @Sendable (RealtimeTalkAudioFrame) -> Void) -> AVAudioNodeTapBlock
     {
@@ -825,10 +825,10 @@ enum MacRealtimeTalkTapHandlerFactory {
     }
 }
 
-final class MacRealtimeTalkCaptureDeliveryGate: @unchecked Sendable {
+final class TalkGenerationDeliveryGate: @unchecked Sendable {
     private let lock = NSLock()
     private var generation: UInt64 = 0
-    private var active = false
+    private var active = true
 
     func activate() -> UInt64 {
         self.lock.lock()
@@ -851,10 +851,12 @@ final class MacRealtimeTalkCaptureDeliveryGate: @unchecked Sendable {
         return self.active && self.generation == generation
     }
 
-    func deliver(ifActive generation: UInt64, _ body: () -> Void) {
+    @discardableResult
+    func deliver(ifActive generation: UInt64, _ body: () -> Void) -> Bool {
         self.lock.lock()
         defer { self.lock.unlock() }
-        guard self.active, self.generation == generation else { return }
+        guard self.active, self.generation == generation else { return false }
         body()
+        return true
     }
 }

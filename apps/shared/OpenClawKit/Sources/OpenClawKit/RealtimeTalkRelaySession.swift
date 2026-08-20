@@ -1203,7 +1203,9 @@ extension RealtimeTalkRelaySession {
                 guard let self, self.isCurrentOutputCancellation(cancellationGeneration) else { return }
                 let issue = RealtimeTalkRelayIssue(
                     code: "realtime_output_cancel_failed",
-                    message: error.localizedDescription,
+                    message: String(
+                        format: String(localized: "Realtime output cancellation failed: %@"),
+                        error.localizedDescription),
                     provider: self.options.provider,
                     model: self.options.model,
                     transport: "gateway-relay",

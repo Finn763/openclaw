@@ -182,8 +182,10 @@ extension TalkModeRuntime {
         self.logger.error(
             "talk realtime issue code=\(issue.code, privacy: .public) " +
                 "message=\(issue.message, privacy: .public)")
-        await MainActor.run {
-            TalkModeController.shared.updatePartialTranscript(issue.message)
+        _ = await MainActor.run {
+            self.realtimeRelayDeliveryGate.deliver(ifActive: relayGeneration) {
+                TalkModeController.shared.updatePartialTranscript(issue.message)
+            }
         }
     }
 
