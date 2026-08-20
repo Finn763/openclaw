@@ -102,6 +102,16 @@ suite.define(() => {
         );
         expect(browserErrors).toEqual([]);
 
+        await composer.press("ArrowUp");
+        await composer.press("Tab");
+        await expect.poll(() => composer.inputValue()).toBe("/think ultra");
+        await composer.press("Enter");
+        const patchRequest = await gateway.waitForRequest("sessions.patch");
+        expect(patchRequest.params).toMatchObject({
+          key: "main",
+          thinkingLevel: "ultra",
+        });
+
         const artifactDir = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
         if (artifactDir) {
           await fs.mkdir(artifactDir, { recursive: true });

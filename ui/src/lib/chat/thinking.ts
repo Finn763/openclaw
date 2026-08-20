@@ -73,8 +73,9 @@ export function resolveThinkingCommandArgOptionsForSession(
 export function formatThinkingCommandOptionsForSession(
   session: ChatThinkingTarget | undefined,
   defaults?: SessionsListResult["defaults"],
+  catalog: readonly ModelCatalogEntry[] = [],
 ): string {
-  const options = resolveThinkingLevelOptionsForSession(session, defaults)
+  const options = resolveThinkingLevelOptionsForSession(session, defaults, catalog)
     .map((level) => level.label)
     .join(", ");
   return options.split(", ").includes("default") ? options : `default, ${options}`;
@@ -84,13 +85,14 @@ export function resolveThinkingLevelInput(
   rawLevel: string,
   session: ChatThinkingTarget | undefined,
   defaults: ThinkingSessionDefaults,
+  catalog: readonly ModelCatalogEntry[] = [],
 ): string | undefined {
   const normalized = normalizeThinkLevel(rawLevel);
   if (normalized) {
     return normalized;
   }
   const rawKey = normalizeLowercaseStringOrEmpty(rawLevel);
-  return resolveThinkingLevelOptionsForSession(session, defaults)
+  return resolveThinkingLevelOptionsForSession(session, defaults, catalog)
     .map((option) => ({
       id: normalizeThinkLevel(option.id) ?? normalizeLowercaseStringOrEmpty(option.id),
       label: normalizeLowercaseStringOrEmpty(option.label),
@@ -102,8 +104,9 @@ export function isThinkingLevelOptionForSession(
   session: ChatThinkingTarget | undefined,
   defaults: ThinkingSessionDefaults,
   level: string,
+  catalog: readonly ModelCatalogEntry[] = [],
 ): boolean {
-  return resolveThinkingLevelOptionsForSession(session, defaults).some((option) => {
+  return resolveThinkingLevelOptionsForSession(session, defaults, catalog).some((option) => {
     const id = normalizeThinkLevel(option.id) ?? normalizeLowercaseStringOrEmpty(option.id);
     return id === level || normalizeThinkLevel(option.label) === level;
   });
