@@ -231,6 +231,31 @@ describe("session lifecycle state", () => {
     expect(completed.lifecycleRunId).toBeUndefined();
   });
 
+  it("keeps provider lifecycle ownership while recording the client terminal run", async () => {
+    const started = await persistLifecycle(
+      { sessionId: "session-id", updatedAt: 900 },
+      {
+        ts: 1_000,
+        sessionId: "session-id",
+        runId: "provider-run",
+        clientRunId: "client-run",
+        data: { phase: "start", startedAt: 1_000 },
+      },
+    );
+    expect(started.lifecycleRunId).toBe("provider-run");
+
+    const completed = await persistLifecycle(started, {
+      ts: 2_000,
+      sessionId: "session-id",
+      runId: "provider-run",
+      clientRunId: "client-run",
+      data: { phase: "end", startedAt: 1_000, endedAt: 2_000 },
+    });
+
+    expect(completed.lifecycleRunId).toBeUndefined();
+    expect(completed.lastRunId).toBe("client-run");
+  });
+
   it("clears inherited run ownership when a start event has no run id", async () => {
     const started = await persistLifecycle(
       {

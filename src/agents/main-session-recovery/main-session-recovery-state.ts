@@ -307,6 +307,7 @@ export function transitionMainSessionRecovery(
       }
       entry.status = "running";
       entry.lifecycleRunId = undefined;
+      entry.lastRunId = undefined;
       entry.abortedLastRun = true;
       if (command.resetRuntime) {
         entry.startedAt = undefined;
@@ -484,6 +485,7 @@ export function transitionMainSessionRecovery(
       });
       entry.abortedLastRun = false;
       entry.lifecycleRunId = command.runId;
+      entry.lastRunId = undefined;
       recordLifecycleFence(entry, {
         runId: command.runId,
         lifecycleGeneration: command.lifecycleGeneration,
@@ -515,6 +517,7 @@ export function transitionMainSessionRecovery(
       }
       entry.status = "running";
       entry.lifecycleRunId = undefined;
+      entry.lastRunId = undefined;
       entry.abortedLastRun = true;
       entry.startedAt = undefined;
       entry.endedAt = undefined;

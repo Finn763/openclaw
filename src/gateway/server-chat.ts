@@ -887,7 +887,7 @@ export function createAgentEventHandler({
         const persistence = persistGatewaySessionLifecycleEventForEvent({
           sessionKey,
           agentId: sessionAgentId,
-          event: evt,
+          event: { ...evt, clientRunId: eventRunId },
         });
         trackTrackedRunTerminalPersistence?.({
           runId: evt.runId,
@@ -1764,7 +1764,7 @@ export function createAgentEventHandler({
       void persistGatewaySessionLifecycleEventForEvent({
         sessionKey,
         agentId: sessionAgentId,
-        event: evt,
+        event: { ...evt, clientRunId: eventRunId },
       }).catch((err: unknown) => {
         // Surface the swallowed start-phase persistence failure: a silent write
         // failure drops the run's start marker from restart-recovery accounting
