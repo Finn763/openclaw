@@ -75,6 +75,7 @@ export interface SessionListHost {
   >;
   readonly sidebarMenus: Pick<
     SidebarMenusController,
+    | "catalogMenu"
     | "catalogViewMenuPosition"
     | "openCatalogViewMenu"
     | "openSessionGroupMenu"

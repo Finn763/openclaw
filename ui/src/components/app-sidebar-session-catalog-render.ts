@@ -22,6 +22,7 @@ import { sessionNavigationTarget } from "../lib/sessions/route-navigation.ts";
 import type { NewSessionTarget } from "../pages/new-session/location.ts";
 import {
   formatSidebarTimestamp,
+  normalizeCatalogTimestamp,
   type CatalogBackingSessionDisplay,
   type CatalogSessionMenuRequest,
   visibleCatalogHosts,
@@ -74,6 +75,7 @@ type SessionCatalogGroupsParams = {
     y: number,
     trigger?: HTMLElement,
   ) => void;
+  isMenuOpen: (key: CatalogSessionKey) => boolean;
 };
 
 function renderSessionRunSpinner(showTitle = true) {
@@ -394,11 +396,9 @@ function renderCatalogSessionRow(
   params: SessionCatalogGroupsParams,
   projectChild = false,
 ) {
-  const rawTimestamp = session.recencyAt ?? session.updatedAt ?? session.createdAt;
-  const timestamp =
-    typeof rawTimestamp === "number" && rawTimestamp < 1_000_000_000_000
-      ? rawTimestamp * 1000
-      : rawTimestamp;
+  const timestamp = normalizeCatalogTimestamp(
+    session.recencyAt ?? session.updatedAt ?? session.createdAt,
+  );
   const adoptedRow = session.sessionKey ? liveRowsByKey.get(session.sessionKey) : undefined;
   if (adoptedRow) {
     const label = session.name || session.threadId;
@@ -514,6 +514,7 @@ function renderCatalogSessionRow(
             title=${t("chat.sidebar.openSessionMenu")}
             aria-label=${t("chat.sidebar.openSessionMenu")}
             aria-haspopup="menu"
+            aria-expanded=${String(params.isMenuOpen(catalogKey))}
             @click=${(event: MouseEvent) => {
               event.stopPropagation();
               const trigger = event.currentTarget as HTMLElement;
