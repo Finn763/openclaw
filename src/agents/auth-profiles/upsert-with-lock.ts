@@ -74,6 +74,7 @@ type PersistAuthProfileBatchParams = {
   }[];
   order?: Readonly<Record<string, readonly string[]>>;
   agentDir?: string;
+  resolveProfileOwners?: boolean;
   stateDir?: string;
 };
 
@@ -106,13 +107,14 @@ export async function persistAuthProfileBatch(
 
   const groups = new Map<string | undefined, typeof dedupedProfiles>();
   for (const entry of dedupedProfiles) {
-    const ownerAgentDir = entry.resetFailureState
-      ? resolvePersistedAuthProfileOwnerAgentDir({
-          agentDir: params.agentDir,
-          profileId: entry.profileId,
-          stateDir: params.stateDir,
-        })
-      : params.agentDir;
+    const ownerAgentDir =
+      entry.resetFailureState && params.resolveProfileOwners
+        ? resolvePersistedAuthProfileOwnerAgentDir({
+            agentDir: params.agentDir,
+            profileId: entry.profileId,
+            stateDir: params.stateDir,
+          })
+        : params.agentDir;
     const group = groups.get(ownerAgentDir) ?? [];
     group.push(entry);
     groups.set(ownerAgentDir, group);
@@ -229,6 +231,13 @@ async function persistAuthProfileBatchForAgent(
           },
           database,
         );
+        const persisted = loadPersistedAuthProfileStore(params.agentDir, { database });
+        for (const profileId of appliedUsageStats.keys()) {
+          const stats = persisted?.usageStats?.[profileId];
+          if (stats) {
+            appliedUsageStats.set(profileId, stats);
+          }
+        }
       }
     },
     { stateDir: params.stateDir },

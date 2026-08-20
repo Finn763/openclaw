@@ -793,6 +793,11 @@ describe("agents add command", () => {
         key: "sk-primary",
       });
       expect(authProfileMocks.persistBatch).toHaveBeenCalledOnce();
+      expect(authProfileMocks.persistBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profiles: [expect.objectContaining({ resetFailureState: true })],
+        }),
+      );
       expect(authChoiceMocks.warnIfModelConfigLooksOff).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),

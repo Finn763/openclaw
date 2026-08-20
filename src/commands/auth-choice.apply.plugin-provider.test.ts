@@ -112,8 +112,9 @@ const EXISTING_DEFAULT_MODEL = "amazon-bedrock/anthropic.claude-3-5-sonnet-20241
 function expectPersistedProfile(profileId: string, credential: AuthProfileCredential): void {
   expect(persistAuthProfileBatch).toHaveBeenCalledWith(
     expect.objectContaining({
-      profiles: [{ profileId, credential }],
+      profiles: [{ profileId, credential, resetFailureState: true }],
       agentDir: "/tmp/agent",
+      resolveProfileOwners: true,
     }),
   );
 }

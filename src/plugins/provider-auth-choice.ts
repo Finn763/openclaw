@@ -389,6 +389,7 @@ async function prepareProviderPluginAuthMethod(
     await persistAuthProfileBatch({
       profiles: profiles.map((profile) => ({ ...profile, resetFailureState: true })),
       agentDir,
+      resolveProfileOwners: true,
       stateDir: params.env?.OPENCLAW_STATE_DIR,
     });
     profilesPersisted = true;
@@ -397,10 +398,7 @@ async function prepareProviderPluginAuthMethod(
   return {
     config: nextConfig,
     ...(defaultModel ? { defaultModel } : {}),
-    authProfiles: result.profiles.map((profile) => ({
-      ...profile,
-      resetFailureState: true,
-    })),
+    authProfiles: result.profiles,
     persistAuthProfiles,
   };
 }

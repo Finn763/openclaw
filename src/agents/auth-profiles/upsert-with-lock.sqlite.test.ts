@@ -125,6 +125,52 @@ describe("auth profile batch persistence", () => {
     });
   });
 
+  it("resets completed-login state and restores it on rollback", async () => {
+    await withAgentDir(async (agentDir) => {
+      const profileId = "openai:existing";
+      const blockedUntil = Date.now() + 60_000;
+      saveAuthProfileStore(
+        {
+          version: 1,
+          profiles: { [profileId]: apiKey("sk-stale") },
+          usageStats: {
+            [profileId]: {
+              errorCount: 4,
+              failureCounts: { auth_permanent: 4 },
+              blockedUntil,
+              blockedReason: "subscription_limit",
+            },
+          },
+        },
+        agentDir,
+      );
+
+      const receipt = await persistAuthProfileBatch({
+        agentDir,
+        profiles: [{ ...profile(profileId, "sk-fresh"), resetFailureState: true }],
+      });
+
+      expect(loadPersistedAuthProfileStore(agentDir)).toMatchObject({
+        profiles: { [profileId]: { key: "sk-fresh" } },
+        usageStats: { [profileId]: { credentialGeneration: 1, errorCount: 0 } },
+      });
+
+      receipt.rollback();
+
+      expect(loadPersistedAuthProfileStore(agentDir)).toMatchObject({
+        profiles: { [profileId]: { key: "sk-stale" } },
+        usageStats: {
+          [profileId]: {
+            errorCount: 4,
+            failureCounts: { auth_permanent: 4 },
+            blockedUntil,
+            blockedReason: "subscription_limit",
+          },
+        },
+      });
+    });
+  });
+
   it("does not claim skipped non-replacing profiles or their order entries", async () => {
     await withAgentDir(async (agentDir) => {
       saveAuthProfileStore(

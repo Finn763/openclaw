@@ -404,7 +404,12 @@ export async function agentsAddCommand(
         if (authResult.retrySelection) {
           continue;
         }
-        stagedAuthProfiles.push(...authResult.authProfiles);
+        stagedAuthProfiles.push(
+          ...authResult.authProfiles.map((profile) => ({
+            ...profile,
+            resetFailureState: true,
+          })),
+        );
         if (authResult.agentModelOverride) {
           nextConfig = applyAgentConfig(nextConfig, {
             agentId,
