@@ -3276,7 +3276,9 @@ struct ChatViewModelTests {
         let (_, vm) = await makeViewModel(historyResponses: [historyPayload()])
 
         await MainActor.run {
-            vm.syncSessionRoutingContract("per-sender|main|unowned")
+            vm.syncDeliveryIdentity(
+                activeAgentId: nil,
+                sessionRoutingContract: "per-sender|main|unowned")
             #expect(vm.requiresExplicitAgentSelection)
         }
     }
@@ -3288,7 +3290,9 @@ struct ChatViewModelTests {
             agentSelectionRequired: true)
 
         await MainActor.run {
-            vm.syncSessionRoutingContract("opaque-routing-contract-v2")
+            vm.syncDeliveryIdentity(
+                activeAgentId: nil,
+                sessionRoutingContract: "opaque-routing-contract-v2")
             #expect(vm.requiresExplicitAgentSelection)
 
             vm.syncDeliveryIdentity(
@@ -3801,7 +3805,9 @@ struct ChatViewModelTests {
         }
 
         await MainActor.run {
-            vm.syncSessionRoutingContract("per-sender|work|ops")
+            vm.syncDeliveryIdentity(
+                activeAgentId: "ops",
+                sessionRoutingContract: "per-sender|work|ops")
         }
 
         try await waitUntil("replacement custom main history") {
@@ -9390,7 +9396,9 @@ struct ChatViewModelTests {
         }
 
         await MainActor.run {
-            vm.syncSessionRoutingContract("per-sender|work|alpha")
+            vm.syncDeliveryIdentity(
+                activeAgentId: "alpha",
+                sessionRoutingContract: "per-sender|work|alpha")
             vm.selectModel("openai/model-b")
         }
         try await Task.sleep(for: .milliseconds(50))
@@ -9437,7 +9445,11 @@ struct ChatViewModelTests {
             await transport.patchedModels() == ["openai/model-a"]
         }
 
-        await MainActor.run { vm.syncSessionRoutingContract(newContract) }
+        await MainActor.run {
+            vm.syncDeliveryIdentity(
+                activeAgentId: "alpha",
+                sessionRoutingContract: newContract)
+        }
         try await waitUntil("replacement route bootstraps") {
             await MainActor.run { vm.sessionId == "sess-new" }
         }
