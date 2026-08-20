@@ -571,7 +571,7 @@ suite.define(() => {
       sessionKey: "main",
       state: "delta",
     });
-    await page.getByText("Working on it.").waitFor();
+    await page.locator(".chat-thread-inner").getByText("Working on it.").waitFor();
 
     const runningRow = page.locator(".chat-tool-row--running");
     await runningRow.waitFor();
@@ -736,13 +736,13 @@ suite.define(() => {
         },
       });
 
-      const activity = page.locator(".chat-group--activity");
+      const status = page.locator(`.chat-activity-group__review-status[data-outcome="${outcome}"]`);
+      await status.waitFor();
+      const activity = status.locator(
+        "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' chat-activity-group ')][1]",
+      );
       const summary = activity.locator(".chat-activity-group__summary");
       await summary.waitFor();
-      const status = activity.locator(
-        `.chat-activity-group__review-status[data-outcome="${outcome}"]`,
-      );
-      await status.waitFor();
       expect(await activity.getByText(`Guardian ${outcome}`, { exact: true }).count()).toBe(0);
       expect(
         await page.getByText(`Automatic approval review ${outcome}`, { exact: false }).count(),

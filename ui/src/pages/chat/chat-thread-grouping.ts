@@ -13,7 +13,6 @@ import { extractTextCached } from "../../lib/chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../../lib/chat/message-normalizer.ts";
 import { senderIdentityKey } from "../../lib/chat/sender-label.ts";
 import { extractToolCardsCached } from "../../lib/chat/tool-cards.ts";
-import type { StreamRunRenderItem } from "./chat-agent-run-grouping.ts";
 import { resolveMessageToolUseId, resolveToolBlockId } from "./chat-thread-items.ts";
 import {
   assistantGroupIsForwardedBoundary,
@@ -484,8 +483,21 @@ export function coalesceToolActivityMessages(items: ChatItem[]): ChatItem[] {
 }
 
 type RenderChatItem = ChatItem | MessageGroup;
+export type StreamRunRenderItem = {
+  kind: "stream-run";
+  key: string;
+  runId?: string;
+  boundaryId?: string;
+  parts: Array<
+    Extract<ChatItem, { kind: "stream" } | { kind: "reading-indicator" } | { kind: "question" }>
+  >;
+};
 function streamPartRunId(part: StreamRunRenderItem["parts"][number]): string | undefined {
   return part.kind === "question" ? undefined : part.runId;
+}
+
+function streamPartBoundaryId(part: StreamRunRenderItem["parts"][number]): string | undefined {
+  return part.kind === "question" ? undefined : part.boundaryId;
 }
 
 export function coalesceStreamRuns(
@@ -499,11 +511,13 @@ export function coalesceStreamRuns(
     const [first] = run;
     if (first) {
       const runId = streamPartRunId(first);
+      const boundaryId = streamPartBoundaryId(first);
       result.push({
         kind: "stream-run",
         key: `stream-run:${first.key}`,
         parts: run,
         ...(runId ? { runId } : {}),
+        ...(boundaryId ? { boundaryId } : {}),
       });
       run = [];
     }
@@ -511,7 +525,10 @@ export function coalesceStreamRuns(
   for (const item of items) {
     if (item.kind === "stream" || item.kind === "reading-indicator") {
       const first = run[0];
-      if (first && streamPartRunId(first) !== item.runId) {
+      if (
+        first &&
+        (streamPartRunId(first) !== item.runId || streamPartBoundaryId(first) !== item.boundaryId)
+      ) {
         flush();
       }
       run.push(item);
@@ -525,14 +542,14 @@ export function coalesceStreamRuns(
 }
 
 /** Collapsed rollup of a completed turn's intermediate work (tools, commentary). */
-type WorkGroupRenderItem = {
+export type WorkGroupRenderItem = {
   kind: "work-group";
   key: string;
   groups: MessageGroup[];
   durationMs: number | null;
 };
 
-type ActivityRunRenderItem = {
+export type ActivityRunRenderItem = {
   kind: "activity-run";
   key: string;
   groups: MessageGroup[];
@@ -692,7 +709,7 @@ export function collapseCompletedTurnWork(
   return result;
 }
 
-type CompletedTurnRenderItem = TurnRenderItem | WorkGroupRenderItem;
+export type CompletedTurnRenderItem = TurnRenderItem | WorkGroupRenderItem;
 
 /** Presentation-only rollup for tool groups separated by projected turn boundaries. */
 export function coalesceActivityRuns(
@@ -716,6 +733,9 @@ export function coalesceActivityRuns(
   };
   for (const item of items) {
     if (item.kind === "group" && item.role.toLowerCase() === "tool") {
+      if (groups.length > 0 && groups[0]?.runId !== item.runId) {
+        flush();
+      }
       groups.push(item);
       continue;
     }

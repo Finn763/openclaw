@@ -4,12 +4,11 @@ import { formatCompactTokenCount } from "../../lib/format.ts";
 
 type WorkingProgress = {
   key: string;
+  runId: string | null;
   startedAt: number;
 };
 
-type WorkingProgressCache = WorkingProgress & {
-  runId: string | null;
-};
+type WorkingProgressCache = WorkingProgress;
 
 const workingProgressBySession = new Map<string, WorkingProgressCache>();
 let anonymousWorkingProgressId = 0;
@@ -87,9 +86,10 @@ export function resolveWorkingProgress(
   streamSegments: Array<{ ts: number }>,
   toolMessages: unknown[],
 ): WorkingProgress {
-  const queuedRunId =
-    queue.find((item) => item.sendState === "sending" && shouldRenderQueuedSendInThread(item))
-      ?.sendRunId ?? queue.find(shouldRenderQueuedSendInThread)?.sendRunId;
+  const queuedProgress =
+    queue.find((item) => item.sendState === "sending" && shouldRenderQueuedSendInThread(item)) ??
+    queue.find(shouldRenderQueuedSendInThread);
+  const queuedRunId = queuedProgress?.sendRunId ?? queuedProgress?.pendingRunId;
   const toolRunId = toolMessages
     .map((message) => (message as Record<string, unknown> | null)?.runId)
     .find(
@@ -126,7 +126,7 @@ export function resolveWorkingProgress(
     runId: explicitRunId ?? compatibleCached?.runId ?? null,
     startedAt,
   });
-  return { key, startedAt };
+  return { key, runId: explicitRunId ?? compatibleCached?.runId ?? null, startedAt };
 }
 
 export function clearWorkingProgress(sessionKey: string): void {
