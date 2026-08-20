@@ -138,6 +138,10 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(state)).toBe("1");
 
       await row.hover();
+      // The spinner is the signal that the row is still working; hovering to
+      // reach the actions must not take it away on a two-line row.
+      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => state.locator(".session-run-spinner").isVisible()).toBe(true);
       await expect.poll(() => actionOpacity(state)).toBe("0");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
@@ -283,7 +287,7 @@ suite.define(() => {
     }
   });
 
-  it("does not widen desktop session text when hover actions replace trailing state", async () => {
+  it("does not widen desktop session text or dim trailing state under hover actions", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -419,7 +423,7 @@ suite.define(() => {
         restingStateBounds.y + restingStateBounds.height / 2,
       );
       await row.hover();
-      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect
@@ -444,7 +448,7 @@ suite.define(() => {
       expect(pinBounds.x + pinBounds.width).toBeLessThanOrEqual(menuBounds.x);
       await page.mouse.move(0, 0);
       await pin.focus();
-      await expect.poll(() => actionOpacity(state)).toBe("0");
+      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect

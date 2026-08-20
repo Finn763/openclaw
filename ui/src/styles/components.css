@@ -5900,6 +5900,15 @@ td.data-table-key-col {
   opacity: 0;
 }
 
+/* Two-line rows put the actions on the title line, so nothing on the second
+   line needs to move aside for them. A spinner that vanishes under the pointer
+   hides whether the row is still working, which is the state most worth seeing.
+   Single-line rows still trade: there the endcap shares the actions' line. */
+.sidebar-recent-session:not(.sidebar-recent-session--single-line):is(:hover, :focus-within)
+  :is(.session-row-trail, .session-row-state) {
+  opacity: 1;
+}
+
 /* Sidebar rows are now the direct management surface after removing the
    duplicate picker; touch users need pin/menu controls without hover. */
 @media (hover: none), (pointer: coarse) {
