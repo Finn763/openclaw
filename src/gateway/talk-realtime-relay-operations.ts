@@ -1,3 +1,4 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { buildRealtimeVoiceAgentCancelProviderResult } from "../talk/agent-run-control-shared.js";
 import {
   controlRealtimeVoiceAgentRun,
@@ -517,11 +518,16 @@ export function cancelTalkRealtimeRelayTurn(params: {
   relaySessionId: string;
   connId: string;
   reason?: string;
+  turnId?: string;
 }): void {
   const session = getRelaySession(params.relaySessionId, params.connId);
+  const requestedTurnId = normalizeOptionalString(params.turnId);
+  if (requestedTurnId && session.harness.talk.activeTurnId !== requestedTurnId) {
+    return;
+  }
+  const turnId = requestedTurnId ?? ensureRelayTurn(session);
   session.toolResultEpoch += 1;
   session.forcedTerminalProviderResults.clear();
-  const turnId = ensureRelayTurn(session);
   const reason = params.reason ?? "client-cancelled";
   cancelForcedConsults(session);
   for (const callId of session.activeAgentToolCalls.keys()) {

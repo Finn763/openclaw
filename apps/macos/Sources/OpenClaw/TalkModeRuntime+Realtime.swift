@@ -86,7 +86,7 @@ extension TalkModeRuntime {
                 transport: transport,
                 options: options,
                 audioCapture: MacRealtimeTalkAudioCapture(),
-                pcmPlayer: PCMStreamingAudioPlayer.shared,
+                pcmPlayer: RealtimePCMStreamingAudioPlayer(),
                 onStatus: { [weak self] status in
                     Task { await self?.handleRealtimeStatus(status, relayGeneration: relayGeneration) }
                 },

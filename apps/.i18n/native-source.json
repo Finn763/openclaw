@@ -39327,6 +39327,17 @@
       ]
     },
     {
+      "id": "native.apple.90f64f78a77015d7",
+      "source": "Realtime audio playback fell behind. Reconnecting…",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/RealtimeTalkRelaySession.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.afd0d1396586ab0b",
       "source": "Realtime disconnected",
       "surface": "apple",

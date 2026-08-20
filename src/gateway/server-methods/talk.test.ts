@@ -1733,7 +1733,7 @@ describe("talk.session unified handlers", () => {
 
     const cancelRespond = vi.fn();
     await callTalkHandler("talk.session.cancelOutput", {
-      params: { sessionId: "relay-unified-1", reason: "barge-in" },
+      params: { sessionId: "relay-unified-1", reason: "barge-in", turnId: "turn-7" },
       id: "3",
       respond: cancelRespond,
       context: {},
@@ -1742,6 +1742,7 @@ describe("talk.session unified handlers", () => {
       relaySessionId: "relay-unified-1",
       connId: "conn-1",
       reason: "barge-in",
+      turnId: "turn-7",
     });
 
     const markRespond = vi.fn();

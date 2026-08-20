@@ -2353,7 +2353,7 @@ final class TalkModeManager: NSObject {
                 model: self.realtimeModelId,
                 voice: self.realtimeVoiceId),
             audioCapture: IOSRealtimeTalkAudioCapture(),
-            pcmPlayer: self.pcmPlayer,
+            pcmPlayer: RealtimePCMStreamingAudioPlayer(),
             onStatus: { [weak self] status in
                 guard let self, self.realtimeRelayGeneration == relayGeneration else { return }
                 self.handleRealtimeRelayStatus(status)

@@ -2706,6 +2706,34 @@ describe("talk realtime gateway relay", () => {
     expectNodeAbortPayload(nodeSendToSession);
   });
 
+  it("ignores a stale turn cancellation after a replacement turn becomes active", () => {
+    const { abortController, broadcast, session } = createAbortableRelayRunFixture();
+    const relay = relaySessions.get(session.relaySessionId);
+    expect(relay).toBeDefined();
+    relay?.harness.talk.startTurn({ turnId: "turn-a" });
+    relay?.harness.talk.startTurn({ turnId: "turn-b" });
+    const epoch = relay?.toolResultEpoch;
+    const forcedResult = {
+      result: { status: "cancelled" },
+      turnId: "turn-b",
+      epoch: epoch ?? 0,
+    };
+    relay?.forcedTerminalProviderResults.set("call-1", forcedResult);
+
+    cancelTalkRealtimeRelayTurn({
+      relaySessionId: session.relaySessionId,
+      connId: "conn-1",
+      reason: "barge-in",
+      turnId: "turn-a",
+    });
+
+    expect(relay?.harness.talk.activeTurnId).toBe("turn-b");
+    expect(relay?.toolResultEpoch).toBe(epoch);
+    expect(relay?.forcedTerminalProviderResults.get("call-1")).toBe(forcedResult);
+    expect(abortController.signal.aborted).toBe(false);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
   it("terminally satisfies a late normal result after turn cancellation without a new turn", async () => {
     const submitToolResult = vi.fn<RealtimeVoiceBridge["submitToolResult"]>();
     const provider = createIdleRelayProvider();

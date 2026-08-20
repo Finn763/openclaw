@@ -65,18 +65,15 @@ public struct RealtimeTalkRelayTransport: Sendable {
     public let subscribeServerEvents: @Sendable (Int) async -> AsyncStream<EventFrame>
     public let request: @Sendable (String, [String: AnyCodable]?, Double) async throws -> Data
     public let isCurrent: @Sendable () async -> Bool
-    public let supportsOutputGeneration: @Sendable () async -> Bool
 
     public init(
         subscribeServerEvents: @escaping @Sendable (Int) async -> AsyncStream<EventFrame>,
         request: @escaping @Sendable (String, [String: AnyCodable]?, Double) async throws -> Data,
-        isCurrent: @escaping @Sendable () async -> Bool = { true },
-        supportsOutputGeneration: @escaping @Sendable () async -> Bool = { false })
+        isCurrent: @escaping @Sendable () async -> Bool = { true })
     {
         self.subscribeServerEvents = subscribeServerEvents
         self.request = request
         self.isCurrent = isCurrent
-        self.supportsOutputGeneration = supportsOutputGeneration
     }
 }
 
@@ -122,6 +119,7 @@ public enum RealtimeTalkRelayTermination: Equatable, Sendable {
     case eventStreamEnded
     case audioCaptureFailed(message: String)
     case outputCancellationFailed
+    case outputPlaybackOverflow
 }
 
 private actor RealtimeAudioSender {
@@ -224,6 +222,9 @@ public final class RealtimeTalkRelaySession {
     private nonisolated static let bargeInCooldownMs: Double = 900
     private nonisolated static let minOutputBeforeBargeInMs: Double = 250
     private nonisolated static let startupReadyTimeoutSeconds = 12
+    /// At the protocol's 20 ms cadence this bounds queued relay audio to 640 ms.
+    /// Overflow terminates the session so recovery replaces a lagging playback path.
+    private nonisolated static let maxBufferedOutputChunks = 32
 
     private let transport: RealtimeTalkRelayTransport
     private let audioCapture: any RealtimeTalkAudioCapturing
@@ -256,8 +257,6 @@ public final class RealtimeTalkRelaySession {
     private var outputContinuation: AsyncThrowingStream<Data, Error>.Continuation?
     private var outputIdleTask: Task<Void, Never>?
     private var outputSessionId = 0
-    private var pendingOutputChunks: [Data] = []
-    private var pendingOutputDone = false
     private var pendingPlaybackMarks: [String] = []
     private var audioSender: RealtimeAudioSender?
     private var isInputPaused = false
@@ -270,7 +269,7 @@ public final class RealtimeTalkRelaySession {
     private var outputIdentity: OutputIdentity?
     private var suppressedOutputIdentity: OutputIdentity?
     private var awaitingOutputClear = false
-    private var cancelledOutputGenerationWatermark: Int?
+    private var cancelledOutputTurnId: String?
     private var outputCancellationTask: Task<Void, Never>?
     private var outputStartedAtMs: Double?
     private var outputPlaybackExpectedEndMs: Double = 0
@@ -423,7 +422,7 @@ public final class RealtimeTalkRelaySession {
         self.audioSender = nil
         Task { await audioSender?.close() }
         self.retireOutputCancellation()
-        self.cancelledOutputGenerationWatermark = nil
+        self.cancelledOutputTurnId = nil
         self.isOutputPaused = false
         self.stopOutputPlayback()
         if sendClose, let relaySessionId = self.relaySessionId {
@@ -576,7 +575,7 @@ extension RealtimeTalkRelaySession {
         case "audio":
             self.handleOutputAudio(payload)
         case "audioDone":
-            self.finishOutputPlaybackStream()
+            self.handleOutputAudioDone(payload)
         case "clear":
             self.handleOutputClear(payload)
         case "mark":
@@ -633,11 +632,6 @@ extension RealtimeTalkRelaySession {
                 ? suppressed.isEmpty()
                 : suppressed.isEmpty() || suppressed.relation(to: clearIdentity) == .same
             if clearsSuppressed {
-                if let generation = clearIdentity.outputGeneration ?? suppressed.outputGeneration {
-                    self.cancelledOutputGenerationWatermark = max(
-                        self.cancelledOutputGenerationWatermark ?? 0,
-                        generation)
-                }
                 self.retireOutputCancellation()
             }
         }
@@ -986,9 +980,9 @@ extension RealtimeTalkRelaySession {
         }
         envelope.begin(sampleRate: self.outputSampleRateHz)
         self.outputEnvelope = envelope
-        let stream = AsyncThrowingStream<Data, Error> { continuation in
-            self.outputContinuation = continuation
-        }
+        let stream = AsyncThrowingStream<Data, Error>(
+            bufferingPolicy: .bufferingOldest(Self.maxBufferedOutputChunks))
+        { continuation in self.outputContinuation = continuation }
         self.outputTask = Task { [weak self] in
             guard let self else { return }
             let result = await self.pcmPlayer.play(stream: stream, sampleRate: self.outputSampleRateHz)
@@ -1000,41 +994,14 @@ extension RealtimeTalkRelaySession {
                     self.logger.info("realtime output interrupted at \(interruptedAt, privacy: .public)s")
                 }
                 self.markOutputPlaybackFinished()
-                self.startPendingOutputPlaybackIfNeeded()
             }
         }
     }
 
     private func finishOutputPlaybackStream() {
-        guard let continuation = self.outputContinuation else {
-            if self.outputTask != nil, !self.pendingOutputChunks.isEmpty {
-                self.pendingOutputDone = true
-            }
-            return
-        }
+        guard let continuation = self.outputContinuation else { return }
         continuation.finish()
         self.outputContinuation = nil
-    }
-
-    private func startPendingOutputPlaybackIfNeeded() {
-        guard !self.isOutputPaused, !self.pendingOutputChunks.isEmpty else {
-            self.pendingOutputDone = false
-            return
-        }
-        let chunks = self.pendingOutputChunks
-        let shouldFinish = self.pendingOutputDone
-        self.pendingOutputChunks = []
-        self.pendingOutputDone = false
-        self.ensureOutputPlaybackStarted()
-        for chunk in chunks {
-            self.markOutputAudioStarted(byteCount: chunk.count, nowMs: ProcessInfo.processInfo.systemUptime * 1000)
-            self.onSpeakingChanged(true)
-            self.outputEnvelope?.append(chunk)
-            self.outputContinuation?.yield(chunk)
-        }
-        if shouldFinish {
-            self.finishOutputPlaybackStream()
-        }
     }
 
     private func scheduleOutputPlaybackIdle(expectedEndMs: Double) {
@@ -1118,8 +1085,6 @@ extension RealtimeTalkRelaySession {
         self.outputTask = nil
         self.outputIdleTask?.cancel()
         self.outputIdleTask = nil
-        self.pendingOutputChunks = []
-        self.pendingOutputDone = false
         _ = self.pcmPlayer.stop()
         self.isOutputPlaying = false
         self.outputIdentity = nil
@@ -1179,25 +1144,19 @@ extension RealtimeTalkRelaySession {
         }
 
         let turnId: String?
-        let outputGeneration: Int?
-
         init(_ payload: [String: AnyCodable]) {
             let turnId = payload["talkEvent"]?.dictionaryValue?["turnId"]?.stringValue?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             self.turnId = turnId?.isEmpty == false ? turnId : nil
-            self.outputGeneration = RealtimeTalkRelaySession.outputGeneration(payload["outputGeneration"])
         }
 
         func isEmpty() -> Bool {
-            self.turnId == nil && self.outputGeneration == nil
+            self.turnId == nil
         }
 
         func relation(to other: OutputIdentity) -> Relation {
             if self.isEmpty() || other.isEmpty() {
                 return self.isEmpty() == other.isEmpty() ? .same : .different
-            }
-            if let outputGeneration, let otherGeneration = other.outputGeneration {
-                return outputGeneration == otherGeneration ? .same : .different
             }
             if let turnId, let otherTurnId = other.turnId {
                 return turnId == otherTurnId ? .same : .different
@@ -1213,6 +1172,7 @@ extension RealtimeTalkRelaySession {
         let cancellationGeneration = self.outputCancellationGeneration
         self.outputCancellationTask?.cancel()
         self.suppressedOutputIdentity = outputIdentity
+        self.cancelledOutputTurnId = outputIdentity.turnId
         self.awaitingOutputClear = true
         self.stopOutputPlayback()
         self.outputCancellationTask = Task { [weak self, transport] in
@@ -1222,11 +1182,6 @@ extension RealtimeTalkRelaySession {
             ]
             if let turnId = outputIdentity.turnId {
                 payload["turnId"] = AnyCodable(turnId)
-            }
-            if await transport.supportsOutputGeneration(),
-               let outputGeneration = outputIdentity.outputGeneration
-            {
-                payload["outputGeneration"] = AnyCodable(outputGeneration)
             }
             do {
                 _ = try await transport.request("talk.session.cancelOutput", payload, 8000)
@@ -1260,8 +1215,21 @@ extension RealtimeTalkRelaySession {
         else { return }
         let incomingIdentity = OutputIdentity(payload)
         guard !self.awaitingOutputClear else { return }
-        if let watermark = self.cancelledOutputGenerationWatermark {
-            guard let generation = incomingIdentity.outputGeneration, generation > watermark else { return }
+        if let cancelledOutputTurnId {
+            if incomingIdentity.turnId == cancelledOutputTurnId {
+                return
+            }
+            if incomingIdentity.turnId != nil {
+                self.cancelledOutputTurnId = nil
+            }
+        }
+        if let currentIdentity = self.outputIdentity,
+           !incomingIdentity.isEmpty(),
+           currentIdentity.relation(to: incomingIdentity) == .different
+        {
+            self.stopOutputPlayback()
+        } else if self.outputContinuation == nil, self.outputTask != nil {
+            self.stopOutputPlayback()
         }
         if !incomingIdentity.isEmpty() {
             self.outputIdentity = incomingIdentity
@@ -1269,13 +1237,45 @@ extension RealtimeTalkRelaySession {
         self.recordOutputAudioChunk(byteCount: data.count)
         self.markOutputAudioStarted(byteCount: data.count, nowMs: ProcessInfo.processInfo.systemUptime * 1000)
         self.onSpeakingChanged(true)
-        if self.outputContinuation == nil, self.outputTask != nil {
-            self.pendingOutputChunks.append(data)
-            return
-        }
         self.ensureOutputPlaybackStarted()
         self.outputEnvelope?.append(data)
-        self.outputContinuation?.yield(data)
+        guard let continuation = self.outputContinuation else { return }
+        switch continuation.yield(data) {
+        case .enqueued:
+            break
+        case .dropped:
+            self.handleOutputPlaybackOverflow()
+        case .terminated:
+            break
+        @unknown default:
+            self.handleOutputPlaybackOverflow()
+        }
+    }
+
+    private func handleOutputAudioDone(_ payload: [String: AnyCodable]) {
+        let incomingIdentity = OutputIdentity(payload)
+        if !incomingIdentity.isEmpty(),
+           let outputIdentity,
+           outputIdentity.relation(to: incomingIdentity) != .same
+        {
+            return
+        }
+        self.finishOutputPlaybackStream()
+    }
+
+    private func handleOutputPlaybackOverflow() {
+        guard !self.isClosed else { return }
+        let message = String(localized: "Realtime audio playback fell behind. Reconnecting…")
+        let issue = RealtimeTalkRelayIssue(
+            message: message,
+            provider: self.options.provider,
+            model: self.options.model,
+            transport: "gateway-relay",
+            phase: "output-playback")
+        self.onIssue(issue)
+        self.onStatus(message)
+        self.close(sendClose: true)
+        self.onTermination(.outputPlaybackOverflow)
     }
 
     private func retireOutputCancellation() {
@@ -1284,15 +1284,6 @@ extension RealtimeTalkRelaySession {
         self.outputCancellationTask = nil
         self.suppressedOutputIdentity = nil
         self.awaitingOutputClear = false
-    }
-
-    private nonisolated static func outputGeneration(_ value: AnyCodable?) -> Int? {
-        guard let raw = value?.doubleValue,
-              raw > 0,
-              raw <= Double(Int.max),
-              raw.rounded(.towardZero) == raw
-        else { return nil }
-        return Int(raw)
     }
 }
 

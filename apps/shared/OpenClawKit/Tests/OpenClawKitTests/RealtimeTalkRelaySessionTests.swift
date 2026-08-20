@@ -29,6 +29,29 @@ private final class DrainingPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
 }
 
 @MainActor
+private final class StalledPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
+    private(set) var playCount = 0
+    private(set) var stopCount = 0
+    private var continuation: CheckedContinuation<StreamingPlaybackResult, Never>?
+
+    func play(
+        stream _: AsyncThrowingStream<Data, Error>,
+        sampleRate _: Double) async -> StreamingPlaybackResult
+    {
+        self.playCount += 1
+        return await withCheckedContinuation { self.continuation = $0 }
+    }
+
+    func stop() -> Double? {
+        self.stopCount += 1
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume(returning: StreamingPlaybackResult(finished: false, interruptedAt: nil))
+        return nil
+    }
+}
+
+@MainActor
 private final class TestRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     var suppressesInputDuringOutput = false
     private(set) var isStarted = false
@@ -129,7 +152,7 @@ private func unusedRealtimeRelayTransport() -> RealtimeTalkRelayTransport {
         request: { _, _, _ in throw CancellationError() })
 }
 
-private func outputAudioEvent(generation: Int) -> EventFrame {
+private func outputAudioEvent(turnId: String) -> EventFrame {
     EventFrame(
         type: "event",
         event: "talk.event",
@@ -137,7 +160,7 @@ private func outputAudioEvent(generation: Int) -> EventFrame {
             "relaySessionId": "relay-1",
             "type": "audio",
             "audioBase64": Data([0x01]).base64EncodedString(),
-            "outputGeneration": generation,
+            "talkEvent": ["turnId": turnId],
         ]),
         seq: nil,
         stateversion: nil)
@@ -310,6 +333,102 @@ struct RealtimeTalkRelaySessionTests {
 }
 
 extension RealtimeTalkRelaySessionTests {
+    @Test func `output buffer cap plus one terminates visibly and requests recovery`() async {
+        let requests = RealtimeRelayStartupRequestLog()
+        let player = StalledPCMStreamingAudioPlayer()
+        var issues: [RealtimeTalkRelayIssue] = []
+        var terminations: [RealtimeTalkRelayTermination] = []
+        let session = RealtimeTalkRelaySession(
+            transport: RealtimeTalkRelayTransport(
+                subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
+                request: { method, params, _ in
+                    await requests.record(method: method, params: params)
+                    return Data("{\"ok\":true}".utf8)
+                }),
+            options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+            audioCapture: TestRealtimeTalkAudioCapture(),
+            pcmPlayer: player,
+            onStatus: { _ in },
+            onIssue: { issues.append($0) },
+            onTermination: { terminations.append($0) },
+            onSpeakingChanged: { _ in })
+        session._test_setRelaySessionId("relay-1")
+
+        for _ in 0...32 {
+            await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
+        }
+        for _ in 0..<10 where terminations.isEmpty {
+            await Task.yield()
+        }
+
+        #expect(issues.map(\.phase) == ["output-playback"])
+        #expect(terminations == [.outputPlaybackOverflow])
+        #expect(player.stopCount == 1)
+        for _ in 0..<10 {
+            if await requests.snapshot().contains(where: { $0.method == "talk.session.close" }) {
+                break
+            }
+            await Task.yield()
+        }
+        #expect(await requests.snapshot().contains(where: { $0.method == "talk.session.close" }))
+    }
+
+    @Test func `new turn supersedes a stalled prior playback drain`() async {
+        let player = StalledPCMStreamingAudioPlayer()
+        let session = RealtimeTalkRelaySession(
+            transport: unusedRealtimeRelayTransport(),
+            options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+            audioCapture: TestRealtimeTalkAudioCapture(),
+            pcmPlayer: player,
+            onStatus: { _ in },
+            onSpeakingChanged: { _ in })
+        session._test_setRelaySessionId("relay-1")
+
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-a"))
+        await Task.yield()
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-b"))
+        await Task.yield()
+
+        #expect(player.playCount == 2)
+        #expect(player.stopCount == 1)
+        session.stop()
+    }
+
+    @Test func `stale audio done cannot finish replacement turn playback`() async {
+        let session = RealtimeTalkRelaySession(
+            transport: unusedRealtimeRelayTransport(),
+            options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+            audioCapture: TestRealtimeTalkAudioCapture(),
+            pcmPlayer: DrainingPCMStreamingAudioPlayer(),
+            onStatus: { _ in },
+            onSpeakingChanged: { _ in })
+        session._test_setRelaySessionId("relay-1")
+        let done: (String) -> EventFrame = { turnId in
+            EventFrame(
+                type: "event",
+                event: "talk.event",
+                payload: AnyCodable([
+                    "relaySessionId": "relay-1",
+                    "type": "audioDone",
+                    "talkEvent": ["turnId": turnId],
+                ]),
+                seq: nil,
+                stateversion: nil)
+        }
+
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-a"))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-b"))
+        await session._test_handleGatewayEvent(done("turn-a"))
+        await Task.yield()
+        #expect(session._test_isOutputPlaying())
+
+        await session._test_handleGatewayEvent(done("turn-b"))
+        for _ in 0..<10 where session._test_isOutputPlaying() {
+            await Task.yield()
+        }
+        #expect(!session._test_isOutputPlaying())
+    }
+
     @Test func `output cancellation fences delayed audio and preserves exact identity`() async throws {
         let requests = RealtimeRelayStartupRequestLog()
         var speakingStates: [Bool] = []
@@ -318,8 +437,7 @@ extension RealtimeTalkRelaySessionTests {
             request: { method, params, _ in
                 await requests.record(method: method, params: params)
                 return Data("{\"ok\":true}".utf8)
-            },
-            supportsOutputGeneration: { true })
+            })
         let session = RealtimeTalkRelaySession(
             transport: transport,
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
@@ -328,7 +446,7 @@ extension RealtimeTalkRelaySessionTests {
             onStatus: { _ in },
             onSpeakingChanged: { speakingStates.append($0) })
         session._test_setRelaySessionId("relay-1")
-        let audio: (Int, String) -> EventFrame = { generation, turnId in
+        let audio: (String) -> EventFrame = { turnId in
             EventFrame(
                 type: "event",
                 event: "talk.event",
@@ -336,26 +454,25 @@ extension RealtimeTalkRelaySessionTests {
                     "relaySessionId": "relay-1",
                     "type": "audio",
                     "audioBase64": Data([0x01]).base64EncodedString(),
-                    "outputGeneration": generation,
                     "talkEvent": ["turnId": turnId],
                 ]),
                 seq: nil,
                 stateversion: nil)
         }
-        let clear: (Int) -> EventFrame = { generation in
+        let clear: (String) -> EventFrame = { turnId in
             EventFrame(
                 type: "event",
                 event: "talk.event",
                 payload: AnyCodable([
                     "relaySessionId": "relay-1",
                     "type": "clear",
-                    "outputGeneration": generation,
+                    "talkEvent": ["turnId": turnId],
                 ]),
                 seq: nil,
                 stateversion: nil)
         }
 
-        await session._test_handleGatewayEvent(audio(7, "turn-7"))
+        await session._test_handleGatewayEvent(audio("turn-7"))
         session.cancelOutput(reason: "barge-in")
         for _ in 0..<10 {
             if await !requests.snapshot().isEmpty { break }
@@ -365,25 +482,24 @@ extension RealtimeTalkRelaySessionTests {
         #expect(request.method == "talk.session.cancelOutput")
         #expect(request.params?["sessionId"]?.stringValue == "relay-1")
         #expect(request.params?["turnId"]?.stringValue == "turn-7")
-        #expect(request.params?["outputGeneration"]?.doubleValue == 7)
         #expect(request.params?["reason"]?.stringValue == "barge-in")
 
-        await session._test_handleGatewayEvent(audio(7, "turn-7"))
-        await session._test_handleGatewayEvent(audio(8, "turn-8"))
+        await session._test_handleGatewayEvent(audio("turn-7"))
+        await session._test_handleGatewayEvent(audio("turn-8"))
         #expect(speakingStates.first == true)
         #expect(!speakingStates.dropFirst().contains(true))
-        await session._test_handleGatewayEvent(clear(7))
-        await session._test_handleGatewayEvent(audio(7, "turn-7"))
+        await session._test_handleGatewayEvent(clear("turn-7"))
+        await session._test_handleGatewayEvent(audio("turn-7"))
         #expect(speakingStates == [true, false])
-        await session._test_handleGatewayEvent(audio(8, "turn-8"))
+        await session._test_handleGatewayEvent(audio("turn-8"))
         #expect(speakingStates == [true, false, true])
-        await session._test_handleGatewayEvent(clear(7))
+        await session._test_handleGatewayEvent(clear("turn-7"))
         #expect(speakingStates == [true, false, true])
-        await session._test_handleGatewayEvent(clear(8))
+        await session._test_handleGatewayEvent(clear("turn-8"))
         #expect(speakingStates == [true, false, true, false])
     }
 
-    @Test func `legacy cancellation keeps turn identity but omits generation`() async throws {
+    @Test func `cancellation sends the active turn identity`() async throws {
         let requests = RealtimeRelayStartupRequestLog()
         let transport = RealtimeTalkRelayTransport(
             subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
@@ -406,7 +522,6 @@ extension RealtimeTalkRelaySessionTests {
                 "relaySessionId": "relay-1",
                 "type": "audio",
                 "audioBase64": Data([0x01]).base64EncodedString(),
-                "outputGeneration": 7,
                 "talkEvent": ["turnId": "turn-7"],
             ]),
             seq: nil,
@@ -419,7 +534,6 @@ extension RealtimeTalkRelaySessionTests {
         }
         let request = try #require(await requests.snapshot().first)
         #expect(request.params?["turnId"]?.stringValue == "turn-7")
-        #expect(request.params?["outputGeneration"] == nil)
     }
 
     @Test func `idle cancellation and pause retain the relay without false interruption`() async {
@@ -430,8 +544,7 @@ extension RealtimeTalkRelaySessionTests {
             request: { method, params, _ in
                 await requests.record(method: method, params: params)
                 return Data("{\"ok\":true}".utf8)
-            },
-            supportsOutputGeneration: { true })
+            })
         let session = RealtimeTalkRelaySession(
             transport: transport,
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
@@ -442,11 +555,11 @@ extension RealtimeTalkRelaySessionTests {
         session._test_setRelaySessionId("relay-1")
 
         session.setOutputPaused(true)
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(speakingStates.isEmpty)
         #expect(await requests.snapshot().isEmpty)
         session.setOutputPaused(false)
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 2))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
         #expect(speakingStates == [true])
         #expect(await requests.snapshot().isEmpty)
     }
@@ -455,7 +568,7 @@ extension RealtimeTalkRelaySessionTests {
         var speakingStates: [Bool] = []
         let session = self.makeIdleCancellationSession { speakingStates.append($0) }
         session.cancelOutput(reason: "barge-in")
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(speakingStates == [false])
         await session._test_handleGatewayEvent(EventFrame(
             type: "event",
@@ -466,7 +579,7 @@ extension RealtimeTalkRelaySessionTests {
             ]),
             seq: nil,
             stateversion: nil))
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(speakingStates == [false, true])
 
         var unfencedStates: [Bool] = []
@@ -479,11 +592,11 @@ extension RealtimeTalkRelaySessionTests {
             onSpeakingChanged: { unfencedStates.append($0) })
         unfenced.cancelOutput()
         unfenced._test_setRelaySessionId("relay-1")
-        await unfenced._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await unfenced._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(unfencedStates == [true])
     }
 
-    @Test func `active output pause cancels the exact generation`() async throws {
+    @Test func `active output pause cancels the exact turn`() async throws {
         let requests = RealtimeRelayStartupRequestLog()
         let session = RealtimeTalkRelaySession(
             transport: RealtimeTalkRelayTransport(
@@ -491,8 +604,7 @@ extension RealtimeTalkRelaySessionTests {
                 request: { method, params, _ in
                     await requests.record(method: method, params: params)
                     return Data("{\"ok\":true}".utf8)
-                },
-                supportsOutputGeneration: { true }),
+                }),
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
             audioCapture: TestRealtimeTalkAudioCapture(),
             pcmPlayer: DrainingPCMStreamingAudioPlayer(),
@@ -506,7 +618,6 @@ extension RealtimeTalkRelaySessionTests {
                 "relaySessionId": "relay-1",
                 "type": "audio",
                 "audioBase64": Data([0x01]).base64EncodedString(),
-                "outputGeneration": 7,
                 "talkEvent": ["turnId": "turn-7"],
             ]),
             seq: nil,
@@ -519,7 +630,6 @@ extension RealtimeTalkRelaySessionTests {
         }
         let request = try #require(await requests.snapshot().first)
         #expect(request.params?["turnId"]?.stringValue == "turn-7")
-        #expect(request.params?["outputGeneration"]?.doubleValue == 7)
         #expect(request.params?["reason"]?.stringValue == "pause")
     }
 
@@ -547,14 +657,14 @@ extension RealtimeTalkRelaySessionTests {
             onTermination: { terminations.append($0) },
             onSpeakingChanged: { speakingStates.append($0) })
         session._test_setRelaySessionId("relay-1")
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
 
         session.cancelOutput()
         for _ in 0..<50 {
             if !issues.isEmpty { break }
             await Task.yield()
         }
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 2))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
         for _ in 0..<50 {
             if await requests.snapshot().contains(where: { $0.method == "talk.session.close" }) { break }
             await Task.yield()
@@ -604,7 +714,7 @@ extension RealtimeTalkRelaySessionTests {
             if await requests.snapshot().count == 2 { break }
             await Task.yield()
         }
-        await session._test_handleGatewayEvent(outputAudioEvent(generation: 1))
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
 
         #expect(issues.isEmpty)
         #expect(await requests.snapshot().count == 2)

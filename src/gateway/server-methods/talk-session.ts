@@ -430,6 +430,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
         relaySessionId: session.relaySessionId,
         connId,
         reason: normalizeOptionalString(params.reason) ?? "output-cancelled",
+        turnId: normalizeOptionalString(params.turnId),
       });
       respondOk(respond);
     } catch (err) {
