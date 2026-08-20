@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { wrapToolWithBeforeToolCallHook } from "../agents/agent-tools.before-tool-call.js";
 import { BEFORE_TOOL_CALL_HOOK_CONTEXT } from "../agents/before-tool-call-metadata.js";
 import type { CodeModeHeadlessResult } from "../agents/code-mode.js";
@@ -11,6 +12,7 @@ type HeadlessParams = Parameters<NonNullable<EvaluatorDeps["runHeadless"]>>[0];
 type PrepareParams = Parameters<NonNullable<EvaluatorDeps["prepareRuntime"]>>[0];
 
 const beforeToolCallTesting = { BEFORE_TOOL_CALL_HOOK_CONTEXT };
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function completed(params: { value: unknown; output?: unknown[] }): CodeModeHeadlessResult {
   return {
@@ -69,6 +71,55 @@ function createCronTriggerEvaluator(deps: EvaluatorDeps) {
 }
 
 describe("cron trigger script evaluator", () => {
+  it("executes a gateway-pinned creator alias through the documented exec name", async () => {
+    const workspaceDir = tempDirs.make("openclaw-cron-codex-alias-");
+    const config = {
+      agents: { defaults: { workspace: workspaceDir } },
+      tools: {
+        exec: {
+          host: "node",
+          node: "configured-node-must-not-run",
+          security: "full",
+          ask: "off",
+        },
+      },
+    } as OpenClawConfig;
+    const evaluate = createCronScriptRuntime({ config }).evaluateTrigger;
+
+    await expect(
+      evaluate({
+        jobId: "job-codex-exec-alias",
+        script: 'await exec({ command: "printf openclaw-cron-alias-ok" }); return { fire: false };',
+        state: null,
+        toolsAllow: ["gateway_exec", "gateway_process"],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+      }),
+    ).resolves.toEqual({ kind: "evaluated", fire: false });
+  });
+
+  it.each(["node_exec", "sandbox_exec"])(
+    "does not widen %s into generic exec authority",
+    async (creatorAlias) => {
+      const workspaceDir = tempDirs.make("openclaw-cron-codex-alias-denied-");
+      const config = {
+        agents: { defaults: { workspace: workspaceDir } },
+        tools: { exec: { host: "gateway", security: "full", ask: "off" } },
+      } as OpenClawConfig;
+      const evaluate = createCronScriptRuntime({ config }).evaluateTrigger;
+
+      const result = await evaluate({
+        jobId: `job-codex-${creatorAlias}`,
+        script: 'await exec({ command: "printf must-not-run" }); return { fire: false };',
+        state: null,
+        toolsAllow: [creatorAlias],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+      });
+
+      expect(result).toMatchObject({ kind: "error", code: "internal_error" });
+      expect(result.kind === "error" ? result.error : "").toContain("exec is not defined");
+    },
+  );
+
   it("prefers a valid returned value and injects trigger state", async () => {
     const runHeadless = vi.fn(async (_params: HeadlessParams) =>
       completed({

@@ -8,6 +8,7 @@ import type {
   CronToolsAllowCaptureRef,
 } from "../agents/tools/cron-tool.types.js";
 
+export { pinExecToolTarget } from "../agents/exec-tool-target-pinning.js";
 export {
   buildCodexUserMcpServersThreadConfigPatch,
   buildCodexUserMcpServersThreadConfigPatchForRuntime,

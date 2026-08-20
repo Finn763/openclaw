@@ -26,6 +26,7 @@ import {
   applyEmbeddedAttemptToolsAllow,
   resolveEmbeddedAttemptToolConstructionPlan,
 } from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
+import { pinExecToolTarget } from "../agents/exec-tool-target-pinning.js";
 import { loadAgentRuntimePluginRegistryHandle } from "../agents/runtime-plugins.js";
 import { resolveSandboxContext } from "../agents/sandbox.js";
 import {
@@ -65,6 +66,8 @@ const MAX_TRIGGER_STATE_BYTES = 16 * 1024;
 const MAX_CACHED_TRIGGER_RUNTIMES = 128;
 const HEADLESS_TRIGGER_WALL_CLOCK_MS = 30_000;
 const HEADLESS_TRIGGER_TOOL_BUDGET = 5;
+const GATEWAY_EXEC_CREATOR_ALIAS = "gateway_exec";
+const GATEWAY_PROCESS_CREATOR_ALIAS = "gateway_process";
 
 let activeTriggerEvaluations = 0;
 
@@ -109,6 +112,24 @@ type TriggerRuntimeCacheEntry = {
 
 function resolveTriggerAgentId(config: OpenClawConfig, agentId?: string): string {
   return agentId?.trim() ? normalizeAgentId(agentId) : resolveDefaultAgentId(config);
+}
+
+function projectTriggerToolAuthority(toolsAllow: string[] | undefined): {
+  toolsAllow: string[] | undefined;
+  pinGatewayExec: boolean;
+} {
+  if (!toolsAllow?.includes(GATEWAY_EXEC_CREATOR_ALIAS)) {
+    return { toolsAllow, pinGatewayExec: false };
+  }
+  const projected = new Set(
+    toolsAllow.map((name) => {
+      if (name === GATEWAY_EXEC_CREATOR_ALIAS) {
+        return "exec";
+      }
+      return name === GATEWAY_PROCESS_CREATOR_ALIAS ? "process" : name;
+    }),
+  );
+  return { toolsAllow: [...projected], pinGatewayExec: true };
 }
 
 async function prepareTriggerRuntime(params: {
@@ -158,16 +179,20 @@ async function prepareTriggerRuntime(params: {
     params.signal?.throwIfAborted();
     const effectiveWorkspace =
       sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? sandbox.workspaceDir : workspaceDir;
+    const projectedAuthority = projectTriggerToolAuthority(params.toolsAllow);
     const toolPlan = resolveEmbeddedAttemptToolConstructionPlan({
       toolsEnabled: true,
-      toolsAllow: params.toolsAllow,
+      toolsAllow: projectedAuthority.toolsAllow,
     });
     // Bundle MCP tools are source:"mcp", which the headless bridge excludes.
     // LSP runtimes are session-scoped and intentionally outside trigger v1.
     const allTools = toolPlan.constructTools
       ? createOpenClawCodingTools({
           agentId,
-          exec: { config },
+          exec: {
+            config,
+            ...(projectedAuthority.pinGatewayExec ? { host: "gateway" as const } : {}),
+          },
           sandbox,
           sessionKey,
           trigger: "cron",
@@ -182,15 +207,24 @@ async function prepareTriggerRuntime(params: {
           runtimeToolAllowlist: toolPlan.runtimeToolAllowlist,
           inheritRuntimeToolAllowlist: Boolean(toolPlan.runtimeToolAllowlist),
           scheduledToolPolicy: resolveScheduledToolPolicyContext({
-            toolsAllow: params.toolsAllow,
+            toolsAllow: projectedAuthority.toolsAllow,
             scheduledToolPolicy: params.scheduledToolPolicy,
           }),
           toolConstructionPlan: toolPlan.codingToolConstructionPlan,
         })
       : [];
-    const tools = applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow, {
-      toolMeta: (tool) => getPluginToolMeta(tool),
-    });
+    const authorityBoundTools = projectedAuthority.pinGatewayExec
+      ? allTools.map((tool) =>
+          tool.name === "exec" ? pinExecToolTarget(tool, { host: "gateway" }) : tool,
+        )
+      : allTools;
+    const tools = applyEmbeddedAttemptToolsAllow(
+      authorityBoundTools,
+      projectedAuthority.toolsAllow,
+      {
+        toolMeta: (tool) => getPluginToolMeta(tool),
+      },
+    );
     const hookContext: HookContext = {
       agentId,
       config,

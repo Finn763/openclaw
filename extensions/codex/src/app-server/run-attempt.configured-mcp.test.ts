@@ -226,6 +226,26 @@ function admitLocalOperatorCronAuthority(params: ReturnType<typeof createParams>
 }
 
 describe("runCodexAppServerAttempt configured MCP ownership", () => {
+  it("preserves host-pinned shell aliases in scheduler authority capture", async () => {
+    const sessionFile = path.join(tempDir, "session-cron-shell-aliases.jsonl");
+    const params = createParams(sessionFile, path.join(tempDir, "workspace-cron-shell-aliases"));
+    setCodexTestModelSupportsTools(params, true);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+
+    const harness = createStartedThreadHarness();
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await expect(run).resolves.toBeDefined();
+
+    expect(mcpMocks.captureCalls).toHaveLength(1);
+    expect(mcpMocks.captureCalls[0]?.storedNames).toEqual(mcpMocks.captureCalls[0]?.sourceNames);
+    expect(mcpMocks.captureCalls[0]?.storedNames).toContain("gateway_exec");
+    expect(mcpMocks.captureCalls[0]?.storedNames).toContain("gateway_process");
+    expect(mcpMocks.captureCalls[0]?.storedNames).not.toContain("exec");
+  });
+
   it("does not replace bundle discovery with partial prepared plugin metadata", async () => {
     const sessionFile = path.join(tempDir, "session-partial-manifest-registry.jsonl");
     const params = createParams(sessionFile, path.join(tempDir, "workspace-partial-registry"));
