@@ -2297,12 +2297,6 @@ describe("createCodexDynamicToolBridge", () => {
       status: "ok",
       deliveryStatus: "sent",
       sourceReplySink: "internal-ui",
-      sourceReplyRoute: "current-source",
-      messageDelivery: {
-        status: "settled",
-        partialDelivery: false,
-        createdThreadIds: [],
-      },
       sourceReply: {
         text: "visible reply",
         mediaUrls: ["/tmp/reply.png"],
@@ -2316,9 +2310,7 @@ describe("createCodexDynamicToolBridge", () => {
     });
 
     expect(result).toEqual(expectInputText("Sent to current chat."));
-    expect(result.terminate).toBe(true);
     expect(bridge.telemetry.didSendViaMessagingTool).toBe(true);
-    expect(bridge.telemetry.didDeliverSourceReplyViaMessageTool).toBe(true);
     expect(bridge.telemetry.messagingToolSentTexts).toEqual([]);
     expect(bridge.telemetry.messagingToolSentMediaUrls).toEqual([]);
     expect(bridge.telemetry.messagingToolSentTargets).toEqual([]);
@@ -2327,62 +2319,8 @@ describe("createCodexDynamicToolBridge", () => {
         text: "visible reply",
         mediaUrl: "/tmp/reply.png",
         mediaUrls: ["/tmp/reply.png"],
-        sourceReplyFinal: true,
       },
     ]);
-  });
-
-  it("keeps explicit internal UI progress nonterminal", async () => {
-    const toolResult = textToolResult("Sent to current chat.", {
-      status: "ok",
-      deliveryStatus: "sent",
-      sourceReplySink: "internal-ui",
-      sourceReplyRoute: "current-source",
-      messageDelivery: {
-        status: "settled",
-        partialDelivery: false,
-        createdThreadIds: [],
-      },
-      sourceReply: { text: "still working" },
-    });
-    const bridge = createBridgeWithToolResult("message", toolResult);
-
-    const result = await handleMessageToolCall(bridge, {
-      action: "send",
-      message: "still working",
-      final: false,
-    });
-
-    expect(result.terminate).toBeUndefined();
-    expect(bridge.telemetry.didDeliverSourceReplyViaMessageTool).toBe(true);
-    expect(bridge.telemetry.messagingToolSourceReplyPayloads).toEqual([
-      { text: "still working", sourceReplyFinal: false },
-    ]);
-  });
-
-  it("keeps automatic external current-source replies nonterminal", async () => {
-    const bridge = createBridgeWithToolResult(
-      "message",
-      textToolResult("Sent.", {
-        ok: true,
-        sourceReplyRoute: "current-source",
-        messageDelivery: {
-          status: "settled",
-          partialDelivery: false,
-          createdThreadIds: [],
-        },
-      }),
-      { sourceReplyDeliveryMode: "automatic" },
-    );
-
-    const result = await handleMessageToolCall(bridge, {
-      action: "thread-reply",
-      threadId: "thread-1",
-      message: "first update",
-    });
-
-    expect(result.terminate).toBeUndefined();
-    expect(bridge.telemetry.didDeliverSourceReplyViaMessageTool).toBe(true);
   });
 
   it("treats omitted source-reply finality as terminal", async () => {

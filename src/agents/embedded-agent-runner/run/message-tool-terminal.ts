@@ -20,17 +20,21 @@ function argsRecordForToolCall(context: AfterToolCallContext): Record<string, un
     : {};
 }
 
-/** A completed source reply ends the turn only for message-tool-only delivery
- * or the internal UI sink; external current-source receipts remain nonterminal. */
-function isTerminalMessageToolSourceReply(params: {
+/**
+ * Determines whether a `message.send` tool call delivered a visible source reply
+ * in message-tool-only delivery mode. Only implicit-route, non-dry-run,
+ * delivered sends qualify; explicit routes and errors are not source replies.
+ */
+function isDeliveredMessageToolOnlySourceReply(params: {
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   context: AfterToolCallContext;
   hookResult?: AfterToolCallResult;
 }): boolean {
-  const resultDetails = readToolResultDetails(params.context.result);
-  const deliveryFact = readEmbeddedMessageDeliveryFact(resultDetails?.messageDelivery);
+  const deliveryFact = readEmbeddedMessageDeliveryFact(
+    readToolResultDetails(params.context.result)?.messageDelivery,
+  );
   const isError = params.hookResult?.isError ?? params.context.isError;
-  const delivered = isDeliveredMessageToolOnlySourceReplyResult({
+  return isDeliveredMessageToolOnlySourceReplyResult({
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
     toolName: params.context.toolCall.name,
     args: argsRecordForToolCall(params.context),
@@ -44,25 +48,22 @@ function isTerminalMessageToolSourceReply(params: {
         }
       : {}),
   });
-  return (
-    delivered &&
-    (params.sourceReplyDeliveryMode === "message_tool_only" ||
-      resultDetails?.sourceReplySink === "internal-ui" ||
-      readToolResultDetails(params.hookResult)?.sourceReplySink === "internal-ui")
-  );
 }
 
-/** Installs an after-tool hook that records and settles completed source replies. */
-export function installMessageToolTerminalHook(params: {
+/** Installs an after-tool hook that records source reply delivery evidence. */
+export function installMessageToolOnlyTerminalHook(params: {
   agent: Agent;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   onDeliveredSourceReply?: () => void;
 }): void {
+  if (params.sourceReplyDeliveryMode !== "message_tool_only") {
+    return;
+  }
   const previousAfterToolCall = params.agent.afterToolCall?.bind(params.agent);
   params.agent.afterToolCall = async (context, signal) => {
     const hookResult = await previousAfterToolCall?.(context, signal);
     if (
-      isTerminalMessageToolSourceReply({
+      isDeliveredMessageToolOnlySourceReply({
         sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
         context,
         hookResult,

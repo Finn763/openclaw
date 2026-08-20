@@ -12,7 +12,7 @@ const hoisted = vi.hoisted(() => ({
   createPreparedEmbeddedAgentSettingsManager: vi.fn(),
   getGlobalHookRunner: vi.fn(),
   installCodeModeRepairHook: vi.fn(),
-  installMessageToolTerminalHook: vi.fn(),
+  installMessageToolOnlyTerminalHook: vi.fn(),
   prepareEmbeddedAttemptClientTools: vi.fn(),
   resolveEffectiveCompactionMode: vi.fn(),
   isSilentOverflowProneModel: vi.fn(),
@@ -63,7 +63,7 @@ vi.mock("./code-mode-repair.js", () => ({
   installCodeModeRepairHook: hoisted.installCodeModeRepairHook,
 }));
 vi.mock("./message-tool-terminal.js", () => ({
-  installMessageToolTerminalHook: hoisted.installMessageToolTerminalHook,
+  installMessageToolOnlyTerminalHook: hoisted.installMessageToolOnlyTerminalHook,
 }));
 vi.mock("./tool-activity-heartbeat.js", () => ({
   notifyToolActivity: hoisted.notifyToolActivity,
@@ -143,7 +143,7 @@ function createInput(options?: {
   hoisted.applySystemPromptToSession.mockImplementation(() => {
     events.push("apply-system-prompt");
   });
-  hoisted.installMessageToolTerminalHook.mockImplementation(
+  hoisted.installMessageToolOnlyTerminalHook.mockImplementation(
     (input: { onDeliveredSourceReply?: () => void }) => {
       events.push("install-terminal-hook");
       onDeliveredSourceReply = input.onDeliveredSourceReply;

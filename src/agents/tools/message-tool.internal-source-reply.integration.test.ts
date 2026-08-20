@@ -29,6 +29,7 @@ describe("WebChat message tool internal source reply", () => {
       message: "Visible progress from the message tool.",
       final: false,
     });
+    expect(toolResult.terminate).toBeUndefined();
     expect(toolResult.details).toMatchObject({
       channel: "webchat",
       target: "current-run",

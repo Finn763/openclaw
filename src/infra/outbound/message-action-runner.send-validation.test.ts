@@ -46,6 +46,7 @@ describe("runMessageAction send validation", () => {
       },
       sessionKey: "agent:main",
       sourceReplyDeliveryMode: "message_tool_only",
+      sourceReplyFinal: true,
     });
 
     expect(result).toMatchObject({
@@ -72,6 +73,7 @@ describe("runMessageAction send validation", () => {
         text: "Sent visible reply to the current source conversation via internal-ui.",
       },
     ]);
+    expect(result.toolResult?.terminate).toBe(true);
     expect(result.toolResult?.details).toEqual({
       status: "ok",
       deliveryStatus: "sent",
