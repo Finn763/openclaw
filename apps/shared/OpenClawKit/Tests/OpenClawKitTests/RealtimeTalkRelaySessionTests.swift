@@ -103,6 +103,8 @@ private actor RealtimeRelayStartupBarrier {
         self.releaseWaiter?.resume()
         self.releaseWaiter = nil
     }
+
+    func checkpoint() {}
 }
 
 private struct RealtimeRelayStartupRequest: Sendable {
@@ -623,7 +625,7 @@ extension RealtimeTalkRelaySessionTests {
         await barrier.release()
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         for _ in 0..<8 {
-            await Task.yield()
+            await barrier.checkpoint()
             await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
             if speakingStates.count == 3 {
                 break

@@ -83,6 +83,11 @@ private func waitForRelayClose(_ requests: RuntimeTestRelayRequestLog) async -> 
 @MainActor
 private final class RuntimeTestPCMPlayer: PCMStreamingAudioPlaying {
     private(set) var stopCount = 0
+    private let onStop: (() -> Void)?
+
+    init(onStop: (() -> Void)? = nil) {
+        self.onStop = onStop
+    }
 
     func play(
         stream: AsyncThrowingStream<Data, Error>,
@@ -93,6 +98,7 @@ private final class RuntimeTestPCMPlayer: PCMStreamingAudioPlaying {
 
     func stop() -> Double? {
         self.stopCount += 1
+        self.onStop?()
         return nil
     }
 }
@@ -323,33 +329,28 @@ struct TalkModeRuntimeSpeechTests {
 
     @Test func `stale termination and callbacks cannot tear down or project over a successor`() async {
         let runtime = TalkModeRuntime()
-        let sessionA = await MainActor.run { makeRuntimeTestRealtimeSession(player: RuntimeTestPCMPlayer()) }
+        let stopEntered = AsyncStream<Void>.makeStream()
+        let releaseStop = DispatchSemaphore(value: 0)
+        let sessionA = await MainActor.run {
+            makeRuntimeTestRealtimeSession(player: RuntimeTestPCMPlayer(onStop: {
+                stopEntered.continuation.yield()
+                releaseStop.wait()
+            }))
+        }
         let sessionB = await MainActor.run { makeRuntimeTestRealtimeSession(player: RuntimeTestPCMPlayer()) }
         let generationA = await runtime._test_prepareEnabledRealtimeSessionForClose(sessionA)
-        let blocked = AsyncStream<Void>.makeStream()
-        let releaseMainActor = DispatchSemaphore(value: 0)
-        DispatchQueue.main.async {
-            blocked.continuation.yield()
-            releaseMainActor.wait()
-        }
-        for await _ in blocked.stream.prefix(1) {}
 
         let staleTermination = Task {
             await runtime.handleRealtimeTermination(
                 .remoteClose(reason: "replaced"),
                 relayGeneration: generationA)
         }
-        var invalidatedGeneration = generationA
-        for _ in 0..<8 {
-            await Task.yield()
-            invalidatedGeneration = await runtime.realtimeRelayGeneration
-            if invalidatedGeneration != generationA {
-                break
-            }
-        }
+        for await _ in stopEntered.stream.prefix(1) {}
+        let invalidatedGeneration = await runtime.realtimeRelayGeneration
         #expect(invalidatedGeneration != generationA)
         let generationB = await runtime._test_prepareEnabledRealtimeSessionForClose(sessionB)
-        releaseMainActor.signal()
+        #expect(await runtime.realtimeSession === sessionB)
+        releaseStop.signal()
         await staleTermination.value
 
         await MainActor.run { TalkModeController.shared.updatePartialTranscript("successor") }

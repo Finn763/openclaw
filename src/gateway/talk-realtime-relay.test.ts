@@ -2822,7 +2822,7 @@ describe("talk realtime gateway relay", () => {
     expectNodeAbortPayload(nodeSendToSession);
   });
 
-  it("ignores a stale turn cancellation after a replacement turn becomes active", () => {
+  it("ignores a stale turn cancellation after a replacement turn becomes active", async () => {
     const { abortController, broadcast, session } = createAbortableRelayRunFixture();
     const relay = relaySessions.get(session.relaySessionId);
     expect(relay).toBeDefined();
@@ -2836,16 +2836,40 @@ describe("talk realtime gateway relay", () => {
     };
     relay?.forcedTerminalProviderResults.set("call-1", forcedResult);
 
-    void cancelTalkRealtimeRelayTurn({
-      relaySessionId: session.relaySessionId,
-      connId: "conn-1",
-      reason: "barge-in",
-      turnId: "turn-a",
-    });
+    await expect(
+      cancelTalkRealtimeRelayTurn({
+        relaySessionId: session.relaySessionId,
+        connId: "conn-1",
+        reason: "barge-in",
+        turnId: "turn-a",
+      }),
+    ).resolves.toEqual({ status: "stale" });
 
     expect(relay?.harness.talk.activeTurnId).toBe("turn-b");
     expect(relay?.toolResultEpoch).toBe(epoch);
     expect(relay?.forcedTerminalProviderResults.get("call-1")).toBe(forcedResult);
+    expect(abortController.signal.aborted).toBe(false);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("reports idle without mutating a relay that has no active turn", async () => {
+    const { abortController, broadcast, session } = createAbortableRelayRunFixture();
+    const relay = relaySessions.get(session.relaySessionId);
+    expect(relay).toBeDefined();
+    relay?.harness.talk.clearActiveTurn();
+    const epoch = relay?.toolResultEpoch;
+
+    await expect(
+      cancelTalkRealtimeRelayTurn({
+        relaySessionId: session.relaySessionId,
+        connId: "conn-1",
+        reason: "barge-in",
+        turnId: "turn-a",
+      }),
+    ).resolves.toEqual({ status: "idle" });
+
+    expect(relay?.harness.talk.activeTurnId).toBeUndefined();
+    expect(relay?.toolResultEpoch).toBe(epoch);
     expect(abortController.signal.aborted).toBe(false);
     expect(broadcast).not.toHaveBeenCalled();
   });
@@ -2937,6 +2961,7 @@ describe("talk realtime gateway relay", () => {
   it.each(["completed", "error"] as const)(
     "passes through provider %s close and settles exact-response cancellation once",
     async (reason) => {
+      vi.useFakeTimers();
       let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
       const close = vi.fn();
       const provider = createIdleRelayProvider();
@@ -2973,6 +2998,15 @@ describe("talk realtime gateway relay", () => {
       );
       expect(closeEvents).toHaveLength(1);
       expect(closeEvents[0]?.[1]).toMatchObject({ reason });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+      expect(relaySessions.has(session.relaySessionId)).toBe(false);
+      expect(
+        broadcastToConnIds.mock.calls.filter(
+          (call) => (call[1] as { type?: string }).type === "close",
+        ),
+      ).toHaveLength(1);
     },
   );
 
