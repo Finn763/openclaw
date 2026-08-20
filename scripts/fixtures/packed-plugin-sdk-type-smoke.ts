@@ -1,4 +1,8 @@
-// Packed Plugin Sdk Type Smoke script supports OpenClaw repository automation.
+import {
+  inspectConversationBinding,
+  type ConversationBindingInspection,
+} from "openclaw/plugin-sdk/conversation-binding-inspection-runtime";
+import type { ChannelMessagingAdapter } from "openclaw/plugin-sdk/core";
 import type {
   MemoryReadResult,
   MemorySearchManager,
@@ -34,6 +38,17 @@ const legacyRuntime = {
 type BareLegacyReadResult = { text: ""; path: string };
 const canonicalRejectsBareLegacy: BareLegacyReadResult extends MemoryReadResult ? false : true =
   true;
+const routeOwnerResolver: NonNullable<ChannelMessagingAdapter["resolveConversationRouteOwner"]> = ({
+  accountId,
+  conversation,
+}) => {
+  const inspection: ConversationBindingInspection = inspectConversationBinding({
+    channel: "fixture-channel",
+    accountId,
+    conversationId: conversation.target ?? conversation.peerId,
+  });
+  return inspection.status === "unavailable" ? { kind: "unavailable" } : undefined;
+};
 
 void resolvedModules;
 void legacyRuntime;
@@ -42,3 +57,4 @@ void canonicalReadResult.lines;
 void canonicalReadResult.truncated;
 void canonicalReadResult.nextFrom;
 void canonicalRejectsBareLegacy;
+void routeOwnerResolver;

@@ -120,6 +120,8 @@ type MessageSendParams = {
   requireUnknownSendReconciliation?: boolean;
   /** @internal Runs after queue persistence and before platform I/O. */
   onDeliveryIntent?: (intent: DurableMessageSendIntent) => void;
+  /** @internal Revalidates authority once per durable queue execution, before adapter fanout. */
+  onDeliveryAttempt?: () => Promise<void>;
   /** @internal Runs on identified platform evidence before queue acknowledgement. */
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   mirror?: OutboundMirror;
@@ -445,6 +447,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       reusePendingDeliveryIntent: params.reusePendingDeliveryIntent,
       completionRetention: params.completionRetention,
       ...(params.onDeliveryIntent ? { onDeliveryIntent: params.onDeliveryIntent } : {}),
+      ...(params.onDeliveryAttempt ? { onDeliveryAttempt: params.onDeliveryAttempt } : {}),
       ...(params.onDeliveryResult ? { onDeliveryResult: params.onDeliveryResult } : {}),
       ...(params.onDeliveredPayload ? { onDeliveredPayload: params.onDeliveredPayload } : {}),
       mirror: params.mirror

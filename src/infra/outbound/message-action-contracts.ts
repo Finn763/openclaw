@@ -92,6 +92,8 @@ export type MessageActionInput = {
   deliveryCompletion?: DurableDeliveryCompletion;
   /** @internal Runs after queue persistence and before platform I/O. */
   onDeliveryIntent?: (intent: DurableMessageSendIntent) => void;
+  /** @internal Revalidates caller-owned authority before each durable adapter attempt. */
+  onDeliveryAttempt?: () => Promise<void>;
   /** @internal Runs on identified platform evidence before queue acknowledgement. */
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   /** @internal Runs when broadcast converts a typed target denial into result text. */
