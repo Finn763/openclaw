@@ -3458,22 +3458,24 @@ describe("chat slash menu accessibility", () => {
     ...overrides
   }: Partial<ChatProps> = {}) {
     let draft = "";
+    let currentOverrides = overrides;
     const container = document.createElement("div");
     const onDraftChange = vi.fn((next: string) => {
       draft = next;
       observeDraftChange?.(next);
     });
-    const renderCurrent = () => {
+    const renderCurrent = (nextOverrides: Partial<ChatProps> = {}) => {
+      currentOverrides = { ...currentOverrides, ...nextOverrides };
       renderChatInto(container, {
         draft,
         getDraft: () => draft,
         onDraftChange,
         onRequestUpdate: renderCurrent,
-        ...overrides,
+        ...currentOverrides,
       });
     };
     renderCurrent();
-    return { container };
+    return { container, renderCurrent };
   }
 
   function createSlashRerenderHarness() {
@@ -4243,6 +4245,37 @@ describe("chat slash menu accessibility", () => {
 
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/think ");
     expect(container.querySelector(".slash-menu")).toBeNull();
+  });
+
+  it("closes open thinking arguments when the active model starts switching", () => {
+    const sessions = createSessionsListResult({
+      model: "gpt-5.6-sol",
+      modelProvider: "openai",
+    });
+    const session = expectDefined(sessions.sessions[0], "active session");
+    session.thinkingLevels = [
+      { id: "low", label: "low" },
+      { id: "high", label: "high" },
+    ];
+    const { container, renderCurrent } = createReactiveDraftHarness({ sessions });
+
+    inputDraft(container, "/think");
+    keydownComposer(container, "Tab");
+    expect(container.querySelector(".slash-menu")).not.toBeNull();
+    expect(
+      container
+        .querySelector<HTMLTextAreaElement>("textarea")
+        ?.getAttribute("aria-activedescendant"),
+    ).toBe("chat-single-slash-option-arg-think-default");
+
+    renderCurrent({ modelSwitching: true });
+
+    expect(container.querySelector(".slash-menu")).toBeNull();
+    expect(
+      container
+        .querySelector<HTMLTextAreaElement>("textarea")
+        ?.hasAttribute("aria-activedescendant"),
+    ).toBe(false);
   });
 
   it("clears active descendant when suggestions close", () => {
