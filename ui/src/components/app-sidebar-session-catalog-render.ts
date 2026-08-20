@@ -483,7 +483,9 @@ function renderCatalogSessionRow(
       >
         <span class="sidebar-session-indicator"></span>
         <span class="sidebar-recent-session__text">
-          <span class="sidebar-recent-session__name hover-marquee">${label}</span>
+          <span class="sidebar-recent-session__title-row">
+            <span class="sidebar-recent-session__name hover-marquee">${label}</span>
+          </span>
           <span class="sidebar-recent-session__details">
             <span class="sidebar-recent-session__details-endcap">
               ${renderSessionRowBadges({

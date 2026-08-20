@@ -2047,6 +2047,9 @@ body.update-dialog-open .sidebar-update-card__status {
    here so gateway threads and native coding catalogs cannot drift apart. */
 .sidebar-recent-session {
   --sidebar-child-session-toggle-width: max(34px, calc(36px * var(--control-ui-text-scale)));
+  /* Title line box, shared by the label's line-height and the overlaid actions:
+     both must resolve the same value or the buttons drift off the title. */
+  --sidebar-session-title-line-height: calc(18px * var(--control-ui-text-scale));
 
   display: flex;
   align-items: center;
@@ -2281,6 +2284,7 @@ body.update-dialog-open .sidebar-update-card__status {
 .sidebar-recent-session__name {
   display: block;
   width: 100%;
+  line-height: var(--sidebar-session-title-line-height);
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
@@ -2349,13 +2353,23 @@ body.update-dialog-open .sidebar-update-card__status {
   padding-right: 2px;
 }
 
-/* Actions overlay the row center. The buttons re-enable their own
-   pointer-events on hover/focus. */
+/* Actions ride the title line: on a single-line row that is the row centre, and
+   on a two-line row it keeps them off the subtitle. The buttons re-enable their
+   own pointer-events on hover/focus. */
 .sidebar-recent-session:not(.sidebar-recent-session--child) > .sidebar-recent-session__aside {
   position: absolute;
   inset: 50% 2px auto auto;
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+/* Title line midpoint = the link's top padding plus half the title's line box.
+   Deriving it keeps the buttons on the title when either value changes. */
+.sidebar-recent-session:not(.sidebar-recent-session--child):not(
+    .sidebar-recent-session--single-line
+  )
+  > .sidebar-recent-session__aside {
+  inset: calc(4px + var(--sidebar-session-title-line-height) / 2) 2px auto auto;
 }
 
 .sidebar-recent-session--child > .sidebar-recent-session__aside {
@@ -2376,21 +2390,39 @@ body.update-dialog-open .sidebar-update-card__status {
 }
 
 /* Centered actions overlap both lines, so the full text column yields their width. */
+/* Only the title yields width to the actions. The second line keeps subtitle,
+   badges, state and time visible, which is the point of moving the buttons up. */
 .sidebar-recent-session:not(.sidebar-recent-session--child):is(:hover, :focus-within)
+  .sidebar-recent-session__title-row {
+  padding-right: 52px;
+}
+
+/* Single-line rows put the endcap beside the title, so the reservation has to
+   cover the whole line there rather than the title alone. */
+.sidebar-recent-session--single-line:not(.sidebar-recent-session--child):is(:hover, :focus-within)
   .sidebar-recent-session__text {
   padding-right: 52px;
 }
 
-.sidebar-recent-session:not(.sidebar-recent-session--child):is(:hover, :focus-within)
-  .sidebar-recent-session__details-endcap {
-  opacity: 0;
-  pointer-events: none;
+.sidebar-recent-session--single-line:not(.sidebar-recent-session--child):is(:hover, :focus-within)
+  .sidebar-recent-session__title-row {
+  padding-right: 0;
 }
 
 /* Touch keeps the actions permanently visible beside the persistent endcap. */
 @media (hover: none), (pointer: coarse) {
-  .sidebar-recent-session:not(.sidebar-recent-session--child) .sidebar-recent-session__text {
+  .sidebar-recent-session:not(.sidebar-recent-session--child) .sidebar-recent-session__title-row {
     padding-right: 52px;
+  }
+
+  .sidebar-recent-session--single-line:not(.sidebar-recent-session--child)
+    .sidebar-recent-session__text {
+    padding-right: 52px;
+  }
+
+  .sidebar-recent-session--single-line:not(.sidebar-recent-session--child)
+    .sidebar-recent-session__title-row {
+    padding-right: 0;
   }
 }
 
@@ -4237,6 +4269,24 @@ html:not(.openclaw-native-macos):not(.openclaw-native-nav):not(.openclaw-native-
   flex-direction: column;
   min-width: 0;
   transition: padding-right var(--duration-fast) ease;
+}
+
+/* The reservation lives here and is deliberately not transitioned:
+   startHoverMarquee measures clientWidth synchronously on mouseenter, so an
+   animated width makes the marquee scroll short and silences titles that only
+   overflow once the buttons are up. */
+.sidebar-recent-session__title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: var(--sidebar-session-title-line-height);
+  overflow: hidden;
+}
+
+/* Single-line rows lay the text column out in a row, so the title box has to
+   absorb the shrink there the way the bare label used to. */
+.sidebar-recent-session--single-line .sidebar-recent-session__title-row {
+  flex: 1 1 0;
 }
 
 .sidebar-recent-session__details {

@@ -497,7 +497,9 @@ suite.define(() => {
             .locator(".sidebar-recent-session__details-endcap")
             .evaluate((element) => getComputedStyle(element).opacity),
         )
-        .toBe("0");
+        // The actions sit on the title line now, so the second line keeps its
+        // status icons instead of trading them for the buttons on hover.
+        .toBe("1");
       await expect
         .poll(() =>
           busyRow

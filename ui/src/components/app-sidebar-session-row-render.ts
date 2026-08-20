@@ -307,23 +307,25 @@ export function renderRecentSession(params: {
             : nothing}</span
         >
         <span class="sidebar-recent-session__text">
-          <span class="sidebar-recent-session__name hover-marquee"
-            >${session.archived
-              ? html`<span
-                  class="sidebar-session__archive-glyph"
-                  aria-label=${t("sessionsView.archived")}
-                  title=${t("sessionsView.archived")}
-                  >${icons.archive}</span
-                >`
-              : nothing}${session.forkSource
-              ? html`<span
-                  class="sidebar-session-fork-indicator"
-                  role="img"
-                  aria-label=${t("sessionsView.forkedSession")}
-                  >${icons.gitFork}</span
-                >`
-              : nothing}${label}</span
-          >
+          <span class="sidebar-recent-session__title-row">
+            <span class="sidebar-recent-session__name hover-marquee"
+              >${session.archived
+                ? html`<span
+                    class="sidebar-session__archive-glyph"
+                    aria-label=${t("sessionsView.archived")}
+                    title=${t("sessionsView.archived")}
+                    >${icons.archive}</span
+                  >`
+                : nothing}${session.forkSource
+                ? html`<span
+                    class="sidebar-session-fork-indicator"
+                    role="img"
+                    aria-label=${t("sessionsView.forkedSession")}
+                    >${icons.gitFork}</span
+                  >`
+                : nothing}${label}</span
+            >
+          </span>
           <span class="sidebar-recent-session__details">
             ${renderSidebarSessionSubtitle({ subtitle, narration })}
             <span class="sidebar-recent-session__details-endcap">

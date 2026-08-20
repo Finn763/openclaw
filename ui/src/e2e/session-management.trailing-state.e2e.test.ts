@@ -46,19 +46,24 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await captureUiProof(page, "sidebar-session-actions-centered.png");
 
-      const [rowBounds, subtitleBounds, pinBounds, menuBounds] = await Promise.all([
+      const [rowBounds, titleBounds, subtitleBounds, pinBounds, menuBounds] = await Promise.all([
         row.boundingBox(),
+        row.locator(".sidebar-recent-session__name").boundingBox(),
         row.locator(".sidebar-recent-session__subtitle").boundingBox(),
         pin.boundingBox(),
         menu.boundingBox(),
       ]);
-      if (!rowBounds || !subtitleBounds || !pinBounds || !menuBounds) {
+      if (!rowBounds || !titleBounds || !subtitleBounds || !pinBounds || !menuBounds) {
         throw new Error("Expected visible two-line session action geometry");
       }
       const rowCenter = rowBounds.y + rowBounds.height / 2;
-      expect(subtitleBounds.y).toBeGreaterThan(rowCenter);
-      expect(Math.abs(pinBounds.y + pinBounds.height / 2 - rowCenter)).toBeLessThanOrEqual(1);
-      expect(Math.abs(menuBounds.y + menuBounds.height / 2 - rowCenter)).toBeLessThanOrEqual(1);
+      const titleCenter = titleBounds.y + titleBounds.height / 2;
+      // Two-line rows anchor the actions to the title line so the subtitle keeps
+      // its own line; the row centre falls between the two lines instead.
+      expect(subtitleBounds.y + subtitleBounds.height / 2).toBeGreaterThan(rowCenter);
+      expect(Math.abs(pinBounds.y + pinBounds.height / 2 - titleCenter)).toBeLessThanOrEqual(1);
+      expect(Math.abs(menuBounds.y + menuBounds.height / 2 - titleCenter)).toBeLessThanOrEqual(1);
+      expect(pinBounds.y + pinBounds.height / 2).toBeLessThan(subtitleBounds.y);
     } finally {
       await context.close();
     }
@@ -224,7 +229,10 @@ suite.define(() => {
       expect(
         Math.abs(forkBounds.y + forkBounds.height / 2 - (nameBounds.y + nameBounds.height / 2)),
       ).toBeLessThanOrEqual(2);
-      expect(nameBounds.y + nameBounds.height / 2).toBeLessThan(pinBounds.y + pinBounds.height / 2);
+      // The actions ride the title's midline now, and the title ends before them.
+      expect(
+        Math.abs(nameBounds.y + nameBounds.height / 2 - (pinBounds.y + pinBounds.height / 2)),
+      ).toBeLessThanOrEqual(1);
       expect(nameBounds.x + nameBounds.width).toBeLessThanOrEqual(pinBounds.x + 1);
       expect(pinBounds.x + pinBounds.width).toBeLessThanOrEqual(menuBounds.x);
     } finally {
@@ -381,6 +389,8 @@ suite.define(() => {
       }
       const link = row.locator(".sidebar-recent-session__link");
       const rowText = row.locator(".sidebar-recent-session__text");
+      // Two-line row: only the title yields width, so the second line keeps its own.
+      const rowTitle = row.locator(".sidebar-recent-session__title-row");
       const pin = row.getByRole("button", { name: "Pin session" });
       const menu = row.getByRole("button", { name: "Open session menu" });
       await expect
@@ -413,7 +423,7 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect
-        .poll(() => rowText.evaluate((element) => getComputedStyle(element).paddingRight))
+        .poll(() => rowTitle.evaluate((element) => getComputedStyle(element).paddingRight))
         .toBe("52px");
 
       const [textBounds, nameBounds, pinBounds, menuBounds] = await Promise.all([
@@ -426,7 +436,10 @@ suite.define(() => {
         throw new Error("Expected visible combined session action geometry");
       }
       expect(textBounds.width).toBeCloseTo(restingTextBounds.width, 1);
-      expect(nameBounds.y + nameBounds.height / 2).toBeLessThan(pinBounds.y + pinBounds.height / 2);
+      // The actions ride the title's midline now, and the title ends before them.
+      expect(
+        Math.abs(nameBounds.y + nameBounds.height / 2 - (pinBounds.y + pinBounds.height / 2)),
+      ).toBeLessThanOrEqual(1);
       expect(nameBounds.x + nameBounds.width).toBeLessThanOrEqual(pinBounds.x + 1);
       expect(pinBounds.x + pinBounds.width).toBeLessThanOrEqual(menuBounds.x);
       await page.mouse.move(0, 0);
@@ -435,7 +448,7 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect
-        .poll(() => rowText.evaluate((element) => getComputedStyle(element).paddingRight))
+        .poll(() => rowTitle.evaluate((element) => getComputedStyle(element).paddingRight))
         .toBe("52px");
 
       const [focusedTextBounds, focusedNameBounds, focusedPinBounds, focusedMenuBounds] =
@@ -449,9 +462,13 @@ suite.define(() => {
         throw new Error("Expected visible focused session action geometry");
       }
       expect(focusedTextBounds.width).toBeCloseTo(restingTextBounds.width, 1);
-      expect(focusedNameBounds.y + focusedNameBounds.height / 2).toBeLessThan(
-        focusedPinBounds.y + focusedPinBounds.height / 2,
-      );
+      expect(
+        Math.abs(
+          focusedNameBounds.y +
+            focusedNameBounds.height / 2 -
+            (focusedPinBounds.y + focusedPinBounds.height / 2),
+        ),
+      ).toBeLessThanOrEqual(1);
       expect(focusedNameBounds.x + focusedNameBounds.width).toBeLessThanOrEqual(
         focusedPinBounds.x + 1,
       );
