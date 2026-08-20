@@ -400,6 +400,47 @@ describe("Codex ring-zero thread config", () => {
     expect(normal.baseInstructions).toBeUndefined();
     expect(normal.config?.["features.goals"]).toBe(false);
   });
+
+  it("preserves project documents for ordinary policy-restricted turns", () => {
+    const params = createAttemptParams({ provider: "openai" });
+    params.pluginHarnessToolPolicyRestricted = true;
+    const appServer = createAppServerOptions() as never;
+    const start = buildThreadStartParams(params, {
+      appServer,
+      cwd: "/repo",
+      dynamicTools: [],
+      hostSystemAgentActive: false,
+      nativeCodeModeEnabled: false,
+    });
+    const resume = buildThreadResumeParams(params, {
+      appServer,
+      dynamicTools: [],
+      hostSystemAgentActive: false,
+      nativeCodeModeEnabled: false,
+      threadId: "thread-1",
+      config: { project_doc_max_bytes: 64_000 },
+    });
+
+    expect(start.config?.project_doc_max_bytes).toBe(131_072);
+    expect(resume.config?.project_doc_max_bytes).toBe(64_000);
+    for (const threadConfig of [start.config, resume.config]) {
+      expect(threadConfig?.["features.multi_agent"]).toBe(false);
+      expect(threadConfig?.["orchestrator.mcp.enabled"]).toBe(false);
+    }
+
+    const toolsDisabled = createAttemptParams({ provider: "openai" });
+    toolsDisabled.disableTools = true;
+    toolsDisabled.pluginHarnessToolPolicyRestricted = true;
+    const disabled = buildThreadStartParams(toolsDisabled, {
+      appServer,
+      cwd: "/repo",
+      dynamicTools: [],
+      hostSystemAgentActive: false,
+      nativeCodeModeEnabled: false,
+      config: { project_doc_max_bytes: 64_000 },
+    });
+    expect(disabled.config?.project_doc_max_bytes).toBe(0);
+  });
 });
 
 describe("Codex delegation capability", () => {

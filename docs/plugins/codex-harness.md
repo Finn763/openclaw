@@ -276,8 +276,12 @@ cutoff controls are runtime controls, not request overrides.
 Codex loads `AGENTS.md` files through native project-document discovery. For
 normal app-server threads, OpenClaw raises Codex's aggregate root-to-working-
 directory budget from the upstream 32 KiB default to a bounded 128 KiB so later
-scoped instructions are not silently clipped. Lightweight and restricted turns
-set the native project-document budget to zero instead.
+scoped instructions are not silently clipped. Ordinary conversation tool-policy
+restrictions preserve that budget because project instructions are context, not
+tool authority. Their isolated native environment cannot read workspace files,
+so OpenClaw supplies the bounded workspace `AGENTS.md` snapshot as thread-level
+developer instructions. Lightweight, ring-zero, message-only, and tool-disabled
+internal turns set the native project-document budget to zero instead.
 
 This byte budget is separate from the character-based workspace bootstrap
 limits configured through `agents.defaults.bootstrapMaxChars` and

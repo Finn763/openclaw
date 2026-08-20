@@ -152,7 +152,7 @@ export async function prepareCodexAttemptContext(
   });
   // A thread keeps the bounded agent-workspace snapshot captured at creation.
   // Workspace edits take effect only in the next session.
-  const agentWorkspaceDeveloperInstructions = workspaceBootstrapContext.inheritsAgentWorkspace
+  const agentWorkspaceDeveloperInstructions = workspaceBootstrapContext.threadDeveloperInstructions
     ? (connection.mutable.startupBinding?.agentWorkspaceDeveloperInstructions ??
       workspaceBootstrapContext.threadDeveloperInstructions)
     : undefined;
