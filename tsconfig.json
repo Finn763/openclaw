@@ -76,7 +76,6 @@
       "@openclaw/gateway-client/scope-upgrade": [
         "./packages/gateway-client/src/scope-upgrade.ts"
       ],
-      "@openclaw/gateway-client/timeouts": ["./packages/gateway-client/src/timeouts.ts"],
       "@openclaw/gateway-client/websocket-data": [
         "./packages/gateway-client/src/websocket-data.ts"
       ],

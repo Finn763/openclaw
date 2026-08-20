@@ -1,7 +1,6 @@
 // Control UI model metadata boundary.
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ModelCatalogEntry } from "../../api/types.ts";
-import { retryGatewayStartupRequest } from "../gateway-startup-retry.ts";
 
 const MODEL_CATALOG_CACHE_TTL_MS = 60_000;
 
@@ -19,7 +18,7 @@ export function invalidateModelCatalogStore(client: GatewayBrowserClient): void 
   modelCatalogCache.delete(client);
 }
 
-type ModelCatalogScope = {
+export type ModelCatalogScope = {
   agentId: string;
   preparedOnly?: boolean;
 };
@@ -38,13 +37,6 @@ function modelCatalogCacheFor(client: GatewayBrowserClient): Map<string, ModelCa
   return cache;
 }
 
-export async function loadModels(
-  client: GatewayBrowserClient,
-  opts: LoadModelsOptions,
-): Promise<ModelCatalogEntry[]> {
-  return await loadModelsCached(client, opts, opts.refresh === true);
-}
-
 export function peekModels(
   client: GatewayBrowserClient,
   opts: ModelCatalogScope,
@@ -53,36 +45,14 @@ export function peekModels(
   return cached && cached.expiresAt > Date.now() ? cached.models : undefined;
 }
 
-export async function revalidateModels(
-  client: GatewayBrowserClient,
-  opts: ModelCatalogScope & { startupRetryWindowMs?: number },
-): Promise<ModelCatalogEntry[]> {
-  const retryWindowMs = opts.startupRetryWindowMs;
-  const request = (remainingMs?: number) =>
-    loadModelsCached(client, { ...opts, rejectOnFailure: true }, true, remainingMs);
-  if (retryWindowMs === undefined) {
-    return await request();
-  }
-  return await retryGatewayStartupRequest({
-    retryWindowMs,
-    request,
-    requestFailure: (error) => {
-      return error instanceof Error
-        ? error
-        : new Error("Model catalog request failed", { cause: error });
-    },
-    timeoutMessage: "Model catalog retry deadline elapsed",
-  });
-}
-
 function modelCatalogCacheKey(opts: ModelCatalogScope): string {
   return `${opts.agentId.trim()}\0${opts.preparedOnly ? "prepared" : "exact"}`;
 }
 
-async function loadModelsCached(
+export async function loadModels(
   client: GatewayBrowserClient,
   opts: LoadModelsOptions,
-  bypassCache: boolean,
+  bypassCache = opts.refresh === true,
   requestTimeoutMs?: number,
 ): Promise<ModelCatalogEntry[]> {
   const cache = modelCatalogCacheFor(client);
@@ -106,15 +76,27 @@ async function loadModelsCached(
   // The cache write happens here, gated on inFlight identity: a refresh call
   // replaces inFlight, so an older request resolving late cannot clobber the
   // fresher result with pre-mutation catalog data.
-  const inFlight: Promise<ModelCatalogEntry[]> = requestModels(
-    client,
-    cached?.models,
+  const requestParams = {
+    view: "configured",
     agentId,
-    opts.preparedOnly === true,
-    opts.refresh === true,
-    rejectOnFailure,
-    requestTimeoutMs,
-  )
+    ...(opts.preparedOnly ? { preparedOnly: true } : {}),
+    ...(opts.refresh ? { refresh: true } : {}),
+  };
+  const request =
+    requestTimeoutMs === undefined
+      ? client.request<{ models: ModelCatalogEntry[] }>("models.list", requestParams)
+      : client.request<{ models: ModelCatalogEntry[] }>("models.list", requestParams, {
+          timeoutMs: requestTimeoutMs,
+        });
+  const inFlight: Promise<ModelCatalogEntry[]> = request
+    .then((result) => ({ models: result.models ?? [], fresh: true }))
+    .catch((error: unknown) => {
+      if (rejectOnFailure) {
+        throw error;
+      }
+      // Failed loads fall back without extending the TTL so the next call retries.
+      return { models: cached?.models ?? [], fresh: false };
+    })
     .then((result) => {
       const latest = cache.get(cacheKey);
       if (!latest || latest.inFlight === inFlight) {
@@ -145,36 +127,4 @@ async function loadModelsCached(
     ...(opts.refresh ? { inFlightRefresh: true } : {}),
   });
   return inFlight;
-}
-
-async function requestModels(
-  client: GatewayBrowserClient,
-  fallback: ModelCatalogEntry[] | undefined,
-  agentId: string,
-  preparedOnly: boolean,
-  refresh: boolean,
-  rejectOnFailure: boolean,
-  timeoutMs?: number,
-): Promise<{ models: ModelCatalogEntry[]; fresh: boolean }> {
-  try {
-    const requestParams = {
-      view: "configured",
-      agentId,
-      ...(preparedOnly ? { preparedOnly: true } : {}),
-      ...(refresh ? { refresh: true } : {}),
-    };
-    const result =
-      timeoutMs === undefined
-        ? await client.request<{ models: ModelCatalogEntry[] }>("models.list", requestParams)
-        : await client.request<{ models: ModelCatalogEntry[] }>("models.list", requestParams, {
-            timeoutMs,
-          });
-    return { models: result?.models ?? [], fresh: true };
-  } catch (error) {
-    if (rejectOnFailure) {
-      throw error;
-    }
-    // Failed loads fall back without extending the TTL so the next call retries.
-    return { models: fallback ?? [], fresh: false };
-  }
 }

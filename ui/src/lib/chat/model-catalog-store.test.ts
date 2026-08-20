@@ -1,8 +1,9 @@
-import { DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS } from "@openclaw/gateway-client/timeouts";
+import { DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS } from "@openclaw/gateway-client/browser";
 // Control UI tests cover models behavior.
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import { loadModels, peekModels, revalidateModels } from "./model-catalog-store.ts";
+import { revalidateModels } from "./model-catalog-revalidate.ts";
+import { loadModels, peekModels } from "./model-catalog-store.ts";
 
 describe("loadModels", () => {
   it("requests the configured model list view", async () => {

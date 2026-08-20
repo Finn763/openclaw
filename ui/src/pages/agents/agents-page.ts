@@ -28,7 +28,8 @@ import {
   type AgentsState,
 } from "../../lib/agents/index.ts";
 import { DEFAULT_AGENT_PANEL, type AgentsPanel } from "../../lib/agents/panels.ts";
-import { peekModels, revalidateModels } from "../../lib/chat/model-catalog-store.ts";
+import { revalidateModels } from "../../lib/chat/model-catalog-revalidate.ts";
+import { peekModels } from "../../lib/chat/model-catalog-store.ts";
 import { currentConfigObject } from "../../lib/config/config-state-model.ts";
 import {
   createInitialCronState,

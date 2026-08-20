@@ -5,7 +5,8 @@ import type {
 import type { GatewayAgentRow, ModelCatalogEntry } from "../../api/types.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import { t } from "../../i18n/index.ts";
-import { peekModels, revalidateModels } from "../../lib/chat/model-catalog-store.ts";
+import { revalidateModels } from "../../lib/chat/model-catalog-revalidate.ts";
+import { peekModels } from "../../lib/chat/model-catalog-store.ts";
 import {
   buildQualifiedChatModelValue,
   normalizeChatModelProviderId,
