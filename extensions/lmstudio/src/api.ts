@@ -39,6 +39,6 @@ export {
   configureLmstudioNonInteractive,
   discoverLmstudioProvider,
   prepareAppGuidedLmstudioSetup,
-  prepareLmstudioDynamicModels,
+  prepareLmstudioDynamicModel,
   promptAndConfigureLmstudioInteractive,
 } from "./setup.js";

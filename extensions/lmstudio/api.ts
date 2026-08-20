@@ -24,7 +24,7 @@ export {
   normalizeLmstudioConfiguredCatalogEntry,
   normalizeLmstudioProviderConfig,
   prepareAppGuidedLmstudioSetup,
-  prepareLmstudioDynamicModels,
+  prepareLmstudioDynamicModel,
   promptAndConfigureLmstudioInteractive,
   resolveLmstudioConfiguredApiKey,
   resolveLmstudioInferenceBase,
