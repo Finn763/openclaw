@@ -1732,7 +1732,7 @@ describe("talk.session unified handlers", () => {
     });
 
     const cancelRespond = vi.fn();
-    mocks.cancelTalkRealtimeRelayTurn.mockReturnValueOnce({
+    mocks.cancelTalkRealtimeRelayTurn.mockResolvedValueOnce({
       status: "applied",
       turnId: "turn-7",
     });
@@ -1751,7 +1751,7 @@ describe("talk.session unified handlers", () => {
     expectRespondOk(cancelRespond, { status: "applied", turnId: "turn-7" });
     for (const status of ["stale", "idle"] as const) {
       const nonAppliedRespond = vi.fn();
-      mocks.cancelTalkRealtimeRelayTurn.mockReturnValueOnce({ status });
+      mocks.cancelTalkRealtimeRelayTurn.mockResolvedValueOnce({ status });
       await callTalkHandler("talk.session.cancelOutput", {
         params: { sessionId: "relay-unified-1", reason: "barge-in", turnId: "turn-old" },
         id: `3-${status}`,

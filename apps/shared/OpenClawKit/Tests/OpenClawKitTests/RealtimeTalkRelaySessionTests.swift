@@ -621,9 +621,14 @@ extension RealtimeTalkRelaySessionTests {
         await barrier.waitUntilEntered()
         #expect(await requests.snapshot().map(\.method) == ["talk.session.cancelOutput"])
         await barrier.release()
-        try? await Task.sleep(for: .milliseconds(10))
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
-        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
+        for _ in 0..<8 {
+            await Task.yield()
+            await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
+            if speakingStates.count == 3 {
+                break
+            }
+        }
 
         #expect(speakingStates == [true, false, true])
     }

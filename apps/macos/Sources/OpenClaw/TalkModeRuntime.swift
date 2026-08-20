@@ -180,7 +180,7 @@ actor TalkModeRuntime {
                 self.lastHeard = nil
                 self.lastSpeechEnergyAt = nil
                 self.phase = .idle
-                await MainActor.run {
+                _ = await self.projectRealtimeRelay(relayGeneration, realtimeSession) {
                     TalkModeController.shared.updateLevel(0)
                     TalkModeController.shared.updateSpeakingLevel(nil)
                     TalkModeController.shared.updatePartialTranscript("")
@@ -204,7 +204,9 @@ actor TalkModeRuntime {
                     return
                 }
                 self.phase = .listening
-                await MainActor.run { TalkModeController.shared.updatePhase(.listening) }
+                _ = await self.projectRealtimeRelay(relayGeneration, realtimeSession) {
+                    TalkModeController.shared.updatePhase(.listening)
+                }
             }
             return
         }
@@ -371,11 +373,9 @@ actor TalkModeRuntime {
         }
         guard ownsFallback() else { return false }
         self.phase = .listening
-        return await MainActor.run {
-            self.realtimeRelayDeliveryGate.deliver(ifActive: relayGeneration) {
-                if let status { TalkModeController.shared.updatePartialTranscript(status) }
-                TalkModeController.shared.updatePhase(.listening)
-            }
+        return await self.projectRealtimeRelay(relayGeneration, nil) {
+            if let status { TalkModeController.shared.updatePartialTranscript(status) }
+            TalkModeController.shared.updatePhase(.listening)
         }
     }
 

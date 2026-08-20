@@ -1929,7 +1929,7 @@ describe("talk realtime gateway relay", () => {
     expectRecordFields(closePayload, {
       relaySessionId: session.relaySessionId,
       type: "close",
-      reason: "completed",
+      reason: "error",
     });
   });
 
@@ -2934,40 +2934,47 @@ describe("talk realtime gateway relay", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("settles an in-flight exact-response cancellation once when the provider closes", async () => {
-    let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
-    const close = vi.fn();
-    const provider = createIdleRelayProvider();
-    provider.createBridge = (request) => {
-      bridgeRequest = request;
-      return makeRelayTransport({ close });
-    };
-    const { broadcastToConnIds, session } = createAbortableRelayRunFixture(provider);
-    bridgeRequest?.onEvent?.({
-      direction: "server",
-      type: "response.created",
-      responseId: "response-1",
-    });
-    const cancellation = cancelTalkRealtimeRelayTurn({
-      relaySessionId: session.relaySessionId,
-      connId: "conn-1",
-      turnId: ensureActiveRelayTurnId(session.relaySessionId),
-    });
+  it.each(["completed", "error"] as const)(
+    "passes through provider %s close and settles exact-response cancellation once",
+    async (reason) => {
+      let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+      const close = vi.fn();
+      const provider = createIdleRelayProvider();
+      provider.createBridge = (request) => {
+        bridgeRequest = request;
+        return makeRelayTransport({ close });
+      };
+      const { broadcastToConnIds, session } = createAbortableRelayRunFixture(provider);
+      bridgeRequest?.onEvent?.({
+        direction: "server",
+        type: "response.created",
+        responseId: "response-1",
+      });
+      const cancellation = cancelTalkRealtimeRelayTurn({
+        relaySessionId: session.relaySessionId,
+        connId: "conn-1",
+        turnId: ensureActiveRelayTurnId(session.relaySessionId),
+      });
+      const settled = vi.fn();
+      void cancellation.then(settled);
 
-    bridgeRequest?.onClose?.("completed");
+      bridgeRequest?.onClose?.(reason);
+      bridgeRequest?.onClose?.(reason);
 
-    await expect(cancellation).resolves.toEqual({
-      status: "applied",
-      turnId: expect.any(String),
-    });
-    expect(close).toHaveBeenCalledOnce();
-    expect(relaySessions.has(session.relaySessionId)).toBe(false);
-    expect(
-      broadcastToConnIds.mock.calls.filter(
+      await expect(cancellation).resolves.toEqual({
+        status: "applied",
+        turnId: expect.any(String),
+      });
+      expect(settled).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+      expect(relaySessions.has(session.relaySessionId)).toBe(false);
+      const closeEvents = broadcastToConnIds.mock.calls.filter(
         (call) => (call[1] as { type?: string }).type === "close",
-      ),
-    ).toHaveLength(1);
-  });
+      );
+      expect(closeEvents).toHaveLength(1);
+      expect(closeEvents[0]?.[1]).toMatchObject({ reason });
+    },
+  );
 
   it("closes an exact-response relay when cancellation is never confirmed", async () => {
     vi.useFakeTimers();
@@ -3076,6 +3083,7 @@ describe("talk realtime gateway relay", () => {
   });
 
   it("provider close owns turn-bound drain teardown and late drain cannot touch a successor", async () => {
+    vi.useFakeTimers();
     const pending = createDeferred();
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
     const close = vi.fn();
@@ -3107,8 +3115,7 @@ describe("talk realtime gateway relay", () => {
       tools: [],
     });
     pending.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
 
     expect(relaySessions.has(successor.relaySessionId)).toBe(true);
     expect(close).toHaveBeenCalledOnce();
@@ -4421,7 +4428,7 @@ describe("talk realtime gateway relay", () => {
 
     expect(abortController.signal.aborted).toBe(true);
     expect(chatRunState.runs.get("run-1")?.agentText).toBeUndefined();
-    expectChatAbortPayload(broadcast, "relay-closed");
+    expectChatAbortPayload(broadcast, "relay-error");
     expectNodeAbortPayload(nodeSendToSession);
   });
 

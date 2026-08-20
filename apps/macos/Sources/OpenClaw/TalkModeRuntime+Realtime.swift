@@ -42,7 +42,7 @@ extension TalkModeRuntime {
             start: { session in try await session.start() })
         self.realtimeSessionReadyAt = Date()
         self.phase = .listening
-        await MainActor.run {
+        _ = await self.projectRealtimeRelay(relayGeneration, session) {
             TalkModeController.shared.updatePartialTranscript("")
             TalkModeController.shared.updatePhase(.listening)
         }
@@ -169,23 +169,21 @@ extension TalkModeRuntime {
     }
 
     private func handleRealtimeStatus(_ status: String, relayGeneration: UInt64) {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session)
         else { return }
         self.logger.debug("talk realtime status=\(status, privacy: .public)")
     }
 
     private func handleRealtimeIssue(_ issue: RealtimeTalkRelayIssue, relayGeneration: UInt64) async {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session)
         else { return }
         self.logger.error(
             "talk realtime issue code=\(issue.code, privacy: .public) " +
                 "message=\(issue.message, privacy: .public)")
-        _ = await MainActor.run {
-            self.realtimeRelayDeliveryGate.deliver(ifActive: relayGeneration) {
-                TalkModeController.shared.updatePartialTranscript(issue.message)
-            }
+        _ = await self.projectRealtimeRelay(relayGeneration, session) { TalkModeController.shared
+            .updatePartialTranscript(issue.message)
         }
     }
 
@@ -226,98 +224,102 @@ extension TalkModeRuntime {
         }
     }
 
-    private func handleRealtimeTermination(
+    func handleRealtimeTermination(
         _ termination: RealtimeTalkRelayTermination,
         relayGeneration: UInt64) async
     {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              let session = self.realtimeSession
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session)
         else { return }
         self.logger.warning(
             "talk realtime terminated=\(String(describing: termination), privacy: .public)")
+        let activeDuration = self.realtimeSessionReadyAt.map { Date().timeIntervalSince($0) } ?? 0
+        self.realtimeRelayGeneration &+= 1
+        let terminalGeneration = self.realtimeRelayGeneration
         // Session-owned terminations close before signalling; runtime-initiated ones do not.
         // stop() is idempotent, so closing here keeps a dead relay and its event subscription
         // from outliving their owner while recovery starts a replacement session.
         await MainActor.run { session.stop() }
+        guard self.ownsRealtimeRelay(terminalGeneration, session) else { return }
         self.realtimeSession = nil
-        let activeDuration = self.realtimeSessionReadyAt.map { Date().timeIntervalSince($0) } ?? 0
         self.realtimeSessionReadyAt = nil
         self.phase = .idle
-        await MainActor.run {
-            TalkModeController.shared.updateLevel(0)
-            TalkModeController.shared.updateSpeakingLevel(nil)
-            TalkModeController.shared.updatePhase(.idle)
-        }
-
-        guard self.isEnabled, !self.isPaused else { return }
+        let shouldRecover = self.isEnabled && !self.isPaused
         let attempt = Self.realtimeRestartAttempt(
             previousRapidRestarts: self.rapidRealtimeRestartCount,
             activeDuration: activeDuration)
-        self.rapidRealtimeRestartCount = attempt
-        self.realtimeRestartGeneration &+= 1
-        let restartGeneration = self.realtimeRestartGeneration
+        let delay = Self.realtimeRestartDelayNanoseconds(attempt: attempt)
+        guard await self.projectRealtimeRelay(terminalGeneration, nil, {
+            TalkModeController.shared.updateLevel(0)
+            TalkModeController.shared.updateSpeakingLevel(nil)
+            TalkModeController.shared.updatePhase(.idle)
+            if shouldRecover {
+                TalkModeController.shared.updatePartialTranscript(delay == nil
+                    ? String(localized: "Realtime disconnected repeatedly — using native speech")
+                    : String(localized: "Realtime disconnected — reconnecting…"))
+            }
+        }) else { return }
         let lifecycleGeneration = self.lifecycleGeneration
-        if let delay = Self.realtimeRestartDelayNanoseconds(attempt: attempt) {
-            await MainActor.run {
-                TalkModeController.shared.updatePartialTranscript(
-                    String(localized: "Realtime disconnected — reconnecting…"))
-            }
-            self.scheduleRealtimeRecovery(
-                after: delay,
-                lifecycleGeneration: lifecycleGeneration,
-                restartGeneration: restartGeneration)
-        } else {
-            self.bypassRealtimeOnNextStart = true
-            await MainActor.run {
-                TalkModeController.shared.updatePartialTranscript(
-                    String(localized: "Realtime disconnected repeatedly — using native speech"))
-            }
-            self.scheduleRealtimeRecovery(
-                after: nil,
-                lifecycleGeneration: lifecycleGeneration,
-                restartGeneration: restartGeneration)
-        }
+        let restartGeneration = self.realtimeRestartGeneration &+ 1
+        guard shouldRecover, self.ownsRealtimeRelay(terminalGeneration, nil),
+              self.isEnabled, !self.isPaused
+        else { return }
+        self.rapidRealtimeRestartCount = attempt
+        self.realtimeRestartGeneration = restartGeneration
+        self.bypassRealtimeOnNextStart = delay == nil
+        self.scheduleRealtimeRecovery(
+            after: delay,
+            lifecycleGeneration: lifecycleGeneration,
+            restartGeneration: restartGeneration)
     }
 
     func handleRealtimeSpeakingChanged(_ speaking: Bool, relayGeneration: UInt64) async {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil,
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session),
               self.isEnabled,
               !self.isPaused
         else { return }
         if speaking {
             self.phase = .speaking
-            await MainActor.run { TalkModeController.shared.updatePhase(.speaking) }
+            _ = await self.projectRealtimeRelay(relayGeneration, session) {
+                TalkModeController.shared.updatePhase(.speaking)
+            }
         } else if !self.isPaused {
             self.phase = .listening
-            await MainActor.run { TalkModeController.shared.updatePhase(.listening) }
+            _ = await self.projectRealtimeRelay(relayGeneration, session) {
+                TalkModeController.shared.updatePhase(.listening)
+            }
         }
     }
 
     func handleRealtimeInputLevel(_ level: Double, relayGeneration: UInt64) async {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil,
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session),
               self.isEnabled,
               !self.isPaused
         else { return }
-        await MainActor.run { TalkModeController.shared.updateLevel(level) }
+        _ = await self.projectRealtimeRelay(relayGeneration, session) {
+            TalkModeController.shared.updateLevel(level)
+        }
     }
 
     func handleRealtimeOutputLevel(_ level: Double?, relayGeneration: UInt64) async {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil,
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session),
               self.isEnabled,
               !self.isPaused
         else { return }
-        await MainActor.run { TalkModeController.shared.updateSpeakingLevel(level) }
+        _ = await self.projectRealtimeRelay(relayGeneration, session) {
+            TalkModeController.shared.updateSpeakingLevel(level)
+        }
     }
 
     func handleRealtimeTranscript(
         _ transcript: RealtimeTalkTranscript,
         relayGeneration: UInt64) async
     {
-        guard self.realtimeRelayGeneration == relayGeneration,
-              self.realtimeSession != nil,
+        guard let session = self.realtimeSession,
+              self.ownsRealtimeRelay(relayGeneration, session),
               self.isEnabled,
               !self.isPaused
         else { return }
@@ -326,12 +328,29 @@ extension TalkModeRuntime {
         guard transcript.role == "user" else { return }
         if transcript.isFinal {
             self.phase = .thinking
-            await MainActor.run {
+            _ = await self.projectRealtimeRelay(relayGeneration, session) {
                 TalkModeController.shared.commitTranscript(text)
                 TalkModeController.shared.updatePhase(.thinking)
             }
         } else {
-            await MainActor.run { TalkModeController.shared.updatePartialTranscript(text) }
+            _ = await self.projectRealtimeRelay(relayGeneration, session) {
+                TalkModeController.shared.updatePartialTranscript(text)
+            }
+        }
+    }
+
+    func ownsRealtimeRelay(_ generation: UInt64, _ session: RealtimeTalkRelaySession?) -> Bool {
+        self.realtimeRelayGeneration == generation && self.realtimeSession === session
+    }
+
+    func projectRealtimeRelay(
+        _ generation: UInt64,
+        _ session: RealtimeTalkRelaySession?,
+        _ body: @escaping @MainActor @Sendable () -> Void) async -> Bool
+    {
+        guard self.ownsRealtimeRelay(generation, session) else { return false }
+        return await MainActor.run {
+            self.realtimeRelayDeliveryGate.deliver(ifActive: generation, body)
         }
     }
 
@@ -452,54 +471,6 @@ extension TalkModeRuntime {
         self.rapidRealtimeRestartCount = 0
         self.bypassRealtimeOnNextStart = false
         return self.realtimeRelayGeneration
-    }
-
-    func _test_handleRealtimeStatus(_ status: String, relayGeneration: UInt64) {
-        self.handleRealtimeStatus(status, relayGeneration: relayGeneration)
-    }
-
-    func _test_handleRealtimeTermination(
-        _ termination: RealtimeTalkRelayTermination,
-        relayGeneration: UInt64) async -> Bool
-    {
-        await self.handleRealtimeTermination(termination, relayGeneration: relayGeneration)
-        return self.realtimeRestartTask != nil
-    }
-
-    func _test_handleRealtimeInputRestartFailure(
-        _ message: String,
-        relayGeneration: UInt64) async -> Bool
-    {
-        await self.handleRealtimeInputRestartFailure(message, relayGeneration: relayGeneration)
-        return self.realtimeRestartTask != nil
-    }
-
-    func _test_setPausedAndHasPendingRealtimeRestart(_ paused: Bool) async -> Bool {
-        await self.setPaused(paused)
-        return self.realtimeRestartTask != nil
-    }
-
-    func _test_realtimeSessionIsActive() -> Bool {
-        self.realtimeSession != nil
-    }
-
-    func _test_realtimeSessionIs(_ session: RealtimeTalkRelaySession) -> Bool {
-        self.realtimeSession === session
-    }
-
-    func _test_phase() -> TalkModePhase {
-        self.phase
-    }
-
-    func _test_rapidRealtimeRestartCount() -> Int {
-        self.rapidRealtimeRestartCount
-    }
-
-    func _test_cancelRealtimeRecovery() {
-        self.isEnabled = false
-        self.cancelScheduledRealtimeRecovery()
-        self.realtimeSession = nil
-        self.realtimeRelayGeneration &+= 1
     }
 }
 #endif

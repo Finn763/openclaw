@@ -32,14 +32,23 @@ private final class RuntimeTestAudioCapture: RealtimeTalkAudioCapturing {
 private actor RuntimeTestRelayRequestLog {
     private var methods: [String] = []
     private var sessionIds: [String?] = []
+    private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func record(method: String, params: [String: AnyCodable]?) {
         self.methods.append(method)
         self.sessionIds.append(params?["sessionId"]?.stringValue)
+        let ready = self.waiters.filter { self.methods.count >= $0.0 }
+        self.waiters.removeAll { self.methods.count >= $0.0 }
+        ready.forEach { $0.1.resume() }
     }
 
     func snapshot() -> (methods: [String], sessionIds: [String?]) {
         (self.methods, self.sessionIds)
+    }
+
+    func waitForCount(_ count: Int) async {
+        if self.methods.count >= count { return }
+        await withCheckedContinuation { self.waiters.append((count, $0)) }
     }
 }
 
@@ -67,11 +76,7 @@ private func makeRecordingRelaySession(
 }
 
 private func waitForRelayClose(_ requests: RuntimeTestRelayRequestLog) async -> [String] {
-    for _ in 0..<50 {
-        let recorded = await requests.snapshot()
-        if !recorded.methods.isEmpty { return recorded.methods }
-        await Task.yield()
-    }
+    await requests.waitForCount(1)
     return await requests.snapshot().methods
 }
 
@@ -273,23 +278,20 @@ struct TalkModeRuntimeSpeechTests {
             onSpeakingChanged: { _ in })
         let relayGeneration = await runtime._test_prepareEnabledRealtimeSessionForClose(session)
 
-        _ = await runtime._test_handleRealtimeTermination(
+        await runtime.handleRealtimeTermination(
             .remoteClose(reason: "stale"),
             relayGeneration: relayGeneration &- 1)
-        #expect(await runtime._test_realtimeSessionIsActive())
+        #expect(await runtime.realtimeSession != nil)
 
-        await runtime._test_handleRealtimeStatus(
-            "Listening (Realtime)",
-            relayGeneration: relayGeneration)
-        let recoveryScheduled = await runtime._test_handleRealtimeTermination(
+        await runtime.handleRealtimeTermination(
             .audioCaptureFailed(message: "microphone unavailable"),
             relayGeneration: relayGeneration)
 
-        #expect(await !(runtime._test_realtimeSessionIsActive()))
-        #expect(await runtime._test_rapidRealtimeRestartCount() == 1)
-        #expect(recoveryScheduled)
+        #expect(await runtime.realtimeSession == nil)
+        #expect(await runtime.rapidRealtimeRestartCount == 1)
+        #expect(await runtime.realtimeRestartTask != nil)
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         session.stop()
     }
 
@@ -301,13 +303,13 @@ struct TalkModeRuntimeSpeechTests {
             audioCapture: RuntimeTestAudioCapture())
         let relayGeneration = await runtime._test_prepareEnabledRealtimeSessionForClose(session)
 
-        let recoveryScheduled = await runtime._test_handleRealtimeInputRestartFailure(
+        await runtime.handleRealtimeInputRestartFailure(
             "selected microphone unavailable",
             relayGeneration: relayGeneration)
 
-        #expect(await !(runtime._test_realtimeSessionIsActive()))
-        #expect(await runtime._test_rapidRealtimeRestartCount() == 1)
-        #expect(recoveryScheduled)
+        #expect(await runtime.realtimeSession == nil)
+        #expect(await runtime.rapidRealtimeRestartCount == 1)
+        #expect(await runtime.realtimeRestartTask != nil)
 
         // Ownership must not be dropped while the server relay stays live; recovery would then
         // run a second session against the same gateway lease.
@@ -315,8 +317,56 @@ struct TalkModeRuntimeSpeechTests {
         #expect(recorded == ["talk.session.close"])
         #expect(await requests.snapshot().sessionIds == ["relay-1"])
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         session.stop()
+    }
+
+    @Test func `stale termination and callbacks cannot tear down or project over a successor`() async {
+        let runtime = TalkModeRuntime()
+        let sessionA = await MainActor.run { makeRuntimeTestRealtimeSession(player: RuntimeTestPCMPlayer()) }
+        let sessionB = await MainActor.run { makeRuntimeTestRealtimeSession(player: RuntimeTestPCMPlayer()) }
+        let generationA = await runtime._test_prepareEnabledRealtimeSessionForClose(sessionA)
+        let blocked = AsyncStream<Void>.makeStream()
+        let releaseMainActor = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            blocked.continuation.yield()
+            releaseMainActor.wait()
+        }
+        for await _ in blocked.stream.prefix(1) {}
+
+        let staleTermination = Task {
+            await runtime.handleRealtimeTermination(
+                .remoteClose(reason: "replaced"),
+                relayGeneration: generationA)
+        }
+        var invalidatedGeneration = generationA
+        for _ in 0..<8 {
+            await Task.yield()
+            invalidatedGeneration = await runtime.realtimeRelayGeneration
+            if invalidatedGeneration != generationA {
+                break
+            }
+        }
+        #expect(invalidatedGeneration != generationA)
+        let generationB = await runtime._test_prepareEnabledRealtimeSessionForClose(sessionB)
+        releaseMainActor.signal()
+        await staleTermination.value
+
+        await MainActor.run { TalkModeController.shared.updatePartialTranscript("successor") }
+        await runtime.handleRealtimeSpeakingChanged(false, relayGeneration: generationA)
+        await runtime.handleRealtimeInputLevel(0.9, relayGeneration: generationA)
+        await runtime.handleRealtimeOutputLevel(0.8, relayGeneration: generationA)
+        await runtime.handleRealtimeTranscript(
+            .init(role: "user", text: "stale", isFinal: false),
+            relayGeneration: generationA)
+
+        #expect(await runtime.realtimeRelayGeneration == generationB)
+        #expect(await runtime.realtimeSession === sessionB)
+        #expect(await runtime.realtimeRestartTask == nil)
+        #expect(await MainActor.run { TalkModeController.shared.partialTranscript } == "successor")
+
+        await runtime.setEnabled(false)
+        await MainActor.run { sessionB.stop() }
     }
 
     @Test @MainActor func `unpause that cannot restart capture closes relay and schedules recovery`() async {
@@ -328,18 +378,18 @@ struct TalkModeRuntimeSpeechTests {
 
         await runtime.setPaused(true)
         audioCapture.startError = RuntimeTestAudioCaptureError.inputUnavailable
-        let recoveryScheduled = await runtime._test_setPausedAndHasPendingRealtimeRestart(false)
+        await runtime.setPaused(false)
 
         // Talk must never stay enabled with no microphone and no route back: the failed unpause
         // has to reach the same bounded recovery / native-speech fallback as any other capture loss.
-        #expect(await !(runtime._test_realtimeSessionIsActive()))
-        #expect(await runtime._test_rapidRealtimeRestartCount() == 1)
-        #expect(recoveryScheduled)
+        #expect(await runtime.realtimeSession == nil)
+        #expect(await runtime.rapidRealtimeRestartCount == 1)
+        #expect(await runtime.realtimeRestartTask != nil)
 
         let recorded = await waitForRelayClose(requests)
         #expect(recorded == ["talk.session.close"])
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         session.stop()
     }
 
@@ -360,13 +410,13 @@ struct TalkModeRuntimeSpeechTests {
             .init(role: "user", text: "late transcript", isFinal: false),
             relayGeneration: relayGeneration)
 
-        #expect(await runtime._test_phase() == .idle)
+        #expect(await runtime.phase == .idle)
         #expect(TalkModeController.shared.phase == .idle)
         #expect(TalkModeController.shared.level == 0)
         #expect(TalkModeController.shared.partialTranscript.isEmpty)
         #expect(player.stopCount == 0)
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         session.stop()
     }
 
@@ -412,11 +462,11 @@ struct TalkModeRuntimeSpeechTests {
         await runtime.setPaused(false)
 
         #expect(audioCapture.startCount == 2)
-        #expect(await runtime._test_realtimeSessionIs(session))
+        #expect(await runtime.realtimeSession === session)
         await runtime.handleRealtimeSpeakingChanged(true, relayGeneration: relayGeneration)
-        #expect(await runtime._test_phase() == .speaking)
+        #expect(await runtime.phase == .speaking)
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         session.stop()
         eventChannel.continuation.finish()
     }
@@ -444,12 +494,12 @@ struct TalkModeRuntimeSpeechTests {
         }
 
         await barrier.waitUntilEntered()
-        #expect(await runtime._test_realtimeSessionIs(session))
+        #expect(await runtime.realtimeSession === session)
         await runtime.setEnabled(false)
         await barrier.release()
 
         #expect(await attempt.value == false)
-        #expect(await runtime._test_realtimeSessionIsActive() == false)
+        #expect(await runtime.realtimeSession == nil)
         #expect(probe.values() == ["start"])
         #expect(player.stopCount == 1)
     }
@@ -486,7 +536,7 @@ struct TalkModeRuntimeSpeechTests {
         }
 
         await barrier.waitUntilEntered()
-        #expect(await runtime._test_realtimeSessionIs(session))
+        #expect(await runtime.realtimeSession === session)
         await runtime.setPaused(true)
         if outcome != .remainPaused {
             await runtime.setPaused(false)
@@ -497,7 +547,7 @@ struct TalkModeRuntimeSpeechTests {
         await barrier.release()
 
         #expect(await attempt.value == false)
-        #expect(await runtime._test_realtimeSessionIsActive() == false)
+        #expect(await runtime.realtimeSession == nil)
         if await runtime.consumePendingRealtimeRelayStart() { probe.record("retry") }
         if await runtime.consumePendingRealtimeRelayStart() { probe.record("retry") }
         #expect(probe.values() == (outcome == .resume ? ["start", "retry"] : ["start"]))
@@ -597,11 +647,11 @@ struct TalkModeRuntimeSpeechTests {
         await barrier.release()
 
         #expect(await attemptA.value == false)
-        #expect(await runtime._test_realtimeSessionIs(sessionB))
+        #expect(await runtime.realtimeSession === sessionB)
         #expect(playerA.stopCount == 1)
         #expect(playerB.stopCount == 0)
 
-        await runtime._test_cancelRealtimeRecovery()
+        await runtime.setEnabled(false)
         sessionB.stop()
     }
 
@@ -654,16 +704,13 @@ struct TalkModeRuntimeSpeechTests {
         await MainActor.run {
             TalkModeController.shared.updatePartialTranscript("successor")
         }
-        let mainActorProbe = RuntimeCommitProbe()
+        let blocked = AsyncStream<Void>.makeStream()
         let releaseMainActor = DispatchSemaphore(value: 0)
         DispatchQueue.main.async {
-            mainActorProbe.record("blocked")
+            blocked.continuation.yield()
             releaseMainActor.wait()
         }
-        for _ in 0..<100 where mainActorProbe.values().isEmpty {
-            await Task.yield()
-        }
-        #expect(mainActorProbe.values() == ["blocked"])
+        for await _ in blocked.stream.prefix(1) {}
 
         let staleCommit = Task {
             await runtime.commitNativeFallback(
@@ -672,14 +719,10 @@ struct TalkModeRuntimeSpeechTests {
                 relayGeneration: relayGeneration,
                 status: "stale fallback")
         }
-        for _ in 0..<100 where await runtime.phase != .listening {
-            await Task.yield()
-        }
+        await Task.yield()
         #expect(await runtime.phase == .listening)
         let successor = Task { await runtime.setEnabled(false) }
-        for _ in 0..<100 where await runtime.realtimeRelayGeneration == relayGeneration {
-            await Task.yield()
-        }
+        await Task.yield()
         #expect(await runtime.realtimeRelayGeneration != relayGeneration)
         releaseMainActor.signal()
 

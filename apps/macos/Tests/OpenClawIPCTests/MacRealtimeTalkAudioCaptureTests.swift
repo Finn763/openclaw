@@ -283,9 +283,10 @@ struct MacRealtimeTalkAudioCaptureTests {
         capture._test_failInputRestart(MacRealtimeTalkAudioCaptureError.inputUnavailable)
         capture._test_failInputRestart(MacRealtimeTalkAudioCaptureError.inputUnavailable)
 
-        #expect(failures == [
-            "Realtime microphone became unavailable: Selected input and system default are unavailable",
-        ])
+        let expected = String(
+            format: String(localized: "Realtime microphone became unavailable: %@"),
+            MacRealtimeTalkAudioCaptureError.inputUnavailable.localizedDescription)
+        #expect(failures == [expected])
     }
 
     @Test func `capture can be released away from the main actor`() async {

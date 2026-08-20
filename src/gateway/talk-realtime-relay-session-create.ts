@@ -557,7 +557,7 @@ export function createTalkRealtimeRelaySession(
           final: true,
         });
       }
-      closeRelaySession(active, "completed");
+      closeRelaySession(active, reason);
     },
   });
   bridgeRef.current = bridge;
