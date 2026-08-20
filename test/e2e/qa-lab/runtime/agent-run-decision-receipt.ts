@@ -146,8 +146,14 @@ function readApprovalToolCallRef(
 }
 
 function requireDeniedApproval(result: AuditRunInspectResult) {
-  const receipt = result.decisions.find(
-    (candidate) => candidate.source.owner === "operator_approvals",
+  const receipt = result.decisionDisplays.find(
+    (
+      candidate,
+    ): candidate is typeof candidate & {
+      provenance: { state: "verified"; producer: "operator-approval" };
+    } =>
+      candidate.provenance.state === "verified" &&
+      candidate.provenance.producer === "operator-approval",
   );
   if (!receipt) {
     throw new Error("audit inspection omitted the authoritative approval receipt");
@@ -156,9 +162,9 @@ function requireDeniedApproval(result: AuditRunInspectResult) {
     receipt.decision.outcome !== "denied" ||
     receipt.decision.reasonCode !== "operator_approval_denied_by_reviewer" ||
     receipt.enforcement.coverageState !== "enforced" ||
-    !receipt.enforcement.policyRefs.includes("operator-approval:human-decision") ||
+    receipt.enforcement.policyCount !== 2 ||
     receipt.enforcement.contextFieldsUsed.join(",") !== "contextId,executionId,runId" ||
-    receipt.enforcement.grantRefs.length !== 0 ||
+    receipt.enforcement.grantCount !== 0 ||
     receipt.remediation[0]?.code !== "review_and_request_again"
   ) {
     throw new Error("approval receipt did not preserve denial, enforcement, and remediation");
@@ -355,7 +361,7 @@ async function runProof(options: ProducerOptions): Promise<string> {
             outcome: receipt.decision.outcome,
             reasonCode: receipt.decision.reasonCode,
             coverageState: receipt.enforcement.coverageState,
-            sourceOwner: receipt.source.owner,
+            provenanceProducer: receipt.provenance.producer,
             remediationCode: receipt.remediation[0]?.code,
           },
           firstAnswerPreserved: true,

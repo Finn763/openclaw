@@ -235,7 +235,11 @@ facts:
   authorization.
 
 The method requires `operator.read`. Requests are closed and select exactly one
-`executionId` or `runId`. Decision pages contain at most 100 receipts;
+`executionId` or `runId`. The public result always contains a required
+`decisionDisplays` array and never contains the private raw receipt array or a
+`decisions` key. The Gateway builds that result from an explicit safe-field
+allowlist; clients do not classify receipt prose. Decision pages contain at
+most 100 displays;
 ambiguous run-discovery pages contain at most 50 candidate executions. Both use
 bounded cursors.
 
@@ -437,9 +441,11 @@ correlation alone.
   [Gateway protocol](/gateway/protocol#audit-ledger-rpc).
 - Identity RPC: `audit.run.inspect` (requires `operator.read`) accepts one
   `executionId` for exact inspection or one `runId` for bounded discovery. It
-  returns the immutable V1 context plus paged admission, approval,
-  owner-native outbound message, and generic decision receipts for an exact
-  match, or a typed ambiguous candidate page when a run has multiple executions.
+  returns the immutable V1 context plus paged safe displays for admission,
+  approval, owner-native outbound message, and generic decision records for an
+  exact match, or a typed ambiguous candidate page with an empty display array
+  when a run has multiple executions. Raw owner receipts remain private to the
+  aggregation and storage owners.
 
 ## Related
 

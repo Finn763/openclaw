@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExecutionIdentityContextV1 } from "../../packages/gateway-protocol/src/index.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { presentExecutionDecisionReceipts } from "../audit/execution-decision-receipts.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -77,6 +79,21 @@ const context = {
   executionId: "execution-receipts",
   runId: "run-receipts",
   createdAt: 500,
+};
+
+const identityContext: ExecutionIdentityContextV1 = {
+  schemaVersion: 1,
+  ...context,
+  trustDomain: { kind: "gateway-cell", domainRef: "domain-ref", state: "present" },
+  invoker: { state: "absent" },
+  ingress: { kind: "local-cli", boundary: "agent-command.local", state: "present" },
+  agentPrincipal: { kind: "agent", domainRef: "domain-ref", principalRef: "main" },
+  agentDefinition: { definitionRef: "main", state: "present" },
+  runtimeInstance: { runtimeRef: "runtime-ref", kind: "embedded", state: "present" },
+  applicableGrants: [],
+  assurance: [],
+  coverageState: "unattributed",
+  missingEvidence: [],
 };
 
 describe("operator approval decision receipts", () => {
@@ -204,6 +221,23 @@ describe("operator approval decision receipts", () => {
     ]) {
       expect(encoded).not.toContain(secret);
     }
+
+    const displays = presentExecutionDecisionReceipts({
+      context: identityContext,
+      decisionCursor: "a:0:0",
+      decisionLimit: 20,
+      options: { ...database, now: 3_000 },
+    }).decisionDisplays;
+    expect(displays?.[0]).toMatchObject({
+      action: {
+        family: "exec",
+        operation: "approval",
+        summary: "A exec approval allowed the requested action.",
+      },
+      provenance: { state: "verified", producer: "operator-approval" },
+      remediation: [],
+    });
+    expect(JSON.stringify(displays)).not.toContain("secret command");
   });
 
   it("keeps a denied first answer after a conflicting allow retry", () => {
