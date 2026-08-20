@@ -865,3 +865,32 @@ describe("AgentsPage gateway lifecycle", () => {
     page.subscriptions.hostDisconnected();
   });
 });
+
+describe("AgentsPage routing", () => {
+  it("derives the panel from route data", () => {
+    const currentGateway = gateway(snapshot(null, false));
+    const page = document.createElement("openclaw-agents-page") as TestAgentsPage;
+    page.context = {
+      basePath: "/ui",
+      gateway: currentGateway,
+    } as unknown as ApplicationContext;
+    page.agentsList = {
+      ...agentsList,
+      agents: [...agentsList.agents, { id: "research", name: "Research" }],
+    };
+    page.agentsSelectedId = "main";
+    page.routeData = {
+      gateway: currentGateway,
+      gatewaySnapshot: currentGateway.snapshot,
+      location: { pathname: "/ui/settings/agents/main/tools", search: "", hash: "" },
+      requestedAgentId: "main",
+      panel: "tools",
+      agentsList: page.agentsList as AgentsListResult,
+      selectedAgentId: "main",
+      error: null,
+    };
+
+    expect(page.agentsPanel).toBe("tools");
+    expect(page.agentsSelectedId).toBe("main");
+  });
+});
