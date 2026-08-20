@@ -161,6 +161,31 @@ private enum RuntimeRelayStartError: Error {
     case failed
 }
 
+private struct RuntimeConditionTimeout: Error, CustomStringConvertible {
+    let operation: String
+
+    var description: String {
+        "timed out waiting for \(self.operation)"
+    }
+}
+
+private func waitForRuntimeCondition(
+    _ operation: String,
+    condition: @escaping @Sendable () async -> Bool) async throws
+{
+    try await AsyncTimeout.withTimeout(
+        seconds: 1,
+        onTimeout: { RuntimeConditionTimeout(operation: operation) },
+        operation: {
+            while !Task.isCancelled {
+                if await condition() {
+                    return
+                }
+            }
+            throw CancellationError()
+        })
+}
+
 enum RuntimeRelayStartupPauseOutcome: Equatable {
     case resume
     case remainPaused
@@ -707,6 +732,12 @@ struct TalkModeRuntimeSpeechTests {
         }
         let blocked = AsyncStream<Void>.makeStream()
         let releaseMainActor = DispatchSemaphore(value: 0)
+        var didReleaseMainActor = false
+        defer {
+            if !didReleaseMainActor {
+                releaseMainActor.signal()
+            }
+        }
         DispatchQueue.main.async {
             blocked.continuation.yield()
             releaseMainActor.wait()
@@ -720,11 +751,14 @@ struct TalkModeRuntimeSpeechTests {
                 relayGeneration: relayGeneration,
                 status: "stale fallback")
         }
-        await Task.yield()
-        #expect(await runtime.phase == .listening)
+        try await waitForRuntimeCondition("fallback to enter projection") {
+            await runtime.phase == .listening
+        }
         let successor = Task { await runtime.setEnabled(false) }
-        await Task.yield()
-        #expect(await runtime.realtimeRelayGeneration != relayGeneration)
+        try await waitForRuntimeCondition("successor generation") {
+            await runtime.realtimeRelayGeneration != relayGeneration
+        }
+        didReleaseMainActor = true
         releaseMainActor.signal()
 
         #expect(await staleCommit.value == false)

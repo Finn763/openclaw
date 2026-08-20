@@ -51,6 +51,94 @@ private final class StalledPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
     }
 }
 
+private struct RealtimeRelayTestTimeout: Error, CustomStringConvertible {
+    let operation: String
+
+    var description: String {
+        "timed out waiting for \(self.operation)"
+    }
+}
+
+private final class RealtimeRelayTestSignal<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var values: [Value] = []
+
+    func send(_ value: Value) {
+        self.lock.withLock {
+            self.values.append(value)
+        }
+        self.semaphore.signal()
+    }
+
+    func next(_ operation: String) async throws -> Value {
+        let semaphore = self.semaphore
+        let result = await Task.detached {
+            Self.wait(for: semaphore)
+        }.value
+        guard result == .success else {
+            throw RealtimeRelayTestTimeout(operation: operation)
+        }
+        return self.lock.withLock {
+            self.values.removeFirst()
+        }
+    }
+
+    private static func wait(for semaphore: DispatchSemaphore) -> DispatchTimeoutResult {
+        semaphore.wait(timeout: .now() + 1)
+    }
+}
+
+@MainActor
+private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
+    private(set) var activePlaybackIndexes: Set<Int> = []
+    private var continuations: [Int: CheckedContinuation<StreamingPlaybackResult, Never>] = [:]
+    private let playbackStarted = RealtimeRelayTestSignal<Int>()
+    private let mainActorCheckpoint = RealtimeRelayTestSignal<Int>()
+    private var nextPlaybackIndex = 0
+
+    func play(
+        stream _: AsyncThrowingStream<Data, Error>,
+        sampleRate _: Double) async -> StreamingPlaybackResult
+    {
+        let index = self.nextPlaybackIndex
+        self.nextPlaybackIndex += 1
+        self.activePlaybackIndexes.insert(index)
+        return await withCheckedContinuation { continuation in
+            self.continuations[index] = continuation
+            self.playbackStarted.send(index)
+        }
+    }
+
+    func stop() -> Double? {
+        nil
+    }
+
+    func waitForPlayback(_ expectedIndex: Int) async throws {
+        let index = try await self.playbackStarted.next("playback \(expectedIndex) to start")
+        guard index == expectedIndex else {
+            throw RealtimeRelayTestTimeout(operation: "playback \(expectedIndex), got \(index)")
+        }
+    }
+
+    func complete(_ index: Int) {
+        self.activePlaybackIndexes.remove(index)
+        self.continuations.removeValue(forKey: index)?.resume(
+            returning: StreamingPlaybackResult(finished: true, interruptedAt: nil))
+        DispatchQueue.main.async {
+            self.mainActorCheckpoint.send(index)
+        }
+    }
+
+    func waitUntilCompletionWasHandled(_ expectedIndex: Int) async throws {
+        let index = try await self.mainActorCheckpoint.next("playback \(expectedIndex) completion")
+        guard index == expectedIndex else {
+            throw RealtimeRelayTestTimeout(
+                operation: "playback \(expectedIndex) completion, got \(index)")
+        }
+    }
+}
+
 @MainActor
 private final class TestRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     var suppressesInputDuringOutput = false
@@ -103,8 +191,6 @@ private actor RealtimeRelayStartupBarrier {
         self.releaseWaiter?.resume()
         self.releaseWaiter = nil
     }
-
-    func checkpoint() {}
 }
 
 private struct RealtimeRelayStartupRequest: Sendable {
@@ -395,39 +481,38 @@ extension RealtimeTalkRelaySessionTests {
         session.stop()
     }
 
-    @Test func `stale audio done cannot finish replacement turn playback`() async {
+    @Test func `stale player completion cannot finish replacement turn playback`() async throws {
+        let player = IndexedPCMStreamingAudioPlayer()
+        var speakingStates: [Bool] = []
         let session = RealtimeTalkRelaySession(
             transport: unusedRealtimeRelayTransport(),
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
             audioCapture: TestRealtimeTalkAudioCapture(),
-            pcmPlayer: DrainingPCMStreamingAudioPlayer(),
+            pcmPlayer: player,
             onStatus: { _ in },
-            onSpeakingChanged: { _ in })
+            onSpeakingChanged: { speakingStates.append($0) })
         session._test_setRelaySessionId("relay-1")
-        let done: (String) -> EventFrame = { turnId in
-            EventFrame(
-                type: "event",
-                event: "talk.event",
-                payload: AnyCodable([
-                    "relaySessionId": "relay-1",
-                    "type": "audioDone",
-                    "talkEvent": ["turnId": turnId],
-                ]),
-                seq: nil,
-                stateversion: nil)
-        }
 
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-a"))
+        try await player.waitForPlayback(0)
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-b"))
-        await session._test_handleGatewayEvent(done("turn-a"))
-        await Task.yield()
-        #expect(session._test_isOutputPlaying())
+        try await player.waitForPlayback(1)
 
-        await session._test_handleGatewayEvent(done("turn-b"))
-        for _ in 0..<10 where session._test_isOutputPlaying() {
-            await Task.yield()
-        }
+        #expect(player.activePlaybackIndexes.contains(1))
+        #expect(speakingStates == [true, false, true])
+
+        player.complete(0)
+        try await player.waitUntilCompletionWasHandled(0)
+
+        #expect(player.activePlaybackIndexes.contains(1))
+        #expect(session._test_isOutputPlaying())
+        #expect(speakingStates == [true, false, true])
+
+        player.complete(1)
+        try await player.waitUntilCompletionWasHandled(1)
+
         #expect(!session._test_isOutputPlaying())
+        #expect(speakingStates == [true, false, true, false])
     }
 
     @Test func `stale relay session cannot clear successor playback`() async {
@@ -598,9 +683,10 @@ extension RealtimeTalkRelaySessionTests {
 
     @Test(arguments: ["stale", "idle"])
     func `non applied cancellation retires the wait without reopening the old turn`(
-        status: String) async
+        status: String) async throws
     {
         let barrier = RealtimeRelayStartupBarrier()
+        let speakingChanged = RealtimeRelayTestSignal<Bool>()
         var speakingStates: [Bool] = []
         let requests = RealtimeRelayStartupRequestLog()
         let session = RealtimeTalkRelaySession(
@@ -615,22 +701,30 @@ extension RealtimeTalkRelaySessionTests {
             audioCapture: TestRealtimeTalkAudioCapture(),
             pcmPlayer: DrainingPCMStreamingAudioPlayer(),
             onStatus: { _ in },
-            onSpeakingChanged: { speakingStates.append($0) })
+            onSpeakingChanged: {
+                speakingStates.append($0)
+                speakingChanged.send($0)
+            })
         session._test_setRelaySessionId("relay-1")
+        session._test_prepareAudioSender(relaySessionId: "relay-1")
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
+        #expect(try await speakingChanged.next("initial output") == true)
 
         #expect(session.cancelOutput())
+        #expect(try await speakingChanged.next("cancellation fence") == false)
         await barrier.waitUntilEntered()
         #expect(await requests.snapshot().map(\.method) == ["talk.session.cancelOutput"])
+        #expect(session._test_enqueueMicrophoneFrame(Data([0x01])) == nil)
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
+        #expect(speakingStates == [true, false])
+
         await barrier.release()
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
-        for _ in 0..<8 {
-            await barrier.checkpoint()
+        let successor = Task { @MainActor in
             await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
-            if speakingStates.count == 3 {
-                break
-            }
         }
+        #expect(try await speakingChanged.next("successor output") == true)
+        await successor.value
 
         #expect(speakingStates == [true, false, true])
     }
