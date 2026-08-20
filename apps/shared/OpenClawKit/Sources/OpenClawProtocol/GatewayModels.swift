@@ -6440,6 +6440,10 @@ public struct SessionRow: Codable, Sendable {
     public let estimatedcostusd: Double?
     public let model: String?
     public let modelprovider: String?
+    public let thinkinglevel: String?
+    public let thinkinglevels: [[String: AnyCodable]]?
+    public let thinkingoptions: [String]?
+    public let thinkingdefault: String?
     public let tooloverrides: [String: AnyCodable]?
 
     public init(
@@ -6510,6 +6514,10 @@ public struct SessionRow: Codable, Sendable {
         estimatedcostusd: Double? = nil,
         model: String? = nil,
         modelprovider: String? = nil,
+        thinkinglevel: String? = nil,
+        thinkinglevels: [[String: AnyCodable]]? = nil,
+        thinkingoptions: [String]? = nil,
+        thinkingdefault: String? = nil,
         tooloverrides: [String: AnyCodable]? = nil)
     {
         self.key = key
@@ -6579,6 +6587,10 @@ public struct SessionRow: Codable, Sendable {
         self.estimatedcostusd = estimatedcostusd
         self.model = model
         self.modelprovider = modelprovider
+        self.thinkinglevel = thinkinglevel
+        self.thinkinglevels = thinkinglevels
+        self.thinkingoptions = thinkingoptions
+        self.thinkingdefault = thinkingdefault
         self.tooloverrides = tooloverrides
     }
 
@@ -6650,6 +6662,10 @@ public struct SessionRow: Codable, Sendable {
         case estimatedcostusd = "estimatedCostUsd"
         case model
         case modelprovider = "modelProvider"
+        case thinkinglevel = "thinkingLevel"
+        case thinkinglevels = "thinkingLevels"
+        case thinkingoptions = "thinkingOptions"
+        case thinkingdefault = "thinkingDefault"
         case tooloverrides = "toolOverrides"
     }
 }

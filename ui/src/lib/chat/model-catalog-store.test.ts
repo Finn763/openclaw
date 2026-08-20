@@ -1,3 +1,4 @@
+import { DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS } from "@openclaw/gateway-client/browser";
 // Control UI tests cover models behavior.
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
@@ -110,6 +111,29 @@ describe("loadModels", () => {
         "models.list",
         { agentId: "main", preparedOnly: true, view: "configured" },
         { timeoutMs: 350 },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps each startup request inside a longer retry window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(0));
+      const request = vi.fn(async () => ({ models: [] }));
+      const client = { request } as unknown as GatewayBrowserClient;
+
+      await revalidateModels(client, {
+        agentId: "main",
+        preparedOnly: true,
+        startupRetryWindowMs: 60_000,
+      });
+
+      expect(request).toHaveBeenCalledWith(
+        "models.list",
+        { agentId: "main", preparedOnly: true, view: "configured" },
+        { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
       );
     } finally {
       vi.useRealTimers();

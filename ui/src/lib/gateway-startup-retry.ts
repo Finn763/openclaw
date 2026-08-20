@@ -1,4 +1,7 @@
-import { resolveGatewayStartupRetryAfterMs } from "@openclaw/gateway-client/browser";
+import {
+  DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+  resolveGatewayStartupRetryAfterMs,
+} from "@openclaw/gateway-client/browser";
 
 export async function retryGatewayStartupRequest<T>(params: {
   retryWindowMs: number;
@@ -14,7 +17,7 @@ export async function retryGatewayStartupRequest<T>(params: {
       throw latestError ?? new Error(params.timeoutMessage);
     }
     try {
-      return await params.request(remainingMs);
+      return await params.request(Math.min(remainingMs, DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS));
     } catch (error) {
       const requestError = params.requestFailure(error);
       const retryAfterMs = resolveGatewayStartupRetryAfterMs(requestError);
