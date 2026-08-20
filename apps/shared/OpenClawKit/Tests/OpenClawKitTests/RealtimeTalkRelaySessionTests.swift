@@ -104,10 +104,12 @@ private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
         let index = self.nextPlaybackIndex
         self.nextPlaybackIndex += 1
         self.activePlaybackIndexes.insert(index)
-        return await withCheckedContinuation { continuation in
+        let result = await withCheckedContinuation { continuation in
             self.continuations[index] = continuation
             self.playbackStarted.send(index)
         }
+        self.mainActorCheckpoint.send(index)
+        return result
     }
 
     func stop() -> Double? {
@@ -125,9 +127,6 @@ private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
         self.activePlaybackIndexes.remove(index)
         self.continuations.removeValue(forKey: index)?.resume(
             returning: StreamingPlaybackResult(finished: true, interruptedAt: nil))
-        DispatchQueue.main.async {
-            self.mainActorCheckpoint.send(index)
-        }
     }
 
     func waitUntilCompletionWasHandled(_ expectedIndex: Int) async throws {
@@ -207,6 +206,57 @@ private actor RealtimeRelayStartupRequestLog {
 
     func snapshot() -> [RealtimeRelayStartupRequest] {
         self.requests
+    }
+}
+
+private enum ControlledAudioAppendBehavior {
+    case suspended
+    case requestFailure
+    case malformedResponse
+}
+
+private actor ControlledRealtimeAudioRequests {
+    private let behavior: ControlledAudioAppendBehavior
+    private var methods: [String] = []
+    private var appendContinuations: [CheckedContinuation<Data, any Error>] = []
+    private let requestObserved = RealtimeRelayTestSignal<Int>()
+
+    init(behavior: ControlledAudioAppendBehavior = .suspended) {
+        self.behavior = behavior
+    }
+
+    func request(method: String) async throws -> Data {
+        self.methods.append(method)
+        self.requestObserved.send(self.methods.count)
+        guard method == "talk.session.appendAudio" else {
+            return Data("{\"ok\":true}".utf8)
+        }
+        switch self.behavior {
+        case .suspended:
+            return try await withCheckedThrowingContinuation { continuation in
+                self.appendContinuations.append(continuation)
+            }
+        case .requestFailure:
+            throw URLError(.badServerResponse)
+        case .malformedResponse:
+            return Data("{}".utf8)
+        }
+    }
+
+    func waitForRequestCount(_ expectedCount: Int) async throws {
+        while self.methods.count < expectedCount {
+            _ = try await self.requestObserved.next("\(expectedCount) relay requests")
+        }
+    }
+
+    func snapshot() -> [String] {
+        self.methods
+    }
+
+    func failPendingAppends() {
+        let continuations = self.appendContinuations
+        self.appendContinuations.removeAll()
+        continuations.forEach { $0.resume(throwing: URLError(.badServerResponse)) }
     }
 }
 
@@ -1297,7 +1347,7 @@ extension RealtimeTalkRelaySessionTests {
 
         #expect(issues.map(\.code) == ["audio_input_unavailable"])
         #expect(issues.map(\.phase) == ["audio-input"])
-        #expect(terminations == [.audioCaptureFailed(
+        #expect(terminations == [.audioInputFailed(
             message: "Realtime microphone became unavailable: no input")])
         #expect(!audioCapture.isStarted)
         let recorded = await requests.snapshot()
@@ -1608,5 +1658,156 @@ extension RealtimeTalkRelaySessionTests {
         let timestamp = try #require(recorded.first?.params?["timestamp"]?.value as? Double)
         #expect(timestamp == 4824)
         #expect(timestamp == timestamp.rounded())
+    }
+
+    @Test func `microphone saturation terminates once without sending the fifth frame`() async throws {
+        let requests = ControlledRealtimeAudioRequests()
+        let audioCapture = TestRealtimeTalkAudioCapture()
+        var statuses: [String] = []
+        var issues: [RealtimeTalkRelayIssue] = []
+        var terminations: [RealtimeTalkRelayTermination] = []
+        let terminationObserved = RealtimeRelayTestSignal<RealtimeTalkRelayTermination>()
+        let session = RealtimeTalkRelaySession(
+            transport: RealtimeTalkRelayTransport(
+                subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
+                request: { method, _, _ in try await requests.request(method: method) }),
+            options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+            audioCapture: audioCapture,
+            pcmPlayer: UnusedPCMStreamingAudioPlayer(),
+            onStatus: { statuses.append($0) },
+            onIssue: { issues.append($0) },
+            onTermination: {
+                terminations.append($0)
+                terminationObserved.send($0)
+            },
+            onSpeakingChanged: { _ in })
+        session._test_setRelaySessionId("relay-1")
+        session._test_prepareAudioSender(relaySessionId: "relay-1")
+        try session._test_startMicrophonePump()
+        let stopCountBeforeFailure = audioCapture.stopCount
+
+        let pending = try (0..<4).map { index in
+            try #require(session._test_enqueueMicrophoneFrame(Data([UInt8(index)])))
+        }
+        try await requests.waitForRequestCount(4)
+        let saturated = try #require(session._test_enqueueMicrophoneFrame(Data([0xFF])))
+        do {
+            _ = try await terminationObserved.next("microphone saturation termination")
+        } catch {
+            saturated.cancel()
+            pending.forEach { $0.cancel() }
+            await requests.failPendingAppends()
+            await saturated.value
+            for task in pending {
+                await task.value
+            }
+            throw error
+        }
+        await saturated.value
+        try await requests.waitForRequestCount(5)
+
+        let message = "Realtime audio input fell behind. Reconnecting…"
+        #expect(await requests.snapshot() == [
+            "talk.session.appendAudio",
+            "talk.session.appendAudio",
+            "talk.session.appendAudio",
+            "talk.session.appendAudio",
+            "talk.session.close",
+        ])
+        #expect(statuses == [message])
+        #expect(issues.map(\.code) == ["audio_input_unavailable"])
+        #expect(issues.map(\.message) == [message])
+        #expect(terminations == [.audioInputFailed(message: message)])
+        #expect(audioCapture.stopCount == stopCountBeforeFailure + 1)
+
+        await requests.failPendingAppends()
+        for task in pending {
+            await task.value
+        }
+        #expect(statuses == [message])
+        #expect(issues.count == 1)
+        #expect(terminations.count == 1)
+        #expect(await requests.snapshot().filter { $0 == "talk.session.close" }.count == 1)
+    }
+
+    @Test func `active audio request and response failures share the input failure owner`() async throws {
+        for behavior in [ControlledAudioAppendBehavior.requestFailure, .malformedResponse] {
+            let requests = ControlledRealtimeAudioRequests(behavior: behavior)
+            let audioCapture = TestRealtimeTalkAudioCapture()
+            var statuses: [String] = []
+            var issues: [RealtimeTalkRelayIssue] = []
+            var terminations: [RealtimeTalkRelayTermination] = []
+            let session = RealtimeTalkRelaySession(
+                transport: RealtimeTalkRelayTransport(
+                    subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
+                    request: { method, _, _ in try await requests.request(method: method) }),
+                options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+                audioCapture: audioCapture,
+                pcmPlayer: UnusedPCMStreamingAudioPlayer(),
+                onStatus: { statuses.append($0) },
+                onIssue: { issues.append($0) },
+                onTermination: { terminations.append($0) },
+                onSpeakingChanged: { _ in })
+            session._test_setRelaySessionId("relay-1")
+            session._test_prepareAudioSender(relaySessionId: "relay-1")
+            try session._test_startMicrophonePump()
+            let stopCountBeforeFailure = audioCapture.stopCount
+
+            let send = try #require(session._test_enqueueMicrophoneFrame(Data([0x01])))
+            await send.value
+            try await requests.waitForRequestCount(2)
+
+            let issue = try #require(issues.first)
+            #expect(issue.code == "audio_input_unavailable")
+            #expect(issue.phase == "audio-input")
+            #expect(issue.message.hasPrefix("Realtime audio failed: "))
+            #expect(statuses == [issue.message])
+            #expect(terminations == [.audioInputFailed(message: issue.message)])
+            #expect(audioCapture.stopCount == stopCountBeforeFailure + 1)
+            #expect(await requests.snapshot() == [
+                "talk.session.appendAudio",
+                "talk.session.close",
+            ])
+        }
+    }
+
+    @Test func `locally stopped audio sends retire without terminal effects`() async throws {
+        for stopSession in [false, true] {
+            let requests = ControlledRealtimeAudioRequests()
+            var statuses: [String] = []
+            var issues: [RealtimeTalkRelayIssue] = []
+            var terminations: [RealtimeTalkRelayTermination] = []
+            let session = RealtimeTalkRelaySession(
+                transport: RealtimeTalkRelayTransport(
+                    subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
+                    request: { method, _, _ in try await requests.request(method: method) }),
+                options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+                audioCapture: TestRealtimeTalkAudioCapture(),
+                pcmPlayer: UnusedPCMStreamingAudioPlayer(),
+                onStatus: { statuses.append($0) },
+                onIssue: { issues.append($0) },
+                onTermination: { terminations.append($0) },
+                onSpeakingChanged: { _ in })
+            session._test_setRelaySessionId("relay-1")
+            session._test_prepareAudioSender(relaySessionId: "relay-1")
+            let send = try #require(session._test_enqueueMicrophoneFrame(Data([0x01])))
+            try await requests.waitForRequestCount(1)
+
+            if stopSession {
+                session.stop()
+                try await requests.waitForRequestCount(2)
+            } else {
+                try session.setInputPaused(true)
+            }
+            await requests.failPendingAppends()
+            await send.value
+
+            #expect(statuses.isEmpty)
+            #expect(issues.isEmpty)
+            #expect(terminations.isEmpty)
+            if !stopSession {
+                session.stop()
+            }
+        }
     }
 }

@@ -315,7 +315,7 @@ struct TalkModeRuntimeSpeechTests {
         #expect(await runtime.realtimeSession != nil)
 
         await runtime.handleRealtimeTermination(
-            .audioCaptureFailed(message: "microphone unavailable"),
+            .audioInputFailed(message: "microphone unavailable"),
             relayGeneration: relayGeneration)
 
         #expect(await runtime.realtimeSession == nil)

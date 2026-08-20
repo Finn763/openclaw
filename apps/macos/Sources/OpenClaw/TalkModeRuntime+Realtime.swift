@@ -200,7 +200,7 @@ extension TalkModeRuntime {
             phase: "audio-input")
         await self.handleRealtimeIssue(issue, relayGeneration: relayGeneration)
         await self.handleRealtimeTermination(
-            .audioCaptureFailed(message: issue.message),
+            .audioInputFailed(message: issue.message),
             relayGeneration: relayGeneration)
     }
 

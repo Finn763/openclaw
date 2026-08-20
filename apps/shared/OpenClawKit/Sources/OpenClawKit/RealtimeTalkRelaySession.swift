@@ -117,9 +117,13 @@ public struct RealtimeTalkTranscript: Equatable, Sendable {
 public enum RealtimeTalkRelayTermination: Equatable, Sendable {
     case remoteClose(reason: String?)
     case eventStreamEnded
-    case audioCaptureFailed(message: String)
+    case audioInputFailed(message: String)
     case outputCancellationFailed
     case outputPlaybackOverflow
+}
+
+private enum RealtimeAudioSendOutcome {
+    case sent, inactive, saturated, failed(String)
 }
 
 private actor RealtimeAudioSender {
@@ -140,10 +144,9 @@ private actor RealtimeAudioSender {
         self.relaySessionId = nil
     }
 
-    func send(_ data: Data, timestampMs: Double) async -> String? {
-        guard !Task.isCancelled else { return nil }
-        guard let relaySessionId else { return nil }
-        guard self.pendingSends < self.maxPendingSends else { return nil }
+    func send(_ data: Data, timestampMs: Double) async -> RealtimeAudioSendOutcome {
+        guard !Task.isCancelled, let relaySessionId else { return .inactive }
+        guard self.pendingSends < self.maxPendingSends else { return .saturated }
         self.pendingSends += 1
         defer { self.pendingSends -= 1 }
         // The Gateway carries this straight into the provider's media timeline, and OpenAI rejects
@@ -159,9 +162,9 @@ private actor RealtimeAudioSender {
             let response = try await self.request("talk.session.appendAudio", payload, 8000)
             try Task.checkCancellation()
             _ = try JSONDecoder().decode(TalkSessionOkResult.self, from: response)
-            return nil
+            return .sent
         } catch {
-            return error.localizedDescription
+            return Task.isCancelled ? .inactive : .failed(error.localizedDescription)
         }
     }
 }
@@ -1325,19 +1328,19 @@ extension RealtimeTalkRelaySession {
                 }
             },
             onFailure: { [weak self] message in
-                self?.handleMicrophoneFailure(
+                self?.handleAudioInputFailure(
                     message,
                     lifecycleGeneration: lifecycleGeneration,
                     audioCaptureGeneration: audioCaptureGeneration)
             })
     }
 
-    private func handleMicrophoneFailure(
+    private func handleAudioInputFailure(
         _ message: String,
         lifecycleGeneration: UInt64,
         audioCaptureGeneration: UInt64)
     {
-        guard self.isCurrentLifecycleLocally(lifecycleGeneration),
+        guard !self.isClosed, self.isCurrentLifecycleLocally(lifecycleGeneration),
               self.audioCaptureGeneration == audioCaptureGeneration
         else { return }
         let issue = RealtimeTalkRelayIssue(
@@ -1351,7 +1354,7 @@ extension RealtimeTalkRelaySession {
         self.onIssue(issue)
         self.onStatus(message)
         self.close(sendClose: true)
-        self.onTermination(.audioCaptureFailed(message: message))
+        self.onTermination(.audioInputFailed(message: message))
     }
 
     @discardableResult
@@ -1390,12 +1393,20 @@ extension RealtimeTalkRelaySession {
                   self.audioCaptureGeneration == audioCaptureGeneration,
                   !self.isInputPaused, self.suppressedOutputIdentity == nil
             else { return }
-            guard let message = await audioSender.send(encoded, timestampMs: timestampMs) else { return }
-            guard self.isCurrentLifecycleLocally(lifecycleGeneration),
-                  self.audioCaptureGeneration == audioCaptureGeneration,
-                  !self.isInputPaused
-            else { return }
-            self.onStatus(String(format: String(localized: "Realtime audio failed: %@"), message))
+            switch await audioSender.send(encoded, timestampMs: timestampMs) {
+            case .sent, .inactive:
+                return
+            case .saturated:
+                self.handleAudioInputFailure(
+                    String(localized: "Realtime audio input fell behind. Reconnecting…"),
+                    lifecycleGeneration: lifecycleGeneration,
+                    audioCaptureGeneration: audioCaptureGeneration)
+            case let .failed(message):
+                self.handleAudioInputFailure(
+                    String(format: String(localized: "Realtime audio failed: %@"), message),
+                    lifecycleGeneration: lifecycleGeneration,
+                    audioCaptureGeneration: audioCaptureGeneration)
+            }
         }
         self.audioSendTasks[taskID] = task
         return task
