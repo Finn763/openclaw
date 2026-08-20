@@ -71,8 +71,9 @@ export function resolveChatModelMetadataAgentId(state: ChatPageHost): string | n
   const agentId = resolveChatAgentId(state);
   const roster = state.agentsList?.agents;
   if (!roster) {
-    const defaultAgentId = state.assistantAgentId?.trim();
-    return defaultAgentId && normalizeAgentId(defaultAgentId) === agentId ? agentId : null;
+    // The routed session remains authoritative until the roster can classify it.
+    // Treating an absent roster as rejection drops the startup metadata fallback.
+    return agentId;
   }
   return listSelectableAgents(roster).some(
     (candidate) => normalizeAgentId(candidate.id) === agentId,

@@ -2259,6 +2259,26 @@ describe("refreshChatMetadata", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("loads routed non-default agent metadata before the roster arrives", async () => {
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      expect(method).toBe("chat.metadata");
+      expect(params).toEqual({ agentId: "work" });
+      return {
+        commands: [],
+        models: [{ id: "work-model", name: "Work Model", provider: "openai" }],
+      };
+    });
+    const state = createMetadataState(request, { agentsList: null });
+
+    await refreshChatMetadata(state);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(state.chatModelCatalogAgentId).toBe("work");
+    expect(state.chatModelCatalog).toEqual([
+      { id: "work-model", name: "Work Model", provider: "openai" },
+    ]);
+  });
+
   it("retires a prior catalog error without requesting metadata for a system agent", async () => {
     const request = vi.fn();
     const state = createMetadataState(request, {
