@@ -43,9 +43,7 @@ describe("worker deploy build plugin", () => {
     const transformed = plugin.transform.call({ error: fail }, source, runtimePath);
 
     expect(transformed).toContain('import * as playwrightCore from "playwright-core";');
-    expect(transformed).toContain(
-      'import { getUserAgent } from "playwright-core/lib/coreBundle";',
-    );
+    expect(transformed).toContain('import { getUserAgent } from "playwright-core/lib/coreBundle";');
     expect(transformed).toContain("return playwrightCore;");
     expect(transformed).not.toContain("createRequire");
     expect(transformed).not.toContain('require("playwright-core")');
