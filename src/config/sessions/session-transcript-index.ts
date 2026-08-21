@@ -17,6 +17,7 @@ import {
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
 import { ensureOpenClawAgentDisplayRowSchema } from "../../state/openclaw-agent-display-row-schema.js";
 import { ensureOpenClawAgentTranscriptProjectionBindingSchema } from "../../state/openclaw-agent-transcript-projection-binding-schema.js";
+import { chunkItems } from "../../utils/chunk-items.js";
 import {
   appendEligibleSessionTranscriptDisplayRowInTransaction,
   hasTranscriptMessage,
@@ -49,8 +50,7 @@ import {
   parseSessionTranscriptTreeEntry,
 } from "./transcript-tree.js";
 
-const SQLITE_TABLE_EXISTS_SQL =
-  "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?";
+const SQLITE_TABLE_EXISTS_SQL = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?";
 
 type TranscriptIndexDatabase = Omit<
   Pick<
@@ -518,14 +518,10 @@ export function reconcileSessionTranscriptIndexInTransaction(
       throw new Error(`Transcript projection claim changed while rebuilding ${sessionId}`);
     }
   } while (deleted.hasMore);
-  for (
-    let offset = 0;
-    offset < projection.activeRows.length;
-    offset += SYNCHRONOUS_PROJECTION_CHUNK_ROWS
-  ) {
+  for (const activeRows of chunkItems(projection.activeRows, SYNCHRONOUS_PROJECTION_CHUNK_ROWS)) {
     if (
       !appendPreparedSessionTranscriptProjectionChunkInTransaction(db, {
-        activeRows: projection.activeRows.slice(offset, offset + SYNCHRONOUS_PROJECTION_CHUNK_ROWS),
+        activeRows,
         claimId,
         sessionId,
         sourceGeneration: projection.sourceGeneration,
@@ -535,15 +531,11 @@ export function reconcileSessionTranscriptIndexInTransaction(
       throw new Error(`Transcript projection claim changed while rebuilding ${sessionId}`);
     }
   }
-  for (
-    let offset = 0;
-    offset < projection.ftsRows.length;
-    offset += SYNCHRONOUS_PROJECTION_FTS_CHUNK_ROWS
-  ) {
+  for (const ftsRows of chunkItems(projection.ftsRows, SYNCHRONOUS_PROJECTION_FTS_CHUNK_ROWS)) {
     if (
       !appendPreparedSessionTranscriptProjectionChunkInTransaction(db, {
         claimId,
-        ftsRows: projection.ftsRows.slice(offset, offset + SYNCHRONOUS_PROJECTION_FTS_CHUNK_ROWS),
+        ftsRows,
         sessionId,
         sourceGeneration: projection.sourceGeneration,
         sourceIndexedSeq: projection.sourceIndexedSeq,
@@ -564,9 +556,11 @@ export function reconcileSessionTranscriptIndexInTransaction(
  * behind the newest row. Ordered for deterministic reconcile passes.
  */
 function hasTranscriptRows(db: DatabaseSync): boolean {
-  return Boolean(
-    db.prepare("SELECT 1 FROM transcript_events LIMIT 1").get(), // sqlite-allow-raw -- Avoid creating the lazy display group for an unused agent database.
-  );
+  return Boolean(db.prepare("SELECT 1 FROM transcript_events LIMIT 1").get()); // sqlite-allow-raw -- Avoid creating the lazy display group for an unused agent database.
+}
+
+function sessionIds(rows: readonly { session_id: unknown }[]): string[] {
+  return rows.flatMap(({ session_id }) => (typeof session_id === "string" ? [session_id] : []));
 }
 
 /** Lists sessions whose active and FTS projection is not bound to the current source. */
@@ -625,17 +619,15 @@ export function listSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync): s
       )
       .orderBy("session_windows.session_id"),
   ).rows;
-  return rows.flatMap((row) => (typeof row.session_id === "string" ? [row.session_id] : []));
+  return sessionIds(rows);
 }
 
 /** Lists sessions whose active, FTS, or display projection requires repair. */
 export function listSessionsNeedingTranscriptProjectionReconcile(db: DatabaseSync): string[] {
   const transcriptRowsPresent = hasTranscriptRows(db);
   const hasDisplayStateTable = Boolean(
-    // sqlite-allow-raw -- Avoid installing the lazy display group solely to decide whether reconcile has work.
-    db
-      .prepare(/* sqlite-allow-raw */ SQLITE_TABLE_EXISTS_SQL)
-      .get("session_transcript_display_state"),
+    // sqlite-allow-raw -- Probe the lazy schema without installing it.
+    db.prepare(SQLITE_TABLE_EXISTS_SQL).get("session_transcript_display_state"),
   );
   if (!transcriptRowsPresent && !hasDisplayStateTable) {
     return [];
@@ -724,19 +716,11 @@ export function listSessionsNeedingTranscriptProjectionReconcile(db: DatabaseSyn
       ),
   ).rows;
   return [
-    ...new Set(
-      [
-        ...listSessionsNeedingTranscriptIndexReconcile(db),
-        ...rows,
-        ...displayDirtyRows,
-      ].flatMap((row) =>
-        typeof row === "string"
-          ? [row]
-          : typeof row.session_id === "string"
-            ? [row.session_id]
-            : [],
-      ),
-    ),
+    ...new Set([
+      ...listSessionsNeedingTranscriptIndexReconcile(db),
+      ...sessionIds(rows),
+      ...sessionIds(displayDirtyRows),
+    ]),
   ].toSorted();
 }
 

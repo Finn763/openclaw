@@ -10,6 +10,8 @@ const SESSION_TRANSCRIPT_PROJECTION_BINDINGS_OWNER_INDEX =
 
 const BINDING_SCHEMA_START = `CREATE TABLE IF NOT EXISTS ${SESSION_TRANSCRIPT_PROJECTION_BINDINGS_TABLE} (`;
 const BINDING_SCHEMA_END = "CREATE VIRTUAL TABLE IF NOT EXISTS session_transcript_fts USING fts5(";
+const SQLITE_SCHEMA_OBJECT_EXISTS_SQL = "SELECT 1 FROM sqlite_schema WHERE name = ?";
+const SQLITE_SCHEMA_VERSION_SQL = "PRAGMA schema_version";
 const VALIDATED_SCHEMA_VERSIONS = new WeakMap<DatabaseSync, number>();
 
 function splitBindingSchema(sql: string): { bindings: string; withoutBindings: string } {
@@ -30,11 +32,17 @@ export const AGENT_SCHEMA_WITHOUT_TRANSCRIPT_PROJECTION_BINDINGS_SQL =
   bindingSchema.withoutBindings;
 
 function schemaObjectExists(db: DatabaseSync, name: string): boolean {
-  return Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name = ?").get(name));
+  return Boolean(
+    // sqlite-allow-raw -- Probe the optional additive schema.
+    db.prepare(SQLITE_SCHEMA_OBJECT_EXISTS_SQL).get(name),
+  );
 }
 
 function readSchemaVersion(db: DatabaseSync): number {
-  const schemaVersion = db.prepare("PRAGMA schema_version").get()?.schema_version;
+  const statement =
+    // sqlite-allow-raw -- Read SQLite's authoritative schema cache token.
+    db.prepare(SQLITE_SCHEMA_VERSION_SQL);
+  const schemaVersion = statement.get()?.schema_version;
   if (typeof schemaVersion !== "number") {
     throw new Error("OpenClaw agent transcript projection binding schema version is invalid.");
   }

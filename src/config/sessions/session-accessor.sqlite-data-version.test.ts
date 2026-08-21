@@ -11,6 +11,7 @@ import {
   runOpenClawAgentWriteTransaction,
 } from "../../state/openclaw-agent-db.js";
 import { ensureOpenClawAgentDisplayRowSchema } from "../../state/openclaw-agent-display-row-schema.js";
+import { ensureOpenClawAgentTranscriptProjectionBindingSchema } from "../../state/openclaw-agent-transcript-projection-binding-schema.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import {
   appendTranscriptMessage,
@@ -272,7 +273,9 @@ describe("SQLite session entry cache", () => {
       sessionId: "same-connection-non-entry-2",
       updatedAt: 1,
     });
-    ensureOpenClawAgentDisplayRowSchema(openOpenClawAgentDatabase(scope).db);
+    const database = openOpenClawAgentDatabase(scope).db;
+    ensureOpenClawAgentDisplayRowSchema(database);
+    ensureOpenClawAgentTranscriptProjectionBindingSchema(database);
     const first = listSessionEntriesCore({ ...scope, clone: false, projection: "list" });
 
     await appendTranscriptMessage(

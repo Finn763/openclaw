@@ -7,6 +7,7 @@ import {
   readClosedTranscriptTurn,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import { writeSessionTranscriptProjectionBindingInTransaction } from "../../config/sessions/session-transcript-source-generation.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -353,7 +354,7 @@ describe("accepted context-engine turn finalization", () => {
     if (siblingIdentity?.seq === undefined) {
       throw new Error("expected sibling transcript identity");
     }
-    // Model a stale/concurrent projection that assigns a later active position
+    // Model a published malformed projection that assigns a later active position
     // to a sibling. Position order alone must not make it an accepted descendant.
     database.db
       .prepare(
@@ -370,6 +371,11 @@ describe("accepted context-engine turn finalization", () => {
         "UPDATE session_transcript_index_state SET indexed_seq = ?, needs_rebuild = 0 WHERE session_id = ?",
       )
       .run(siblingIdentity.seq, target.sessionId);
+    writeSessionTranscriptProjectionBindingInTransaction(database.db, target.sessionId, {
+      projection: "active",
+      projectionGeneration: null,
+      sourceGeneration: terminal.anchor.generation,
+    });
     const siblingAnchor = readActiveTranscriptEntryAnchor({
       ...target,
       entryId: sibling.messageId,

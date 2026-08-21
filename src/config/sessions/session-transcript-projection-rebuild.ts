@@ -83,7 +83,7 @@ export type PreparedSessionTranscriptProjection = PreparedSessionTranscriptProje
   ftsRows: TranscriptIndexEntry[];
 };
 
-export type SessionTranscriptProjectionSourceRow = {
+type SessionTranscriptProjectionSourceRow = {
   createdAt: number;
   event: unknown;
   seq: number;

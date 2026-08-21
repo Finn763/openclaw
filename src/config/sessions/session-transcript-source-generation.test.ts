@@ -1,11 +1,18 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import type { Worker } from "node:worker_threads";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
   runOpenClawAgentWriteTransaction,
 } from "../../state/openclaw-agent-db.js";
-import { appendTranscriptMessage, upsertSessionEntryCore } from "./session-accessor.js";
+import {
+  appendTranscriptMessage,
+  persistSessionTranscriptTurn,
+  upsertSessionEntryCore,
+} from "./session-accessor.js";
+import { readSessionTranscriptMessageEventCount } from "./session-accessor.sqlite-active-events.js";
 import { ensureSqliteTranscriptGenerationsForCanonicalRepair } from "./session-accessor.sqlite-canonical-repair.js";
 import { importSqliteSessionRows } from "./session-accessor.sqlite-import.js";
 import { resolveSqliteTranscriptScope } from "./session-accessor.sqlite-scope.js";
@@ -24,6 +31,7 @@ import {
   finalizePreparedSessionTranscriptProjectionInTransaction,
   prepareSessionTranscriptProjection,
 } from "./session-transcript-projection-rebuild.js";
+import { reconcileSessionTranscriptIndexes } from "./session-transcript-reconcile.js";
 import { replaceSessionTranscriptSourceGenerationInTransaction } from "./session-transcript-source-generation.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -429,6 +437,107 @@ describe("session transcript source generation", () => {
       { projection: "display", source_generation: plan!.sourceGeneration },
     ]);
   });
+
+  it.each(["failed", "done", "error", "exit", "rejected-continuation"] as const)(
+    "abandons a claimed projection after worker %s and permits a fresh retry",
+    async (terminal) => {
+      const scope = createScope(`worker-${terminal}`);
+      await persistSessionTranscriptTurn(scope, {
+        messages: [{ eventId: "seed", message: { role: "user", content: "seed" } }],
+        touchSessionEntry: false,
+      });
+      const databaseOptions = { agentId: scope.agentId, env: scope.env };
+      const database = openOpenClawAgentDatabase(databaseOptions);
+      database.db.exec(`
+        UPDATE session_transcript_index_state
+        SET needs_rebuild = 1
+        WHERE session_id = '${scope.sessionId}';
+        UPDATE session_transcript_display_state
+        SET needs_rebuild = 1
+        WHERE session_id = '${scope.sessionId}';
+      `);
+      const prepared = prepareSessionTranscriptProjection(database.db, scope.sessionId);
+      expect(prepared).toBeDefined();
+      const {
+        activeRows: _activeRows,
+        displayRows: _displayRows,
+        ftsRows: _ftsRows,
+        ...plan
+      } = prepared!;
+      const worker = Object.assign(new EventEmitter(), {
+        postMessage: vi.fn((message: { accepted: boolean; type: "continue" }) => {
+          if (!message.accepted) {
+            queueMicrotask(() => {
+              worker.emit("message", { type: "done" });
+              worker.emit("exit", 0);
+            });
+            return;
+          }
+          queueMicrotask(() => {
+            if (terminal === "failed") {
+              worker.emit("message", { error: "injected worker failure", type: "failed" });
+            } else if (terminal === "done") {
+              worker.emit("message", { type: "done" });
+              worker.emit("exit", 0);
+            } else if (terminal === "error") {
+              worker.emit("error", new Error("injected worker error"));
+            } else if (terminal === "exit") {
+              worker.emit("exit", 7);
+            } else {
+              runOpenClawAgentWriteTransaction((writeDatabase) => {
+                replaceSessionTranscriptSourceGenerationInTransaction(
+                  writeDatabase,
+                  scope.sessionId,
+                );
+              }, databaseOptions);
+              worker.emit("message", {
+                rows: prepared!.activeRows.slice(0, 1),
+                sessionId: scope.sessionId,
+                type: "active-chunk",
+              });
+            }
+          });
+        }),
+        terminate: vi.fn(async () => 0),
+      });
+      const createWorker = vi.fn(() => {
+        queueMicrotask(() => worker.emit("message", { plan, type: "plan-start" }));
+        return worker as unknown as Worker;
+      });
+
+      const outcome = reconcileSessionTranscriptIndexes({
+        ...databaseOptions,
+        createWorker,
+      });
+      if (terminal === "rejected-continuation") {
+        await expect(outcome).resolves.toEqual({ reconciledSessions: 0 });
+      } else {
+        await expect(outcome).rejects.toThrow();
+      }
+      expect(createWorker).toHaveBeenCalledTimes(1);
+      const abandoned = database.db
+        .prepare(
+          `SELECT
+             (SELECT updated_at FROM session_transcript_index_state WHERE session_id = ?) AS active_claim,
+             (SELECT updated_at FROM session_transcript_display_state WHERE session_id = ?) AS display_claim,
+             (SELECT COUNT(*) FROM session_transcript_projection_bindings WHERE session_id = ?) AS binding_count`,
+        )
+        .get(scope.sessionId, scope.sessionId, scope.sessionId) as {
+        active_claim: number;
+        binding_count: number;
+        display_claim: number;
+      };
+      expect(abandoned.binding_count).toBe(0);
+      expect(abandoned.active_claim).toBeGreaterThanOrEqual(0);
+      expect(abandoned.display_claim).toBeGreaterThanOrEqual(0);
+
+      await expect(reconcileSessionTranscriptIndexes(databaseOptions)).resolves.toEqual({
+        reconciledSessions: 1,
+      });
+      expect(readSessionTranscriptMessageEventCount(scope)).toBe(1);
+    },
+    20_000,
+  );
 
   it("rolls back a synchronous rebuild when its claimed source changes", async () => {
     const scope = createScope("synchronous-claim-race");
