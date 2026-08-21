@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -25,6 +25,38 @@ const TRUSTED_MAIN = { fullRef: "refs/heads/main", ref: "main", sha: SHA };
 
 function evidenceManifest() {
   return { runAttempt: 1, runId: "99", targetSha: TARGET_SHA };
+}
+
+function generatedManifest(planArtifact: Record<string, any>) {
+  return {
+    childRuns: {
+      normalCi: "101",
+      npmTelegram: "",
+      pluginPrerelease: "",
+      productPerformance: { blocking: true, conclusion: "", runId: "" },
+      releaseChecks: "",
+    },
+    controls: {
+      performanceBlocking: true,
+      performanceReportPublication: "artifact-only",
+      stableSoakRequired: false,
+    },
+    executionPlanSha256: planArtifact.sha256,
+    releaseProfile: "stable",
+    rerunGroup: "ci",
+    runAttempt: 2,
+    runId: "77",
+    runReleaseSoak: "false",
+    sourceParentRunAttempt: 1,
+    targetRef: "main",
+    targetSha: TARGET_SHA,
+    version: 3,
+    workflowFullRef: "refs/heads/release-ci/tooling",
+    workflowName: "Full Release Validation",
+    workflowRef: "release-ci/tooling",
+    workflowRefType: "branch",
+    workflowSha: SHA,
+  };
 }
 
 function child(key: string, overrides: Record<string, unknown> = {}) {
@@ -384,6 +416,111 @@ describe("release state artifacts", () => {
     expect(selected.sourceAttempts).toEqual({ decision: 2, drain: 1, executionPlan: 1 });
   });
 
+  function selectFromFilesystem(layout: "asymmetric" | "multi" | "single") {
+    const root = mkdtempSync(join(tmpdir(), `frv-select-${layout}-`));
+    const executionPlanPath = join(root, "plan.json");
+    const decisionRoot = join(root, "decisions");
+    const drainRoot = join(root, "drains");
+    const decisionPath = join(root, "selected-decision.json");
+    const drainPath = join(root, "selected-drain.json");
+    const outputPath = join(root, "output.txt");
+    const sealedPlan = executionPlan({ rerunGroup: "ci" });
+    mkdirSync(decisionRoot);
+    mkdirSync(drainRoot);
+    writeFileSync(executionPlanPath, JSON.stringify(sealedPlan));
+    const writeCandidate = (
+      candidateRoot: string,
+      prefix: string,
+      filename: string,
+      mode: "decision" | "drain",
+      attempt: number,
+      direct: boolean,
+    ) => {
+      const target = direct
+        ? join(candidateRoot, filename)
+        : join(candidateRoot, `${prefix}-77-${attempt}`, filename);
+      mkdirSync(resolve(target, ".."), { recursive: true });
+      writeFileSync(target, JSON.stringify(artifact(mode, attempt, sealedPlan)));
+    };
+    if (layout === "single") {
+      writeCandidate(
+        decisionRoot,
+        "full-release-decision",
+        "full-release-decision.json",
+        "decision",
+        2,
+        true,
+      );
+      writeCandidate(
+        drainRoot,
+        "full-release-diagnostics",
+        "full-release-diagnostic-manifest.json",
+        "drain",
+        2,
+        true,
+      );
+    } else {
+      writeCandidate(
+        decisionRoot,
+        "full-release-decision",
+        "full-release-decision.json",
+        "decision",
+        1,
+        false,
+      );
+      writeCandidate(
+        decisionRoot,
+        "full-release-decision",
+        "full-release-decision.json",
+        "decision",
+        2,
+        false,
+      );
+      writeCandidate(
+        drainRoot,
+        "full-release-diagnostics",
+        "full-release-diagnostic-manifest.json",
+        "drain",
+        layout === "asymmetric" ? 1 : 2,
+        false,
+      );
+    }
+    const result = spawnSync(process.execPath, [SCRIPT, "select"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DIAGNOSTIC_DRAIN_ATTEMPTS_PATH: drainRoot,
+        DIAGNOSTIC_DRAIN_PATH: drainPath,
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_REF_NAME: "release-ci/tooling",
+        GITHUB_RUN_ATTEMPT: "3",
+        GITHUB_RUN_ID: "77",
+        GITHUB_SHA: SHA,
+        RELEASE_DECISION_ATTEMPTS_PATH: decisionRoot,
+        RELEASE_DECISION_PATH: decisionPath,
+        RELEASE_EXECUTION_PLAN_PATH: executionPlanPath,
+        RELEASE_PROFILE: "stable",
+        RERUN_GROUP: "ci",
+        TARGET_SHA,
+      },
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return readFileSync(outputPath, "utf8");
+  }
+
+  it("selects state from the direct-file layout used for one artifact match", () => {
+    expect(selectFromFilesystem("single")).toContain("decision_source_attempt=2");
+  });
+
+  it("selects the newest state from the subdirectory layout used for multiple matches", () => {
+    expect(selectFromFilesystem("multi")).toContain("drain_source_attempt=2");
+  });
+
+  it("selects asymmetric Decision and Drain retries from filesystem artifacts", () => {
+    expect(selectFromFilesystem("asymmetric")).toContain("drain_source_attempt=1");
+  });
+
   it.each([
     {
       mutate: (drain: Record<string, any>) => {
@@ -499,6 +636,7 @@ for (const [flag, wanted] of Object.entries(expected)) {
 }
 console.log(JSON.stringify({
   children: JSON.parse(process.env.FRV_REUSED_CHILDREN),
+  manifest: JSON.parse(process.env.FRV_EVIDENCE_MANIFEST),
   releaseProfile: process.env.RELEASE_PROFILE,
   rerunGroup: process.env.RERUN_GROUP,
 }));
@@ -508,7 +646,7 @@ console.log(JSON.stringify({
       children: {},
       dockerPreflightResult: "skipped",
       evidenceChangedPaths: reuse.changedPaths,
-      evidenceManifest: evidenceManifest(),
+      evidenceManifest: { attackerControlled: true },
       evidencePolicy: reuse.policy,
       evidenceReuse: true,
       evidenceRootRunId: "99",
@@ -539,6 +677,7 @@ console.log(JSON.stringify({
           "--trusted-workflow-sha": reuse.trustedWorkflow.sha,
           "--validate-run": "99",
         }),
+        FRV_EVIDENCE_MANIFEST: JSON.stringify(evidenceManifest()),
         FRV_REUSED_CHILDREN: JSON.stringify(reusedEvidenceChildren()),
         FRV_VALIDATOR_ARGS: validatorArgs,
         FULL_RELEASE_EXECUTION_PLAN_PATH: output,
@@ -580,6 +719,116 @@ console.log(JSON.stringify({
     expect(JSON.parse(readFileSync(validatorArgs, "utf8"))).toContain("--expected-selected-run-id");
   });
 
+  it("blocks Decision when canonical evidence manifest changes after planning", () => {
+    const root = mkdtempSync(join(tmpdir(), "frv-reuse-manifest-mismatch-"));
+    const output = join(root, "decision.json");
+    const executionPlanPath = join(root, "plan.json");
+    const gh = join(root, "gh");
+    const validator = join(root, "validator.mjs");
+    const sealedPlan = executionPlan(
+      { rerunGroup: "ci" },
+      {
+        evidenceReuse: {
+          changedPaths: [],
+          evidenceSha: TARGET_SHA,
+          policy: "exact-target-full-validation-v1",
+          requested: true,
+          rootRunId: "99",
+          runUrl: "https://example.invalid/runs/99",
+          selectedRunId: "99",
+          sourceManifest: evidenceManifest(),
+        },
+      },
+    );
+    writeFileSync(executionPlanPath, JSON.stringify(sealedPlan));
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+case "$*" in
+  *"/jobs?"*) exit 0 ;;
+esac
+printf '%s\\n' '{"id":101,"event":"workflow_dispatch","path":".github/workflows/ci.yml@refs/heads/release-ci/tooling","display_title":"CI full-release-validation-77-1-ci","head_branch":"release-ci/tooling","head_sha":"${SHA}","run_attempt":1,"status":"completed","conclusion":"success","created_at":"2026-08-21T00:00:00Z","updated_at":"2026-08-21T00:01:00Z","html_url":"https://example.invalid/runs/101"}'
+`,
+    );
+    chmodSync(gh, 0o755);
+    writeFileSync(
+      validator,
+      `console.log(JSON.stringify({
+  children: ${JSON.stringify(reusedEvidenceChildren())},
+  manifest: {runAttempt: 1, runId: "99", targetSha: "${"c".repeat(40)}"},
+  releaseProfile: "stable",
+  rerunGroup: "ci"
+}));\n`,
+    );
+    const result = spawnSync(process.execPath, [SCRIPT, "decision"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FAIL_FAST: "false",
+        FULL_RELEASE_EXECUTION_PLAN_PATH: executionPlanPath,
+        FULL_RELEASE_STATE_PATH: output,
+        GITHUB_REF_NAME: "release-ci/tooling",
+        GITHUB_REPOSITORY: "openclaw/openclaw",
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "77",
+        GITHUB_SHA: SHA,
+        OPENCLAW_RELEASE_CI_SUMMARY_VALIDATOR: validator,
+        PATH: `${root}:${process.env.PATH}`,
+        RELEASE_PROFILE: "stable",
+        RERUN_GROUP: "ci",
+        TARGET_SHA,
+      },
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(JSON.parse(readFileSync(output, "utf8")).blockers).toContainEqual(
+      expect.objectContaining({
+        kind: "provenance_mismatch",
+        message: "revalidated evidence source manifest differs from the immutable plan",
+      }),
+    );
+  });
+
+  it("validates a generated manifest against its immutable execution plan", () => {
+    const root = mkdtempSync(join(tmpdir(), "frv-generated-manifest-"));
+    const executionPlanPath = join(root, "plan.json");
+    const manifestPath = join(root, "manifest.json");
+    const sealedPlan = executionPlan({ rerunGroup: "ci" });
+    writeFileSync(executionPlanPath, JSON.stringify(sealedPlan));
+    writeFileSync(manifestPath, JSON.stringify(generatedManifest(sealedPlan)));
+    const env = {
+      ...process.env,
+      GITHUB_REF_NAME: "release-ci/tooling",
+      GITHUB_RUN_ATTEMPT: "2",
+      GITHUB_RUN_ID: "77",
+      GITHUB_SHA: SHA,
+      RELEASE_EXECUTION_PLAN_PATH: executionPlanPath,
+      RELEASE_PROFILE: "stable",
+      RELEASE_VALIDATION_MANIFEST_PATH: manifestPath,
+      RERUN_GROUP: "ci",
+      TARGET_SHA,
+    };
+    const valid = spawnSync(process.execPath, [SCRIPT, "validate-manifest"], {
+      encoding: "utf8",
+      env,
+      timeout: 10_000,
+    });
+    expect(valid.status, valid.stderr).toBe(0);
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({ ...generatedManifest(sealedPlan), sourceParentRunAttempt: 2 }),
+    );
+    const invalid = spawnSync(process.execPath, [SCRIPT, "validate-manifest"], {
+      encoding: "utf8",
+      env,
+      timeout: 10_000,
+    });
+    expect(invalid.status).toBe(2);
+    expect(invalid.stderr).toContain(
+      "release validation manifest differs from the immutable execution plan",
+    );
+  });
+
   it("persists a classified plan that Release Decision can consume after reuse rejection", () => {
     const root = mkdtempSync(join(tmpdir(), "frv-classified-plan-"));
     const output = join(root, "full-release-execution-plan.json");
@@ -593,7 +842,6 @@ console.log(JSON.stringify({
       children: {},
       dockerPreflightResult: "skipped",
       evidenceChangedPaths: [],
-      evidenceManifest: evidenceManifest(),
       evidencePolicy: "exact-target-full-validation-v1",
       evidenceReuse: true,
       evidenceRootRunId: "99",
@@ -699,7 +947,6 @@ console.log(JSON.stringify({
           children: { normalCi: { result: "skipped", runAttempt: "", runId: "" } },
           dockerPreflightResult: "skipped",
           evidenceChangedPaths: [],
-          evidenceManifest: evidenceManifest(),
           evidencePolicy: "exact-target-full-validation-v1",
           evidenceReuse: true,
           evidenceRootRunId: "99",

@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -247,9 +254,23 @@ function changedPathsValue(value) {
   }
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalJson(entry)]),
+    );
+  }
+  return value;
+}
+
 async function validateReuse(plan, planInputs, signal) {
   if (!(planInputs.evidenceReuse === true || planInputs.evidenceReuse === "true")) {
-    return { blockers: [], children: plan };
+    return { blockers: [], children: plan, errors: [] };
   }
   try {
     const args = [
@@ -293,11 +314,19 @@ async function validateReuse(plan, planInputs, signal) {
     const evidence = JSON.parse(result.stdout);
     if (
       evidence.releaseProfile !== process.env.RELEASE_PROFILE ||
-      evidence.rerunGroup !== process.env.RERUN_GROUP
+      evidence.rerunGroup !== process.env.RERUN_GROUP ||
+      !evidence.manifest ||
+      typeof evidence.manifest !== "object" ||
+      Array.isArray(evidence.manifest)
     ) {
       throw new Error("reused release evidence no longer matches the requested validation");
     }
-    return { blockers: [], children: hydrateReusedPlan(plan, evidence) };
+    return {
+      blockers: [],
+      children: hydrateReusedPlan(plan, evidence),
+      errors: [],
+      sourceManifest: canonicalJson(evidence.manifest),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const entry = {
@@ -419,7 +448,7 @@ function planExpected() {
   };
 }
 
-function evidenceReuseFromInputs(planInputs) {
+function evidenceReuseFromInputs(planInputs, sourceManifest = {}) {
   return {
     changedPaths: changedPathsValue(planInputs.evidenceChangedPaths),
     evidenceSha: stringValue(planInputs.evidenceSha),
@@ -428,7 +457,7 @@ function evidenceReuseFromInputs(planInputs) {
     rootRunId: stringValue(planInputs.evidenceRootRunId),
     runUrl: stringValue(planInputs.evidenceRunUrl),
     selectedRunId: stringValue(planInputs.evidenceRunId),
-    sourceManifest: planInputs.evidenceManifest,
+    sourceManifest,
   };
 }
 
@@ -507,7 +536,7 @@ async function planMode() {
     blockers: reuse.blockers,
     children: reuse.children,
     errors: reuse.errors,
-    evidenceReuse: evidenceReuseFromInputs(planInputs),
+    evidenceReuse: evidenceReuseFromInputs(planInputs, reuse.sourceManifest),
     expected: { ...expected, parentRunAttempt: currentAttempt },
     gates: built.gates,
     releaseProfile: expected.releaseProfile,
@@ -643,6 +672,24 @@ async function collectMode(mode) {
         ],
       };
     }
+    if (
+      JSON.stringify(canonicalJson(decisionReuse.sourceManifest)) !==
+      JSON.stringify(canonicalJson(executionPlan.evidenceReuse.sourceManifest))
+    ) {
+      decisionReuse = {
+        ...decisionReuse,
+        blockers: [
+          ...decisionReuse.blockers,
+          {
+            child: "<evidence>",
+            kind: "provenance_mismatch",
+            message: "revalidated evidence source manifest differs from the immutable plan",
+            runId: executionPlan.evidenceReuse.rootRunId,
+            url: executionPlan.evidenceReuse.runUrl,
+          },
+        ],
+      };
+    }
   }
 
   let nextHeartbeat = 0;
@@ -700,9 +747,9 @@ async function collectMode(mode) {
   }
 }
 
-function readNewestStateCandidate(root, prefix, runId, maxParentRunAttempt, filename) {
+function readStateCandidates(root, prefix, runId, maxParentRunAttempt, filename) {
   const pattern = new RegExp(`^${prefix}-${runId}-([1-9][0-9]*)$`, "u");
-  const newest = readdirSync(root, { withFileTypes: true })
+  const candidates = readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => {
       const match = pattern.exec(entry.name);
@@ -710,16 +757,60 @@ function readNewestStateCandidate(root, prefix, runId, maxParentRunAttempt, file
     })
     .filter(Boolean)
     .filter((entry) => entry.attempt <= maxParentRunAttempt)
-    .toSorted((left, right) => right.attempt - left.attempt)[0];
-  if (!newest) {
-    return [];
+    .map((entry) => {
+      const payload = readArtifact(join(root, entry.name, filename), entry.name);
+      if (Number(payload.parentRunAttempt) !== entry.attempt) {
+        throw new Error(`${entry.name} payload attempt differs from its artifact name`);
+      }
+      return { name: entry.name, payload };
+    });
+  const directPath = join(root, filename);
+  if (existsSync(directPath)) {
+    const payload = readArtifact(directPath, filename);
+    const attempt = positiveInteger(payload.parentRunAttempt, `${filename} parent run attempt`);
+    if (attempt <= maxParentRunAttempt) {
+      candidates.push({ name: `${prefix}-${runId}-${attempt}`, payload });
+    }
   }
-  return [
+  return candidates;
+}
+
+async function validateManifestMode() {
+  const manifestPath = requiredString(
+    process.env.RELEASE_VALIDATION_MANIFEST_PATH,
+    "release validation manifest path",
+  );
+  const executionPlan = validateReleaseExecutionPlanArtifact(
+    readArtifact(
+      requiredString(process.env.RELEASE_EXECUTION_PLAN_PATH, "execution plan path"),
+      "execution plan",
+    ),
     {
-      name: newest.name,
-      payload: readArtifact(join(root, newest.name, filename), newest.name),
+      parentRunId: requiredString(process.env.GITHUB_RUN_ID, "parent run ID"),
+      releaseProfile: requiredString(process.env.RELEASE_PROFILE, "release profile"),
+      rerunGroup: requiredString(process.env.RERUN_GROUP, "rerun group"),
+      targetSha: requiredString(process.env.TARGET_SHA, "target SHA"),
+      workflowRef: requiredString(process.env.GITHUB_REF_NAME, "workflow ref"),
+      workflowSha: requiredString(process.env.GITHUB_SHA, "workflow SHA"),
     },
-  ];
+  );
+  const rawManifest = readArtifact(manifestPath, "release validation manifest");
+  const { validateParentManifest } = await import("./release-ci-summary.mjs");
+  const manifest = validateParentManifest(rawManifest, {
+    runAttempt: positiveInteger(process.env.GITHUB_RUN_ATTEMPT, "parent run attempt"),
+    runId: executionPlan.parentRunId,
+    workflowRef: executionPlan.workflowRef,
+    workflowSha: executionPlan.workflowSha,
+  });
+  if (
+    manifest.targetSha !== executionPlan.targetSha ||
+    manifest.releaseProfile !== executionPlan.releaseProfile ||
+    manifest.rerunGroup !== executionPlan.rerunGroup ||
+    rawManifest.executionPlanSha256 !== executionPlan.sha256 ||
+    Number(rawManifest.sourceParentRunAttempt) !== executionPlan.parentRunAttempt
+  ) {
+    throw new Error("release validation manifest differs from the immutable execution plan");
+  }
 }
 
 function selectMode() {
@@ -740,14 +831,14 @@ function selectMode() {
       requiredString(process.env.RELEASE_EXECUTION_PLAN_PATH, "execution plan path"),
       "execution plan",
     ),
-    readNewestStateCandidate(
+    readStateCandidates(
       requiredString(process.env.RELEASE_DECISION_ATTEMPTS_PATH, "decision attempts path"),
       "full-release-decision",
       expected.parentRunId,
       expected.maxParentRunAttempt,
       "full-release-decision.json",
     ),
-    readNewestStateCandidate(
+    readStateCandidates(
       requiredString(process.env.DIAGNOSTIC_DRAIN_ATTEMPTS_PATH, "drain attempts path"),
       "full-release-diagnostics",
       expected.parentRunId,
@@ -790,8 +881,14 @@ async function main() {
     selectMode();
     return;
   }
+  if (mode === "validate-manifest") {
+    await validateManifestMode();
+    return;
+  }
   if (!["decision", "drain"].includes(mode)) {
-    throw new Error("usage: full-release-validation-state.mjs <plan|decision|drain|select|verify>");
+    throw new Error(
+      "usage: full-release-validation-state.mjs <plan|decision|drain|select|validate-manifest|verify>",
+    );
   }
   await collectMode(mode);
 }
