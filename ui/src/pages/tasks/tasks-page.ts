@@ -9,6 +9,7 @@ import { hasOperatorReadAccess, hasOperatorWriteAccess } from "../../app/operato
 import { renderAgentScopeControl } from "../../components/agent-scope-control.ts";
 import { t } from "../../i18n/index.ts";
 import { watchAgentScope } from "../../lib/agents/index.ts";
+import { copyToClipboard } from "../../lib/clipboard.ts";
 import { formatUiError, formatUiExternalText } from "../../lib/format-error.ts";
 import {
   findUiSessionRow,
@@ -368,7 +369,10 @@ class TasksPage extends OpenClawLightDomElement {
         this.error = t("tasksPage.recoveryFailed");
         return;
       }
-      await navigator.clipboard.writeText(result);
+      const copied = await copyToClipboard(result);
+      if (this.gateway.isCurrent(scope)) {
+        this.error = copied ? null : t("common.copyFailed");
+      }
     } catch (error) {
       if (this.gateway.isCurrent(scope)) {
         this.error = formatUiError(error, t("tasksPage.recoveryFailed"));
