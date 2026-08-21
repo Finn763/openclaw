@@ -36,9 +36,7 @@ describe("worker deploy build plugin", () => {
   });
 
   it("binds the lazy Playwright accessor to bundled modules", () => {
-    const runtimePath = path.resolve(
-      "extensions/browser/src/browser/playwright-core.runtime.ts",
-    );
+    const runtimePath = path.resolve("extensions/browser/src/browser/playwright-core.runtime.ts");
     const source = fs.readFileSync(runtimePath, "utf8");
     const plugin = createWorkerDeployBuildPlugin();
 
