@@ -360,8 +360,8 @@ describe("diffs tool", () => {
     });
 
     expect(readTextContent(result, 0)).toContain("Diff viewer ready.");
-    expect((result?.details as Record<string, unknown>).viewerUrl).toEqual(expect.any(String));
-    expect((result?.details as Record<string, unknown>).fileError).toContain(
+    expect((result.details as Record<string, unknown>).viewerUrl).toEqual(expect.any(String));
+    expect((result.details as Record<string, unknown>).fileError).toContain(
       "viewer-only rendering must not load the Playwright renderer",
     );
   });
