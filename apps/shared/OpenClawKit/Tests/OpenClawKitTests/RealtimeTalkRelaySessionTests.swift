@@ -93,6 +93,7 @@ private final class RealtimeRelayTestSignal<Value: Sendable>: @unchecked Sendabl
 private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
     private(set) var activePlaybackIndexes: Set<Int> = []
     private var continuations: [Int: CheckedContinuation<StreamingPlaybackResult, Never>] = [:]
+    private var isShutdown = false
     private let playbackStarted = RealtimeRelayTestSignal<Int>()
     private let mainActorCheckpoint = RealtimeRelayTestSignal<Int>()
     private var nextPlaybackIndex = 0
@@ -101,6 +102,9 @@ private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
         stream _: AsyncThrowingStream<Data, Error>,
         sampleRate _: Double) async -> StreamingPlaybackResult
     {
+        guard !self.isShutdown else {
+            return StreamingPlaybackResult(finished: false, interruptedAt: nil)
+        }
         let index = self.nextPlaybackIndex
         self.nextPlaybackIndex += 1
         self.activePlaybackIndexes.insert(index)
@@ -114,6 +118,16 @@ private final class IndexedPCMStreamingAudioPlayer: PCMStreamingAudioPlaying {
 
     func stop() -> Double? {
         nil
+    }
+
+    func shutdown() {
+        self.isShutdown = true
+        self.activePlaybackIndexes.removeAll()
+        let continuations = Array(self.continuations.values)
+        self.continuations.removeAll()
+        for continuation in continuations {
+            continuation.resume(returning: StreamingPlaybackResult(finished: false, interruptedAt: nil))
+        }
     }
 
     func waitForPlayback(_ expectedIndex: Int) async throws {
@@ -531,6 +545,10 @@ extension RealtimeTalkRelaySessionTests {
             pcmPlayer: player,
             onStatus: { _ in },
             onSpeakingChanged: { speakingStates.append($0) })
+        defer {
+            session.stop()
+            player.shutdown()
+        }
         session._test_setRelaySessionId("relay-1")
 
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-a"))
@@ -745,6 +763,7 @@ extension RealtimeTalkRelaySessionTests {
                 speakingStates.append($0)
                 speakingChanged.send($0)
             })
+        defer { session.stop() }
         session._test_setRelaySessionId("relay-1")
         session._test_prepareAudioSender(relaySessionId: "relay-1")
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
@@ -773,7 +792,6 @@ extension RealtimeTalkRelaySessionTests {
             await session._test_waitForOutputCancellation()
             successor?.cancel()
             await successor?.value
-            session.stop()
             throw error
         }
 
@@ -1850,5 +1868,4 @@ extension RealtimeTalkRelaySessionTests {
             ])
         }
     }
-
 }
