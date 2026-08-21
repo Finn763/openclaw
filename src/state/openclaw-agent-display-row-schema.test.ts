@@ -9,7 +9,7 @@ import {
 } from "./openclaw-agent-db.js";
 import {
   ensureOpenClawAgentDisplayRowSchema,
-  AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL,
+  AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL,
   SESSION_TRANSCRIPT_DISPLAY_CANVAS_TABLE,
   SESSION_TRANSCRIPT_DISPLAY_CARRY_TABLE,
   SESSION_TRANSCRIPT_DISPLAY_ROWS_TABLE,
@@ -20,11 +20,12 @@ import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import {
   AGENT_SCHEMA_WITHOUT_TRANSCRIPT_PROJECTION_BINDINGS_SQL,
   ensureOpenClawAgentTranscriptProjectionBindingSchema,
-  SESSION_TRANSCRIPT_PROJECTION_BINDINGS_OWNER_INDEX,
   SESSION_TRANSCRIPT_PROJECTION_BINDINGS_TABLE,
 } from "./openclaw-agent-transcript-projection-binding-schema.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const SESSION_TRANSCRIPT_PROJECTION_BINDINGS_OWNER_INDEX =
+  "idx_agent_transcript_projection_bindings_owner";
 
 afterEach(() => {
   closeOpenClawAgentDatabasesForTest();
@@ -158,7 +159,7 @@ describe("agent display-row schema", () => {
         `CREATE TABLE IF NOT EXISTS ${SESSION_TRANSCRIPT_DISPLAY_ROW_SOURCES_TABLE} (`,
         start,
       );
-      database.exec(AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL);
+      database.exec(AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL);
       database.exec(OPENCLAW_AGENT_SCHEMA_SQL.slice(start, semanticsStart));
       const versionBefore = database.prepare("PRAGMA user_version").get();
 
@@ -174,7 +175,7 @@ describe("agent display-row schema", () => {
       assertSqliteSchemaContains(
         database,
         "foundation reader schema",
-        `${AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL}${OPENCLAW_AGENT_SCHEMA_SQL.slice(
+        `${AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL}${OPENCLAW_AGENT_SCHEMA_SQL.slice(
           start,
           semanticsStart,
         )}`,
@@ -189,7 +190,7 @@ describe("agent display-row schema", () => {
   it("does not cache a schema ensure rolled back by its caller", () => {
     const database = new DatabaseSync(":memory:");
     try {
-      database.exec(AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL);
+      database.exec(AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL);
       database.exec("BEGIN IMMEDIATE;");
       ensureOpenClawAgentDisplayRowSchema(database);
       database.exec("ROLLBACK;");
@@ -249,7 +250,7 @@ describe("agent display-row schema", () => {
         assertSqliteSchemaContains(
           database,
           "previous agent schema",
-          AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL,
+          AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL,
         ),
       ).not.toThrow();
       expect(database.prepare("SELECT row_id FROM session_transcript_display_rows").get()).toEqual({

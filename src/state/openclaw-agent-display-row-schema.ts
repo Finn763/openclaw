@@ -48,7 +48,6 @@ const displayRowSchema = splitDisplayRowSchema(OPENCLAW_AGENT_SCHEMA_SQL);
 const AGENT_DISPLAY_ROW_SCHEMA_SQL = displayRowSchema.displayRows;
 const AGENT_DISPLAY_ROW_FOUNDATION_SCHEMA_SQL = displayRowSchema.displayFoundation;
 const AGENT_DISPLAY_ROW_SEMANTICS_SCHEMA_SQL = displayRowSchema.displaySemantics;
-export const AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL = displayRowSchema.withoutDisplayRows;
 export const AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL = splitDisplayRowSchema(
   AGENT_SCHEMA_WITHOUT_TRANSCRIPT_PROJECTION_BINDINGS_SQL,
   TRANSCRIPT_FTS_SCHEMA_START,
