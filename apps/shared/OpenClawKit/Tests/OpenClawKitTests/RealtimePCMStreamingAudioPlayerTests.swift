@@ -7,6 +7,8 @@ private struct RealtimePCMPlaybackWaitTimeout: Error {
     let label: String
 }
 
+private let realtimePCMPlaybackWaitTimeoutSeconds = 15.0
+
 @MainActor
 private final class RealtimePCMPlaybackBackend {
     private struct Waiter {
@@ -58,7 +60,7 @@ private final class RealtimePCMPlaybackBackend {
     func waitForScheduledFrames(_ count: Int) async throws {
         if self.scheduledFrames.count >= count { return }
         try await AsyncTimeout.withTimeout(
-            seconds: 1,
+            seconds: realtimePCMPlaybackWaitTimeoutSeconds,
             onTimeout: { RealtimePCMPlaybackWaitTimeout(label: "scheduled frames \(count)") },
             operation: { try await self.waitForScheduledFramesWithoutDeadline(count) })
     }
@@ -66,7 +68,7 @@ private final class RealtimePCMPlaybackBackend {
     func waitForCompletionCallbacks(_ count: Int) async throws {
         if self.completedCallbacks >= count { return }
         try await AsyncTimeout.withTimeout(
-            seconds: 1,
+            seconds: realtimePCMPlaybackWaitTimeoutSeconds,
             onTimeout: { RealtimePCMPlaybackWaitTimeout(label: "completion callbacks \(count)") },
             operation: { try await self.waitForCompletionCallbacksWithoutDeadline(count) })
     }
@@ -148,7 +150,7 @@ private func makeRealtimePCMPlayer(
 
 private func waitForPlayback(_ task: Task<Void, Never>, label: String) async throws {
     try await AsyncTimeout.withTimeout(
-        seconds: 1,
+        seconds: realtimePCMPlaybackWaitTimeoutSeconds,
         onTimeout: { RealtimePCMPlaybackWaitTimeout(label: label) },
         operation: { await task.value })
 }

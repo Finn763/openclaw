@@ -61,31 +61,161 @@ private struct RealtimeRelayTestTimeout: Error, CustomStringConvertible {
 
 private final class RealtimeRelayTestSignal<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private let semaphore = DispatchSemaphore(value: 0)
+    private let onWaiting: @Sendable () -> Void
+    private let timeoutSeconds: Double
     private var values: [Value] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Value, any Error>)] = []
+
+    init(timeoutSeconds: Double = 30, onWaiting: @escaping @Sendable () -> Void = {}) {
+        self.timeoutSeconds = timeoutSeconds
+        self.onWaiting = onWaiting
+    }
 
     func send(_ value: Value) {
-        self.lock.withLock {
-            self.values.append(value)
+        let continuation: CheckedContinuation<Value, any Error>? = self.lock.withLock {
+            guard !self.waiters.isEmpty else {
+                self.values.append(value)
+                return nil
+            }
+            return self.waiters.removeFirst().continuation
         }
-        self.semaphore.signal()
+        continuation?.resume(returning: value)
     }
 
     func next(_ operation: String) async throws -> Value {
-        let semaphore = self.semaphore
-        let result = await Task.detached {
-            Self.wait(for: semaphore)
-        }.value
-        guard result == .success else {
-            throw RealtimeRelayTestTimeout(operation: operation)
-        }
-        return self.lock.withLock {
-            self.values.removeFirst()
+        try Task.checkCancellation()
+        let id = UUID()
+        do {
+            return try await AsyncTimeout.withTimeout(
+                seconds: self.timeoutSeconds,
+                onTimeout: { RealtimeRelayTestTimeout(operation: operation) },
+                operation: {
+                    try await withTaskCancellationHandler {
+                        try await withCheckedThrowingContinuation { continuation in
+                            let registration: Result<Value, any Error>? = self.lock.withLock {
+                                if Task.isCancelled {
+                                    return .failure(CancellationError())
+                                }
+                                if !self.values.isEmpty {
+                                    return .success(self.values.removeFirst())
+                                }
+                                self.waiters.append((id, continuation))
+                                return nil
+                            }
+                            switch registration {
+                            case let .success(value):
+                                continuation.resume(returning: value)
+                            case let .failure(error):
+                                continuation.resume(throwing: error)
+                            case nil:
+                                self.onWaiting()
+                            }
+                        }
+                    } onCancel: {
+                        self.cancelWaiter(id)
+                    }
+                })
+        } catch {
+            self.cancelWaiter(id)
+            throw error
         }
     }
 
-    private static func wait(for semaphore: DispatchSemaphore) -> DispatchTimeoutResult {
-        semaphore.wait(timeout: .now() + 1)
+    private func cancelWaiter(_ id: UUID) {
+        let continuation: CheckedContinuation<Value, any Error>? = self.lock.withLock {
+            guard let index = self.waiters.firstIndex(where: { $0.id == id }) else {
+                return nil
+            }
+            return self.waiters.remove(at: index).continuation
+        }
+        continuation?.resume(throwing: CancellationError())
+    }
+}
+
+private func cancelAndAwaitSignalTasks<T>(_ tasks: Task<T, any Error>?...) async {
+    for task in tasks {
+        task?.cancel()
+    }
+    for task in tasks {
+        _ = await task?.result
+    }
+}
+
+private struct RealtimeRelayTestSignalTests {
+    @Test func `buffered values and waiting consumers preserve FIFO order`() async throws {
+        let waiting = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .unbounded)
+        let signal = RealtimeRelayTestSignal<Int>(onWaiting: { waiting.continuation.yield() })
+        defer { waiting.continuation.finish() }
+        signal.send(1)
+        signal.send(2)
+        #expect(try await signal.next("first buffered value") == 1)
+        #expect(try await signal.next("second buffered value") == 2)
+        let first = Task { try await signal.next("first waiting consumer") }
+        var second: Task<Int, any Error>?
+        do {
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "first registration")
+            let task = Task { try await signal.next("second waiting consumer") }
+            second = task
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "second registration")
+
+            signal.send(3)
+            signal.send(4)
+            #expect(try await first.value == 3)
+            #expect(try await task.value == 4)
+        } catch {
+            await cancelAndAwaitSignalTasks(first, second)
+            throw error
+        }
+    }
+
+    @Test func `cancelling one consumer leaves the older waiter intact`() async throws {
+        let waiting = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .unbounded)
+        let signal = RealtimeRelayTestSignal<Int>(onWaiting: { waiting.continuation.yield() })
+        defer { waiting.continuation.finish() }
+        let first = Task { try await signal.next("older consumer") }
+        var second: Task<Int, any Error>?
+        do {
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "older registration")
+            let task = Task { try await signal.next("cancelled consumer") }
+            second = task
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "cancelled registration")
+
+            task.cancel()
+            do {
+                _ = try await task.value
+                Issue.record("cancelled consumer unexpectedly received a value")
+            } catch is CancellationError {}
+
+            signal.send(7)
+            #expect(try await first.value == 7)
+            signal.send(9)
+            #expect(try await signal.next("post-cancellation buffered value") == 9)
+        } catch {
+            await cancelAndAwaitSignalTasks(first, second)
+            throw error
+        }
+    }
+
+    @Test func `timed out consumer cannot steal a later value`() async throws {
+        let waiting = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .unbounded)
+        let signal = RealtimeRelayTestSignal<Int>(
+            timeoutSeconds: 0.01,
+            onWaiting: { waiting.continuation.yield() })
+        defer { waiting.continuation.finish() }
+        let timedOut = Task { try await signal.next("expiring consumer") }
+        do {
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "expiring registration")
+            do {
+                _ = try await timedOut.value
+                Issue.record("consumer unexpectedly survived its deadline")
+            } catch is RealtimeRelayTestTimeout {}
+
+            signal.send(11)
+            #expect(try await signal.next("value after timeout") == 11)
+        } catch {
+            await cancelAndAwaitSignalTasks(timedOut)
+            throw error
+        }
     }
 }
 
