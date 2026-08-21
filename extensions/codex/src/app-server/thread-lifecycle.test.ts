@@ -353,11 +353,14 @@ describe("Codex ring-zero thread config", () => {
   it("applies the restriction to both thread start and resume", () => {
     const params = createAttemptParams({ provider: "openai" });
     params.toolsAllow = ["openclaw"];
+    params.pluginHarnessToolPolicyRestricted = true;
     const appServer = createAppServerOptions() as never;
+    const developerInstructions = "Host-authored ring-zero instructions.";
     const start = buildThreadStartParams(params, {
       appServer,
       cwd: "/repo",
       dynamicTools: [],
+      developerInstructions,
       hostSystemAgentActive: true,
       nativeCodeModeEnabled: false,
       config: { project_doc_max_bytes: 64_000 },
@@ -365,6 +368,7 @@ describe("Codex ring-zero thread config", () => {
     const resume = buildThreadResumeParams(params, {
       appServer,
       dynamicTools: [],
+      developerInstructions,
       hostSystemAgentActive: true,
       nativeCodeModeEnabled: false,
       threadId: "thread-1",
@@ -373,6 +377,8 @@ describe("Codex ring-zero thread config", () => {
 
     expect(start.environments).toEqual([]);
     expect(start.baseInstructions).toBe("");
+    expect(start.developerInstructions).toBe(developerInstructions);
+    expect(resume.developerInstructions).toBe(developerInstructions);
     for (const config of [start.config, resume.config]) {
       expect(config?.["agents.enabled"]).toBe(false);
       expect(config?.["tools.experimental_request_user_input.enabled"]).toBe(false);
@@ -3528,6 +3534,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
         | { config?: Record<string, unknown> }
         | undefined;
       expect(threadRequest?.config).toMatchObject({
+        project_doc_max_bytes: 0,
         mcp_servers: {
           inherited: { enabled: false },
           "request-only": { enabled: false },

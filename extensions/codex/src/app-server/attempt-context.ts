@@ -177,6 +177,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
   sessionKey: string;
   sessionAgentId: string;
   memoryToolNames: readonly string[];
+  ringZeroActive: boolean;
   sandboxed?: boolean;
 }): Promise<CodexWorkspaceBootstrapContext> {
   try {
@@ -251,7 +252,9 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
       !isMessageOnlyCodexSourceReply(params.params) &&
       params.params.bootstrapContextMode !== "lightweight";
     const threadDeveloperInstructionFiles =
-      injectOpenClawContext && (inheritsAgentWorkspace || restrictedProjectDocNeedsOpenClawCarrier)
+      injectOpenClawContext &&
+      !params.ringZeroActive &&
+      (inheritsAgentWorkspace || restrictedProjectDocNeedsOpenClawCarrier)
         ? selectCodexWorkspaceAgentProjectInstructionFiles(contextFiles, params.resolvedWorkspace)
         : [];
     const turnScopedDeveloperInstructionFiles = injectOpenClawContext

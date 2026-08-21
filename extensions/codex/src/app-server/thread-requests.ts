@@ -430,7 +430,9 @@ export function buildCodexRuntimeThreadConfigForRun(
   const restrictedToolSurface =
     ringZeroActive || messageOnlySourceReply || params.pluginHarnessToolPolicyRestricted === true;
   const restrictedTurnDisablesProjectDocs =
-    messageOnlySourceReply || (params.pluginHarnessToolPolicyRestricted && params.disableTools);
+    ringZeroActive ||
+    messageOnlySourceReply ||
+    (params.pluginHarnessToolPolicyRestricted && params.disableTools);
   const configMcpServers = config?.mcp_servers;
   if (restrictedToolSurface && configMcpServers !== undefined && !isJsonObject(configMcpServers)) {
     throw new Error("Codex restricted tool surface received invalid thread mcp_servers config");
