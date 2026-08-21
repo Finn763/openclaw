@@ -251,6 +251,21 @@ export function registerSetupCommand(program: Command): void {
       const options = rawOptions as Record<string, unknown>;
       const hasOnboardingFlag = hasExplicitOnboardingOption(commandRuntime);
       const hasSystemAgentRequest = hasExplicitOptions(commandRuntime, ["message", "yes"]);
+      if (hasOnboardingFlag && hasSystemAgentRequest) {
+        const systemAgentFlags = commandRuntime.options
+          .filter(
+            (option) =>
+              ["message", "yes"].includes(option.attributeName()) &&
+              commandRuntime.getOptionValueSource(option.attributeName()) === "cli",
+          )
+          .map((option) => option.long ?? option.short ?? option.flags)
+          .toSorted();
+        defaultRuntime.error(
+          `${systemAgentFlags.join(", ")} cannot be combined with onboarding options.`,
+        );
+        defaultRuntime.exit(1);
+        return;
+      }
       const configured =
         hasOnboardingFlag || hasSystemAgentRequest ? false : await isConfiguredInstance();
       const route = resolveSetupCommandRoute({
