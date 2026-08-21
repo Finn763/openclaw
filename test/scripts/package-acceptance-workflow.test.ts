@@ -3009,6 +3009,18 @@ describe("package acceptance workflow", () => {
     }
   });
 
+  it("pins every Full Release Validation artifact download to the canonical action", () => {
+    const workflow = readWorkflow(FULL_RELEASE_VALIDATION_WORKFLOW);
+    const downloadSteps = Object.values(workflow.jobs ?? {}).flatMap((job) =>
+      (job.steps ?? []).filter((step) => step.uses?.startsWith("actions/download-artifact@")),
+    );
+
+    expect(downloadSteps).toHaveLength(6);
+    for (const step of downloadSteps) {
+      expect(step.uses).toBe(DOWNLOAD_ARTIFACT_V8);
+    }
+  });
+
   it("keeps exhaustive update migration as a separate manual package gate", () => {
     const workflow = readFileSync(UPDATE_MIGRATION_WORKFLOW, "utf8");
     const packageWorkflow = readFileSync(PACKAGE_ACCEPTANCE_WORKFLOW, "utf8");

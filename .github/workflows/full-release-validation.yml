@@ -1098,7 +1098,7 @@ jobs:
 
       - name: Restore immutable release execution plan
         if: ${{ github.run_attempt != 1 }}
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
@@ -1247,7 +1247,7 @@ jobs:
           persist-credentials: false
 
       - name: Download immutable release execution plan
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
@@ -1315,7 +1315,7 @@ jobs:
           persist-credentials: false
 
       - name: Download immutable release execution plan
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
@@ -1392,19 +1392,19 @@ jobs:
           persist-credentials: false
 
       - name: Download immutable release execution plan
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
 
       - name: Download exact release decision
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-decision-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/full-release-decision
 
       - name: Download exact diagnostic drain
-        uses: actions/download-artifact@3e5f45e4f7c701b9e8e938e3aa0e65cfda5c0037 # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: full-release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/full-release-diagnostics
