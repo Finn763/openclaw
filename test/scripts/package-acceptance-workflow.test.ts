@@ -2992,10 +2992,11 @@ describe("package acceptance workflow", () => {
     expect(planStep.run).toContain("FULL_RELEASE_PLAN_INPUTS_JSON");
     expect(planStep.env).toMatchObject({
       EVIDENCE_CHANGED_PATHS: "${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}",
-      EVIDENCE_MANIFEST: "${{ needs.evidence_reuse.outputs.evidence_manifest }}",
       EVIDENCE_RUN_ID: "${{ needs.evidence_reuse.outputs.evidence_run_id }}",
       TRUSTED_WORKFLOW_JSON: "${{ needs.resolve_target.outputs.trusted_workflow_json }}",
     });
+    expect(planStep.env).not.toHaveProperty("EVIDENCE_MANIFEST");
+    expect(planStep.run).not.toContain("EVIDENCE_MANIFEST");
     expect(planStep.run).toContain('--arg evidenceRunId "$EVIDENCE_RUN_ID"');
     expect(planStep.run).toContain('--argjson trustedWorkflow "$TRUSTED_WORKFLOW_JSON"');
     expect(planUpload.if).toBe("${{ always() && github.run_attempt == 1 }}");

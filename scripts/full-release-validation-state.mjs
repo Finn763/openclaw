@@ -802,10 +802,31 @@ async function validateManifestMode() {
     workflowRef: executionPlan.workflowRef,
     workflowSha: executionPlan.workflowSha,
   });
+  const expectedChildRunIds = Object.fromEntries(
+    ["normalCi", "npmTelegram", "pluginPrerelease", "productPerformance", "releaseChecks"].map(
+      (key) => {
+        const child = executionPlan.children.find((entry) => entry.key === key);
+        return [key, child?.selected ? stringValue(child.runId) : ""];
+      },
+    ),
+  );
+  const expectedEvidenceReuse = executionPlan.evidenceReuse.requested
+    ? {
+        changedPaths: executionPlan.evidenceReuse.changedPaths,
+        evidenceSha: executionPlan.evidenceReuse.evidenceSha,
+        policy: executionPlan.evidenceReuse.policy,
+        runId: executionPlan.evidenceReuse.rootRunId,
+        selectedRunId: executionPlan.evidenceReuse.selectedRunId,
+      }
+    : undefined;
   if (
     manifest.targetSha !== executionPlan.targetSha ||
     manifest.releaseProfile !== executionPlan.releaseProfile ||
     manifest.rerunGroup !== executionPlan.rerunGroup ||
+    JSON.stringify(canonicalJson(manifest.childRunIds)) !==
+      JSON.stringify(canonicalJson(expectedChildRunIds)) ||
+    JSON.stringify(canonicalJson(manifest.evidenceReuse)) !==
+      JSON.stringify(canonicalJson(expectedEvidenceReuse)) ||
     rawManifest.executionPlanSha256 !== executionPlan.sha256 ||
     Number(rawManifest.sourceParentRunAttempt) !== executionPlan.parentRunAttempt
   ) {

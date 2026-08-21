@@ -829,6 +829,81 @@ printf '%s\\n' '{"id":101,"event":"workflow_dispatch","path":".github/workflows/
     );
   });
 
+  it.each([
+    {
+      mutate: (manifest: Record<string, any>) => {
+        manifest.childRuns.normalCi = "999";
+      },
+      name: "wrong selected child",
+      planReuse: false,
+    },
+    {
+      mutate: (manifest: Record<string, any>) => {
+        manifest.childRuns.releaseChecks = "303";
+      },
+      name: "nonempty unselected child",
+      planReuse: false,
+    },
+    {
+      mutate: (manifest: Record<string, any>) => {
+        manifest.evidenceReuse.selectedRunId = "100";
+      },
+      name: "wrong evidence reuse tuple",
+      planReuse: true,
+    },
+  ])("rejects a generated manifest with $name", ({ mutate, planReuse }) => {
+    const root = mkdtempSync(join(tmpdir(), "frv-invalid-generated-manifest-"));
+    const executionPlanPath = join(root, "plan.json");
+    const manifestPath = join(root, "manifest.json");
+    const reuse = {
+      changedPaths: [],
+      evidenceSha: TARGET_SHA,
+      policy: "exact-target-full-validation-v1",
+      requested: true,
+      rootRunId: "99",
+      runUrl: "https://example.invalid/runs/99",
+      selectedRunId: "99",
+      sourceManifest: evidenceManifest(),
+    };
+    const sealedPlan = executionPlan(
+      { rerunGroup: "ci" },
+      planReuse ? { evidenceReuse: reuse } : {},
+    );
+    const manifest = generatedManifest(sealedPlan);
+    if (planReuse) {
+      manifest.evidenceReuse = {
+        changedPaths: reuse.changedPaths,
+        evidenceSha: reuse.evidenceSha,
+        policy: reuse.policy,
+        runId: reuse.rootRunId,
+        selectedRunId: reuse.selectedRunId,
+      };
+    }
+    mutate(manifest);
+    writeFileSync(executionPlanPath, JSON.stringify(sealedPlan));
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    const result = spawnSync(process.execPath, [SCRIPT, "validate-manifest"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_REF_NAME: "release-ci/tooling",
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "77",
+        GITHUB_SHA: SHA,
+        RELEASE_EXECUTION_PLAN_PATH: executionPlanPath,
+        RELEASE_PROFILE: "stable",
+        RELEASE_VALIDATION_MANIFEST_PATH: manifestPath,
+        RERUN_GROUP: "ci",
+        TARGET_SHA,
+      },
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(
+      "release validation manifest differs from the immutable execution plan",
+    );
+  });
+
   it("persists a classified plan that Release Decision can consume after reuse rejection", () => {
     const root = mkdtempSync(join(tmpdir(), "frv-classified-plan-"));
     const output = join(root, "full-release-execution-plan.json");
