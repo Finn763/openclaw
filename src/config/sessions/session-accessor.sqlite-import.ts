@@ -25,7 +25,9 @@ import {
   touchTranscriptMutationInTransaction,
 } from "./session-accessor.sqlite-transcript-state.js";
 import { appendTranscriptEventInTransaction } from "./session-accessor.sqlite-transcript-store.js";
+import { invalidateSessionTranscriptDisplayInTransaction } from "./session-transcript-display.js";
 import { reconcileSessionTranscriptIndexInTransaction } from "./session-transcript-index.js";
+import { startSessionTranscriptIndexReconcile } from "./session-transcript-reconcile.js";
 import type { SessionEntry } from "./types.js";
 
 /** Internal doctor/migration import target for one legacy session row. */
@@ -151,6 +153,7 @@ function importSqliteSessionRowsInTransaction(
       }
       transcriptEvents = exactTranscriptRows.length;
       reconcileSessionTranscriptIndexInTransaction(database.db, params.entry.sessionId);
+      invalidateSessionTranscriptDisplayInTransaction(database.db, params.entry.sessionId);
       publishSessionEntryCacheInvalidation(database);
     }
   } else if (prepared.transcriptEvents) {
@@ -170,6 +173,7 @@ function importSqliteSessionRowsInTransaction(
       if (
         appendTranscriptEventInTransaction(database, transcriptScope, event, {
           allowStoredAlias: true,
+          maintainDisplayProjection: false,
           scheduleProjectionReconcile: false,
           touchMutation: false,
         })
@@ -179,6 +183,9 @@ function importSqliteSessionRowsInTransaction(
       }
     }
     reconcileSessionTranscriptIndexInTransaction(database.db, params.entry.sessionId);
+    if (transcriptEvents > 0) {
+      invalidateSessionTranscriptDisplayInTransaction(database.db, params.entry.sessionId);
+    }
     publishSessionEntryCacheInvalidation(database);
   }
   if (params.transcriptMtimeMs !== undefined) {
@@ -209,12 +216,22 @@ export async function importSqliteSessionRowsBatch(
   if (prepared.some((row) => row.resolved.path !== resolved.path)) {
     throw new Error("SQLite session import batch spans multiple stores");
   }
-  return await runExclusiveSqliteSessionWrite(resolved, async () =>
+  const results = await runExclusiveSqliteSessionWrite(resolved, async () =>
     runOpenClawAgentWriteTransaction(
       (database) => prepared.map((row) => importSqliteSessionRowsInTransaction(database, row)),
       toDatabaseOptions(resolved),
     ),
   );
+  for (const result of results) {
+    if (result.transcriptEvents === 0) {
+      continue;
+    }
+    startSessionTranscriptIndexReconcile({
+      ...toDatabaseOptions(resolved),
+      preferredSessionId: result.sessionId,
+    });
+  }
+  return results;
 }
 
 /** Imports one legacy session entry and its transcript rows for doctor migration. */
