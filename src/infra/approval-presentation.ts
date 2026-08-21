@@ -45,6 +45,7 @@ function sanitizeOptionalSingleLine(value: unknown): string | null {
 
 function buildExecApprovalPresentation(params: {
   request: unknown;
+  instanceId?: string;
   allowedDecisions: readonly ApprovalDecision[];
 }): ApprovalPresentation | null {
   if (!isRecord(params.request)) {
@@ -61,6 +62,7 @@ function buildExecApprovalPresentation(params: {
       : null;
   return {
     kind: "exec",
+    ...(params.instanceId ? { instanceId: params.instanceId } : {}),
     commandText,
     commandPreview,
     warningText,
@@ -73,6 +75,7 @@ function buildExecApprovalPresentation(params: {
 
 function buildPluginApprovalPresentation(params: {
   request: unknown;
+  instanceId?: string;
   allowedDecisions: readonly ApprovalDecision[];
 }): ApprovalPresentation | null {
   if (!isRecord(params.request)) {
@@ -104,6 +107,7 @@ function buildPluginApprovalPresentation(params: {
     : null;
   return {
     kind: "plugin",
+    ...(params.instanceId ? { instanceId: params.instanceId } : {}),
     title,
     description,
     ...(detail ? { detail } : {}),
@@ -117,6 +121,7 @@ function buildPluginApprovalPresentation(params: {
 
 function buildSystemAgentApprovalPresentation(params: {
   request: unknown;
+  instanceId?: string;
   allowedDecisions: readonly ApprovalDecision[];
 }): ApprovalPresentation | null {
   if (!isRecord(params.request)) {
@@ -130,6 +135,7 @@ function buildSystemAgentApprovalPresentation(params: {
   }
   return {
     kind: "system-agent",
+    ...(params.instanceId ? { instanceId: params.instanceId } : {}),
     title: truncateUtf16Safe(sanitizeExecApprovalDisplayText(title), 80),
     description: truncateUtf16Safe(sanitizeExecApprovalWarningText(description), 512),
     proposalHash: request.proposalHash,
@@ -142,6 +148,7 @@ function buildSystemAgentApprovalPresentation(params: {
 export function buildApprovalPresentation(params: {
   kind: ApprovalKind;
   request: unknown;
+  instanceId?: string;
   allowedDecisions: readonly ApprovalDecision[];
 }): ApprovalPresentation | null {
   if (params.kind === "exec") {

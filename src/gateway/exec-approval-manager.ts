@@ -296,6 +296,7 @@ export class ExecApprovalManager<TPayload = ExecApprovalRequestPayload> {
       ? buildApprovalPresentation({
           kind: this.approvalKind,
           request: record.request,
+          instanceId: record.instanceId,
           allowedDecisions: allowedDecisions ?? [],
         })
       : null;
@@ -398,6 +399,7 @@ export class ExecApprovalManager<TPayload = ExecApprovalRequestPayload> {
     const presentation = buildApprovalPresentation({
       kind: this.approvalKind,
       request: record.request,
+      instanceId: record.instanceId,
       allowedDecisions: normalizeAllowedDecisions(
         this.options.resolveAllowedDecisions?.(record.request),
       ),
