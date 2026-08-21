@@ -85,7 +85,7 @@ export function prepareWorkspacePluginRegistries(
           ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
           ...(input.allowGatewaySubagentBinding ? { allowGatewaySubagentBinding: true } : {}),
           metadataSnapshot,
-          preferBuiltPluginArtifacts,
+          ...(preferBuiltPluginArtifacts ? { preferBuiltPluginArtifacts: true } : {}),
           selections: input.runtimePluginSelections,
         })
       : inboundPluginRegistry;
