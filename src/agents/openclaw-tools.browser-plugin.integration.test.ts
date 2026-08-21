@@ -14,6 +14,8 @@ import {
   mintMessageActionTurnCapability,
   revokeMessageActionTurnCapability,
 } from "../gateway/message-action-turn-capability.js";
+import { buildOutboundMediaLoadOptions } from "../media/load-options.js";
+import { loadWebMediaRaw } from "../media/web-media.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
@@ -162,6 +164,7 @@ describe("createOpenClawTools browser plugin integration", () => {
   it("binds plugin delivery to the current route, media roots, and turn lifetime", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-plugin-delivery-"));
     const mediaUrl = path.join(workspaceDir, "photo.png");
+    const outsideMediaUrl = `${workspaceDir}-outside.png`;
     await fs.copyFile(
       path.join(
         process.cwd(),
@@ -169,18 +172,35 @@ describe("createOpenClawTools browser plugin integration", () => {
       ),
       mediaUrl,
     );
+    await fs.copyFile(mediaUrl, outsideMediaUrl);
     const platformSendMedia = vi.fn(async () => ({ channel: "telegram", messageId: "sent-1" }));
     const transportDispatchStarted = createDeferred();
     const resumeTransportDispatch = createDeferred();
     let deferTransportDispatch = false;
-    const sendMedia = vi.fn(async (params: { onPlatformSendDispatch?: () => Promise<void> }) => {
-      if (deferTransportDispatch) {
-        transportDispatchStarted.resolve();
-        await resumeTransportDispatch.promise;
-      }
-      await params.onPlatformSendDispatch?.();
-      return await platformSendMedia();
-    });
+    const sendMedia = vi.fn(
+      async (params: {
+        mediaLocalRoots?: readonly string[];
+        mediaReadFile?: (filePath: string) => Promise<Buffer>;
+        mediaUrl?: string;
+        onPlatformSendDispatch?: () => Promise<void>;
+      }) => {
+        if (deferTransportDispatch) {
+          transportDispatchStarted.resolve();
+          await resumeTransportDispatch.promise;
+        }
+        if (params.mediaUrl) {
+          await loadWebMediaRaw(
+            params.mediaUrl,
+            buildOutboundMediaLoadOptions({
+              mediaLocalRoots: params.mediaLocalRoots,
+              mediaReadFile: params.mediaReadFile,
+            }),
+          );
+        }
+        await params.onPlatformSendDispatch?.();
+        return await platformSendMedia();
+      },
+    );
     const providerNativeSend = vi.fn(async () => jsonResult({ ok: true, native: true }));
     const telegramPlugin = createOutboundTestPlugin({
       id: "telegram",
@@ -230,6 +250,12 @@ describe("createOpenClawTools browser plugin integration", () => {
         currentThreadTs: "7",
       },
     });
+    const config = {
+      agents: { defaults: { workspace: workspaceDir } },
+      channels: { telegram: { enabled: true } },
+      plugins: { allow: ["telegram"] },
+      tools: { fs: { workspaceOnly: true } },
+    } as OpenClawConfig;
     let delivery:
       | {
           send: (params: { text: string; mediaUrl?: string }) => Promise<void>;
@@ -256,13 +282,9 @@ describe("createOpenClawTools browser plugin integration", () => {
         context.deliveryContext.accountId = "attacker-account";
         context.deliveryContext.threadId = "attacker-thread";
       }
+      config.tools = { allow: ["read"], fs: { workspaceOnly: false } };
       return [];
     });
-    const config = {
-      agents: { defaults: { workspace: workspaceDir } },
-      channels: { telegram: { enabled: true } },
-      plugins: { allow: ["telegram"] },
-    } as OpenClawConfig;
     let nextTurnCapability: string | undefined;
 
     try {
@@ -298,6 +320,10 @@ describe("createOpenClawTools browser plugin integration", () => {
         }),
       );
       expect(providerNativeSend).not.toHaveBeenCalled();
+      await expect(
+        activeDelivery.send({ text: "outside media", mediaUrl: outsideMediaUrl }),
+      ).rejects.toThrow(/not under an allowed directory/i);
+      expect(platformSendMedia).toHaveBeenCalledOnce();
 
       deferTransportDispatch = true;
       const pending = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
@@ -349,6 +375,7 @@ describe("createOpenClawTools browser plugin integration", () => {
       revokeMessageActionTurnCapability(turnCapability);
       revokeMessageActionTurnCapability(nextTurnCapability);
       await fs.rm(workspaceDir, { recursive: true, force: true });
+      await fs.rm(outsideMediaUrl, { force: true });
     }
   });
 

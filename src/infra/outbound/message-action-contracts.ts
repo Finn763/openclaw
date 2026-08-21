@@ -68,6 +68,8 @@ export type MessageActionInput = {
   /** @internal Exact admitted execution provenance for owner-native delivery audit. */
   executionIdentityToken?: ExecutionIdentityAdmissionToken;
   toolContext?: ChannelThreadingToolContext;
+  /** @internal Host media grant captured before untrusted caller code can mutate config. */
+  mediaAccess?: OutboundMediaAccess;
   gateway?: MessageActionGateway;
   deps?: OutboundSendDeps;
   sessionKey?: string;

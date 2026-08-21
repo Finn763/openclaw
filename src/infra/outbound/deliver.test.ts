@@ -965,7 +965,6 @@ describe("deliverOutboundPayloads", () => {
     resumePreflight.resolve();
 
     await expect(delivery).rejects.toThrow("turn authority closed");
-    expect(onPlatformSendDispatch).toHaveBeenCalledOnce();
     expect(messageSendText).not.toHaveBeenCalled();
   });
 

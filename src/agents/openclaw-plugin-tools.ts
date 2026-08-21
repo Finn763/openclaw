@@ -9,6 +9,7 @@ import {
   resolveMessageActionTurnCapability,
   selectMessageActionRequesterIdentity,
 } from "../gateway/message-action-turn-capability.js";
+import { resolveAgentScopedOutboundMediaAccess } from "../media/read-capability.js";
 import { getActivePluginRegistry, getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import {
   getPluginRuntimeGatewayRequestScope,
@@ -63,6 +64,7 @@ const loadMessageActionRunner = createLazyRuntimeModule(
 function createPluginToolDelivery(params: {
   options: ResolveOpenClawPluginToolsOptions | undefined;
   context: OpenClawPluginToolContext;
+  bindingConfig: OpenClawConfig | undefined;
   resolveConfig: () => OpenClawConfig | undefined;
 }): OpenClawPluginToolDelivery | undefined {
   const deliveryContext = params.context.deliveryContext;
@@ -112,6 +114,25 @@ function createPluginToolDelivery(params: {
     }
     return authorization;
   };
+  const bindingAuthorization = resolveAuthorization();
+  const bindingConfig = params.bindingConfig;
+  if (!bindingConfig) {
+    return undefined;
+  }
+  const mediaAccess = resolveAgentScopedOutboundMediaAccess({
+    cfg: bindingConfig,
+    agentId,
+    workspaceDir: params.context.workspaceDir,
+    sessionKey,
+    messageProvider: sessionKey ? undefined : route.channel,
+    accountId: sessionKey
+      ? (bindingAuthorization.requesterAccountId ?? route.accountId)
+      : route.accountId,
+    requesterSenderId: bindingAuthorization.requesterSenderId,
+    requesterSenderName: bindingAuthorization.requesterSenderName,
+    requesterSenderUsername: bindingAuthorization.requesterSenderUsername,
+    requesterSenderE164: bindingAuthorization.requesterSenderE164,
+  });
 
   return {
     send: async ({ text, mediaUrl }) => {
@@ -148,6 +169,7 @@ function createPluginToolDelivery(params: {
           sessionId,
           runId,
           agentId,
+          mediaAccess,
           onPlatformSendDispatch: async () => {
             resolveAuthorization();
           },
@@ -187,6 +209,7 @@ export function resolveOpenClawPluginToolsForOptions(params: {
   const delivery = createPluginToolDelivery({
     options: params.options,
     context: pluginToolInputs.context,
+    bindingConfig: availabilityConfig,
     resolveConfig: resolveCurrentRuntimeConfig,
   });
   const availabilityRuntimeLookup = authProfileStore
