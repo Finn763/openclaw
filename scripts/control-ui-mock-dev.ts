@@ -36,10 +36,14 @@ import {
 import { buildCronMocks } from "./control-ui-mock-cron.ts";
 import { buildPluginCatalogMock } from "./control-ui-mock-plugins.ts";
 import { buildSkillWorkshopMocks } from "./control-ui-mock-skill-workshop.js";
+import {
+  buildChatAttachmentHistory,
+  createChatAttachmentFixturePlugin,
+} from "./control-ui-mock-attachments.ts";
 
 type CliOptions = {
   allowedHosts: string[];
-  fixture?: "approval" | "board" | "code-fences" | "swarm" | "workboard";
+  fixture?: "approval" | "attachments" | "board" | "code-fences" | "swarm" | "workboard";
   host: string;
   operatorScopes?: string[];
   port: number;
@@ -171,6 +175,7 @@ function parseFixture(value: string | undefined): CliOptions["fixture"] {
   }
   if (
     value !== "approval" &&
+    value !== "attachments" &&
     value !== "board" &&
     value !== "code-fences" &&
     value !== "swarm" &&
@@ -1639,9 +1644,11 @@ async function createChatPickerScenario(
     workboardEnabled: fixture === "workboard",
   });
   const historyMessages =
-    fixture === "code-fences"
-      ? buildCodeFenceChatHistory(baseTime)
-      : buildScrollableChatHistory(baseTime);
+    fixture === "attachments"
+      ? buildChatAttachmentHistory(baseTime)
+      : fixture === "code-fences"
+        ? buildCodeFenceChatHistory(baseTime)
+        : buildScrollableChatHistory(baseTime);
   const planSessionInfo = {
     activeRunIds: [PLAN_DEMO_RUN_ID],
     hasActiveRun: true,
@@ -2975,7 +2982,11 @@ const server = await createServer({
       : {}),
     include: ["lit/directives/repeat.js"],
   },
-  plugins: [createMockGatewayPlugin(scenario), createBoardFixturePlugin()],
+  plugins: [
+    createMockGatewayPlugin(scenario),
+    createBoardFixturePlugin(),
+    ...(options.fixture === "attachments" ? [createChatAttachmentFixturePlugin()] : []),
+  ],
   publicDir: path.join(uiRoot, "public"),
   resolve: {
     alias: [
