@@ -3,6 +3,7 @@ import {
   parsePackageOpenClawSchemaVersions,
   type OpenClawSchemaVersions,
 } from "../state/openclaw-schema-versions.js";
+import { quiesceLocalTuiProcessesBeforeUpdate } from "./local-tui-processes.js";
 import { isBetaTag, isStableTag, type UpdateChannel } from "./update-channels.js";
 import { compareSemverStrings } from "./update-check.js";
 import type { CommandRunner, UpdateRunnerOptions } from "./update-runner-types.js";
@@ -58,6 +59,7 @@ export async function prepareGitMutation(params: {
         : {}
       : { metadataUnreadable: target.reason },
   );
+  await quiesceLocalTuiProcessesBeforeUpdate();
   return preparation ?? {};
 }
 

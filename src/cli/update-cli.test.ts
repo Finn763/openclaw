@@ -91,10 +91,6 @@ const launchdUpdateCleanupMocks = vi.hoisted(() => ({
 const databasePreflightMocks = vi.hoisted(() => ({
   preflightOpenClawDatabaseSchemas: vi.fn(),
 }));
-const localTuiProcessMocks = vi.hoisted(() => ({
-  listLocalTuiProcesses: vi.fn(),
-  terminateLocalTuiProcesses: vi.fn(),
-}));
 const restartHealthTestControl = vi.hoisted(() => ({
   snapshot: undefined as unknown,
 }));
@@ -126,12 +122,6 @@ vi.mock("@clack/prompts", () => ({
 vi.mock("../infra/update-runner.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/update-runner.js")>()),
   runGatewayUpdate: vi.fn(),
-}));
-
-vi.mock("../infra/local-tui-processes.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../infra/local-tui-processes.js")>()),
-  listLocalTuiProcesses: localTuiProcessMocks.listLocalTuiProcesses,
-  terminateLocalTuiProcesses: localTuiProcessMocks.terminateLocalTuiProcesses,
 }));
 
 vi.mock("../state/openclaw-database-preflight.js", () => ({
@@ -1382,11 +1372,6 @@ describe("update-cli", () => {
     databasePreflightMocks.preflightOpenClawDatabaseSchemas.mockReturnValue({
       incompatible: [],
       indeterminate: [],
-    });
-    localTuiProcessMocks.listLocalTuiProcesses.mockReturnValue([]);
-    localTuiProcessMocks.terminateLocalTuiProcesses.mockResolvedValue({
-      stopped: [],
-      failed: [],
     });
     vi.mocked(resolveOpenClawPackageRoot).mockResolvedValue(process.cwd());
     vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
@@ -5256,59 +5241,6 @@ describe("update-cli", () => {
     expect(preparations).toEqual([
       { allowGatewayServiceRepair: true, allowGatewayActivation: true },
     ]);
-  });
-
-  it("stops local TUI clients after git preflights and before checkout mutation", async () => {
-    const serviceEntrypoint = path.join(process.cwd(), "dist", "index.js");
-    mockRunningManagedGateway(["node", serviceEntrypoint, "gateway", "run"]);
-    localTuiProcessMocks.listLocalTuiProcesses.mockReturnValue([
-      { pid: 101, command: "node /usr/lib/node_modules/openclaw/openclaw.mjs tui" },
-    ]);
-    localTuiProcessMocks.terminateLocalTuiProcesses.mockResolvedValue({
-      stopped: [101],
-      failed: [],
-    });
-    const preparations = mockGitUpdateAfterMutation();
-
-    await withEnvAsync({ OPENCLAW_ALLOW_TEST_LOCAL_TUI_PROCESS_MUTATION: "1" }, async () => {
-      await updateCommand({ yes: true });
-    });
-
-    expect(serviceStop).toHaveBeenCalledOnce();
-    expect(localTuiProcessMocks.terminateLocalTuiProcesses).toHaveBeenCalledWith({
-      processes: [{ pid: 101, command: "node /usr/lib/node_modules/openclaw/openclaw.mjs tui" }],
-    });
-    expect(serviceStop.mock.invocationCallOrder[0]).toBeLessThan(
-      localTuiProcessMocks.listLocalTuiProcesses.mock.invocationCallOrder[0] ?? 0,
-    );
-    expect(preparations).toEqual([
-      { allowGatewayServiceRepair: true, allowGatewayActivation: true },
-    ]);
-  });
-
-  it("refuses git mutation and restores the service when a local TUI survives", async () => {
-    const serviceEntrypoint = path.join(process.cwd(), "dist", "index.js");
-    mockRunningManagedGateway(["node", serviceEntrypoint, "gateway", "run"]);
-    localTuiProcessMocks.listLocalTuiProcesses.mockReturnValue([
-      { pid: 101, command: "openclaw-tui" },
-    ]);
-    localTuiProcessMocks.terminateLocalTuiProcesses.mockResolvedValue({
-      stopped: [],
-      failed: [101],
-    });
-    const preparations = mockGitUpdateAfterMutation();
-
-    await withEnvAsync({ OPENCLAW_ALLOW_TEST_LOCAL_TUI_PROCESS_MUTATION: "1" }, async () => {
-      await updateCommand({ yes: true });
-    });
-
-    expect(preparations).toEqual([]);
-    expect(serviceStop).toHaveBeenCalledOnce();
-    expect(serviceRestart).toHaveBeenCalledOnce();
-    expect(defaultRuntime.error).toHaveBeenCalledWith(
-      "Update refused: could not stop local TUI clients 101. Close them and retry the update.",
-    );
-    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
   });
 
   it("stops a running managed git gateway when wrapper commands hide the service root", async () => {

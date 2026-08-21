@@ -159,7 +159,6 @@ export function createBeforeGitMutation(params: {
   shouldRestart: boolean;
   stopManagedService: (roots: readonly string[]) => Promise<void>;
   getPreManagedServiceStop: () => PreManagedServiceStop | undefined;
-  beforeMutation: () => Promise<void>;
 }): BeforeGitMutation {
   return async (target) => {
     if (target?.metadataUnreadable) {
@@ -185,7 +184,6 @@ export function createBeforeGitMutation(params: {
       defaultRuntime.error(formatSchemaRefusalLines(postStopSchemas).join("\n"));
       throw new UpdateCommandAbort();
     }
-    await params.beforeMutation();
     return {
       // Only a positively owned service may be rewritten. Activation
       // additionally requires this update to have stopped it.
