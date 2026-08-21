@@ -28,7 +28,7 @@ async function settleCleanup(...cleanups: Array<() => Promise<void>>): Promise<v
 async function waitFor<T>(
   read: () => T | undefined,
   timeoutMs = 30_000,
-  timeoutContext?: () => unknown | Promise<unknown>,
+  timeoutContext?: () => unknown,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -38,7 +38,7 @@ async function waitFor<T>(
     }
     await sleep(100);
   }
-  const context = await timeoutContext?.();
+  const context = timeoutContext?.();
   throw new Error(
     `timed out waiting for QA runtime evidence${
       context === undefined ? "" : `: ${JSON.stringify(context)}`
@@ -150,7 +150,6 @@ describe("diagnostics-otel gateway runtime", () => {
         text: string,
         expectedText: string,
         targetConversation = conversation,
-        phase = "reply",
       ) => {
         const cursor = state.getSnapshot().messages.length;
         state.addInboundMessage({
@@ -159,56 +158,22 @@ describe("diagnostics-otel gateway runtime", () => {
           senderName: "QA User",
           text,
         });
-        return await waitFor(
-          () =>
-            state
-              .getSnapshot()
-              .messages.slice(cursor)
-              .find(
-                (message) =>
-                  message.direction === "outbound" &&
-                  message.conversation.id === targetConversation.id &&
-                  message.text.includes(expectedText),
-              ),
-          30_000,
-          async () => ({
-            phase,
-            gatewayLogs: gateway?.logs().slice(-8_192),
-            messages: state
-              .getSnapshot()
-              .messages.slice(-8)
-              .map((message) => ({
-                conversationId: message.conversation.id,
-                direction: message.direction,
-                text: message.text.slice(0, 512),
-              })),
-            providerRequests: mock
-              ? await fetch(`${mock.baseUrl}/debug/requests`)
-                  .then(
-                    async (response) => (await response.json()) as Array<Record<string, unknown>>,
-                  )
-                  .then((requests) =>
-                    requests.slice(-8).map((request) => ({
-                      plannedToolName: request.plannedToolName,
-                      plannedWireToolName: request.plannedWireToolName,
-                      toolOutputCallId: request.toolOutputCallId,
-                    })),
-                  )
-                  .catch((error: unknown) => [
-                    { diagnosticError: error instanceof Error ? error.message : String(error) },
-                  ])
-              : [],
-            telemetryRequests: activeReceiver.capturedRequests.slice(-8),
-            traces: summarizeRuntimeEvidence(activeReceiver.capturedSpans),
-          }),
+        return await waitFor(() =>
+          state
+            .getSnapshot()
+            .messages.slice(cursor)
+            .find(
+              (message) =>
+                message.direction === "outbound" &&
+                message.conversation.id === targetConversation.id &&
+                message.text.includes(expectedText),
+            ),
         );
       };
 
       const successful = await send(
         "Tool progress QA check: use the read tool exactly once on `QA_KICKOFF_TASK.md` before answering. After that read completes, reply with only this exact marker and no other text: `OTEL-GATEWAY-SUCCESS-OK`.",
         "OTEL-GATEWAY-SUCCESS-OK",
-        conversation,
-        "success-reply",
       );
       expect(successful.direction).toBe("outbound");
       expect(successful.text).toContain("OTEL-GATEWAY-SUCCESS-OK");
@@ -219,8 +184,6 @@ describe("diagnostics-otel gateway runtime", () => {
       const recovered = await send(
         "Failed tool terminal recovery QA check: read the missing workspace file, then respond with exact marker: `QA-FAILED-TOOL-FINALIZED-OK`.",
         "QA-FAILED-TOOL-FINALIZED-OK",
-        conversation,
-        "failed-tool-reply",
       );
       expect(recovered.direction).toBe("outbound");
       expect(recovered.text).toContain("The requested file could not be read: ENOENT.");
@@ -246,7 +209,7 @@ describe("diagnostics-otel gateway runtime", () => {
       expect(finalizations).toHaveLength(1);
       expect(finalizations[0]?.body?.tools ?? []).toHaveLength(0);
       expect(finalizations[0]?.allInputText).toContain(
-        "state that failure plainly and do not claim it succeeded",
+        "If a tool failed, say so; never claim completion or success.",
       );
       const finalizationInput = finalizations[0]?.body?.input ?? [];
       const failedExecCalls = finalizationInput.filter(
