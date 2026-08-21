@@ -1348,7 +1348,37 @@ printf 'status=%s\\n' "$status"
       'public_latest_version="$(quiet_npm view "$PACKAGE_NAME" version 2>/dev/null || true)"',
     );
     expect(wrapper).toContain('LATEST_VERSION="$public_latest_version"');
+    expect(wrapper).toContain('LATEST_VERSION="$(quiet_npm view "$PACKAGE_NAME" version)"');
     expect(wrapper).toContain('-e OPENCLAW_INSTALL_EXPECT_VERSION="$LATEST_VERSION"');
+  });
+
+  it("runs update and non-root installer groups independently while defaulting to all", () => {
+    const wrapper = readFileSync(SCRIPT_PATH, "utf8");
+
+    expect(wrapper).toContain('INSTALL_SMOKE_GROUP="${OPENCLAW_INSTALL_SMOKE_GROUP:-all}"');
+    expect(wrapper).toContain("RUN_UPDATE_GROUP=0");
+    expect(wrapper).toContain("RUN_NONROOT_GROUP=0");
+    expect(wrapper).toContain('case "$INSTALL_SMOKE_GROUP" in');
+    expect(wrapper).toContain("all)");
+    expect(wrapper).toContain("update)");
+    expect(wrapper).toContain("nonroot)");
+    expect(wrapper).toContain('if [[ "$RUN_UPDATE_GROUP" == "1" ]]');
+    expect(wrapper).toContain('if [[ "$RUN_NONROOT_GROUP" != "1" ]]');
+    expect(wrapper.indexOf('if [[ "$RUN_UPDATE_GROUP" == "1" ]]')).toBeLessThan(
+      wrapper.indexOf('if [[ "$RUN_NONROOT_GROUP" != "1" ]]'),
+    );
+
+    const invalid = spawnSync("bash", [SCRIPT_PATH], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPENCLAW_INSTALL_SMOKE_GROUP: "invalid",
+      },
+    });
+    expect(invalid.status).toBe(2);
+    expect(invalid.stderr).toContain(
+      "OPENCLAW_INSTALL_SMOKE_GROUP must be all, update, or nonroot",
+    );
   });
 });
 
@@ -2104,7 +2134,16 @@ chmod +x "$BUN_INSTALL/bin/openclaw"
 
   it("runs installer packaging from the trusted workflow revision against a nested candidate", () => {
     const workflow = parse(readFileSync(INSTALL_SMOKE_WORKFLOW_PATH, "utf8"));
-    const steps = workflow.jobs.installer_smoke.steps as Array<{
+    const producer = workflow.jobs.installer_smoke_image;
+    const producerSteps = producer.steps as Array<{
+      name?: string;
+      uses?: string;
+      with?: Record<string, unknown>;
+      env?: Record<string, unknown>;
+      run?: string;
+    }>;
+    const consumer = workflow.jobs.installer_smoke_group;
+    const steps = consumer.steps as Array<{
       name?: string;
       uses?: string;
       with?: Record<string, unknown>;
@@ -2130,16 +2169,34 @@ chmod +x "$BUN_INSTALL/bin/openclaw"
     expect(step("Setup Node environment for installer smoke").uses).toBe(
       "./.github/actions/setup-node-env",
     );
+    expect(step("Setup Node environment for installer smoke").with).toMatchObject({
+      "install-deps": "${{ matrix.group == 'update' && 'true' || 'false' }}",
+    });
     expect(step("Run installer docker tests").env).toMatchObject({
       OPENCLAW_INSTALL_SMOKE_ALLOW_UNRELEASED_CHANGELOG: "${{ inputs.allow_unreleased_changelog }}",
+      OPENCLAW_INSTALL_SMOKE_GROUP: "${{ matrix.group }}",
       OPENCLAW_INSTALL_SMOKE_SOURCE_DIR: "${{ github.workspace }}/candidate",
     });
     expect(step("Run installer docker tests").run).toBe("bash scripts/test-install-sh-docker.sh");
-    expect(step("Build installer smoke image").run).toContain(
-      "./scripts/docker/install-sh-smoke/Dockerfile",
-    );
-    expect(step("Build installer smoke image").run).not.toContain("candidate/scripts/docker");
-    expect(step("Build installer non-root image").run).not.toContain("candidate/scripts/docker");
+    const buildStep = producerSteps.find((entry) => entry.name === "Build installer smoke image");
+    expect(buildStep).toBeDefined();
+    expect(buildStep?.run).toContain('-f "$DOCKERFILE"');
+    expect(buildStep?.run).not.toContain("candidate/scripts/docker");
+    expect(producer.strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: {
+        include: [
+          { dockerfile: "./scripts/docker/install-sh-smoke/Dockerfile", group: "update" },
+          { dockerfile: "./scripts/docker/install-sh-nonroot/Dockerfile", group: "nonroot" },
+        ],
+      },
+    });
+    expect(consumer.strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: {
+        include: [{ group: "update" }, { group: "nonroot" }],
+      },
+    });
     expect(step("Run Rocky Linux installer smoke").run).toContain(
       "$PWD/candidate/scripts/install.sh",
     );

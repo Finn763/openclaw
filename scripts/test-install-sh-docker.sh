@@ -204,6 +204,27 @@ NONROOT_PLATFORM="${OPENCLAW_INSTALL_NONROOT_PLATFORM:-$SMOKE_PLATFORM}"
 INSTALL_URL="${OPENCLAW_INSTALL_URL:-https://openclaw.bot/install.sh}"
 CLI_INSTALL_URL="${OPENCLAW_INSTALL_CLI_URL:-https://openclaw.bot/install-cli.sh}"
 PACKAGE_NAME="${OPENCLAW_INSTALL_PACKAGE:-openclaw}"
+INSTALL_SMOKE_GROUP="${OPENCLAW_INSTALL_SMOKE_GROUP:-all}"
+RUN_UPDATE_GROUP=0
+RUN_NONROOT_GROUP=0
+
+case "$INSTALL_SMOKE_GROUP" in
+  all)
+    RUN_UPDATE_GROUP=1
+    RUN_NONROOT_GROUP=1
+    ;;
+  update)
+    RUN_UPDATE_GROUP=1
+    ;;
+  nonroot)
+    RUN_NONROOT_GROUP=1
+    ;;
+  *)
+    echo "ERROR: OPENCLAW_INSTALL_SMOKE_GROUP must be all, update, or nonroot; got ${INSTALL_SMOKE_GROUP}" >&2
+    exit 2
+    ;;
+esac
+
 SKIP_NONROOT="${OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT:-0}"
 SKIP_SMOKE_IMAGE_BUILD="${OPENCLAW_INSTALL_SMOKE_SKIP_IMAGE_BUILD:-0}"
 SKIP_NONROOT_IMAGE_BUILD="${OPENCLAW_INSTALL_NONROOT_SKIP_IMAGE_BUILD:-0}"
@@ -452,81 +473,62 @@ start_update_server() {
   fi
 }
 
-if [[ "$SKIP_SMOKE_IMAGE_BUILD" == "1" ]]; then
-  echo "==> Reuse prebuilt smoke image: $SMOKE_IMAGE"
-else
-  echo "==> Build smoke image (upgrade, root, ${SMOKE_PLATFORM}): $SMOKE_IMAGE"
-  docker_build_run install-smoke-build \
-    --platform "$SMOKE_PLATFORM" \
-    -t "$SMOKE_IMAGE" \
-    -f "$HARNESS_ROOT/scripts/docker/install-sh-smoke/Dockerfile" \
-    "$HARNESS_ROOT/scripts/docker"
-fi
-
-if [[ "$SKIP_UPDATE" == "1" ]]; then
-  echo "==> Skip update smoke (OPENCLAW_INSTALL_SMOKE_SKIP_UPDATE=1)"
-else
-  prepare_update_tarball
-  prepare_update_host_access
-  prepare_npm_cache
-  start_update_server
-
-  echo "==> Run installer smoke test (root): $FRESH_TAG_URL"
-  run_install_smoke_container --rm -t \
-    --platform "$SMOKE_PLATFORM" \
-    ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
-    ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
-    "${INSTALL_SCRIPT_DOCKER_ARGS[@]}" \
-    ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
-    -v "${LATEST_DIR}:/out" \
-    -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
-    -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
-    -e OPENCLAW_INSTALL_METHOD=npm \
-    -e OPENCLAW_INSTALL_FRESH_VERSION="$UPDATE_EXPECT_VERSION" \
-    -e OPENCLAW_INSTALL_FRESH_TAG_URL="$FRESH_TAG_URL" \
-    -e OPENCLAW_INSTALL_LATEST_OUT="/out/latest" \
-    -e OPENCLAW_NO_ONBOARD=1 \
-    -e OPENCLAW_NO_PROMPT=1 \
-    -e DEBIAN_FRONTEND=noninteractive \
-    "$SMOKE_IMAGE"
-
-  LATEST_VERSION=""
-  if [[ -f "$LATEST_FILE" ]]; then
-    LATEST_VERSION="$(cat "$LATEST_FILE")"
-  fi
-  public_latest_version="$(quiet_npm view "$PACKAGE_NAME" version 2>/dev/null || true)"
-  if [[ -n "$public_latest_version" ]]; then
-    LATEST_VERSION="$public_latest_version"
-  fi
-
-  echo "==> Run update smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
-  run_install_smoke_container --rm -t \
-    --platform "$SMOKE_PLATFORM" \
-    ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
-    ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
-    ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
-    -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
-    -e OPENCLAW_INSTALL_SMOKE_MODE=update \
-    -e OPENCLAW_INSTALL_UPDATE_BASELINE="$UPDATE_BASELINE_VERSION" \
-    -e OPENCLAW_INSTALL_UPDATE_BASELINE_TAG_URL="$BASELINE_TAG_URL" \
-    -e OPENCLAW_INSTALL_UPDATE_EXPECT_VERSION="$UPDATE_EXPECT_VERSION" \
-    -e OPENCLAW_INSTALL_UPDATE_TAG_URL="$UPDATE_TAG_URL" \
-    -e OPENCLAW_NO_ONBOARD=1 \
-    -e OPENCLAW_NO_PROMPT=1 \
-    -e DEBIAN_FRONTEND=noninteractive \
-    "$SMOKE_IMAGE"
-
-  if [[ "$SKIP_NPM_GLOBAL" == "1" ]]; then
-    echo "==> Skip direct npm global smoke (OPENCLAW_INSTALL_SMOKE_SKIP_NPM_GLOBAL=1)"
+if [[ "$RUN_UPDATE_GROUP" == "1" ]]; then
+  if [[ "$SKIP_SMOKE_IMAGE_BUILD" == "1" ]]; then
+    echo "==> Reuse prebuilt smoke image: $SMOKE_IMAGE"
   else
-    echo "==> Run direct npm global smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
+    echo "==> Build smoke image (upgrade, root, ${SMOKE_PLATFORM}): $SMOKE_IMAGE"
+    docker_build_run install-smoke-build \
+      --platform "$SMOKE_PLATFORM" \
+      -t "$SMOKE_IMAGE" \
+      -f "$HARNESS_ROOT/scripts/docker/install-sh-smoke/Dockerfile" \
+      "$HARNESS_ROOT/scripts/docker"
+  fi
+
+  if [[ "$SKIP_UPDATE" == "1" ]]; then
+    echo "==> Skip update smoke (OPENCLAW_INSTALL_SMOKE_SKIP_UPDATE=1)"
+  else
+    prepare_update_tarball
+    prepare_update_host_access
+    prepare_npm_cache
+    start_update_server
+
+    echo "==> Run installer smoke test (root): $FRESH_TAG_URL"
+    run_install_smoke_container --rm -t \
+      --platform "$SMOKE_PLATFORM" \
+      ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
+      ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
+      "${INSTALL_SCRIPT_DOCKER_ARGS[@]}" \
+      ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
+      -v "${LATEST_DIR}:/out" \
+      -e OPENCLAW_INSTALL_URL="$INSTALL_URL" \
+      -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
+      -e OPENCLAW_INSTALL_METHOD=npm \
+      -e OPENCLAW_INSTALL_FRESH_VERSION="$UPDATE_EXPECT_VERSION" \
+      -e OPENCLAW_INSTALL_FRESH_TAG_URL="$FRESH_TAG_URL" \
+      -e OPENCLAW_INSTALL_LATEST_OUT="/out/latest" \
+      -e OPENCLAW_NO_ONBOARD=1 \
+      -e OPENCLAW_NO_PROMPT=1 \
+      -e DEBIAN_FRONTEND=noninteractive \
+      "$SMOKE_IMAGE"
+
+    LATEST_VERSION=""
+    if [[ -f "$LATEST_FILE" ]]; then
+      LATEST_VERSION="$(cat "$LATEST_FILE")"
+    fi
+    public_latest_version="$(quiet_npm view "$PACKAGE_NAME" version 2>/dev/null || true)"
+    if [[ -n "$public_latest_version" ]]; then
+      LATEST_VERSION="$public_latest_version"
+    fi
+
+    echo "==> Run update smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
     run_install_smoke_container --rm -t \
       --platform "$SMOKE_PLATFORM" \
       ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
       ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
       ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
       -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
-      -e OPENCLAW_INSTALL_SMOKE_MODE=npm-global \
+      -e OPENCLAW_INSTALL_SMOKE_MODE=update \
       -e OPENCLAW_INSTALL_UPDATE_BASELINE="$UPDATE_BASELINE_VERSION" \
       -e OPENCLAW_INSTALL_UPDATE_BASELINE_TAG_URL="$BASELINE_TAG_URL" \
       -e OPENCLAW_INSTALL_UPDATE_EXPECT_VERSION="$UPDATE_EXPECT_VERSION" \
@@ -535,32 +537,65 @@ else
       -e OPENCLAW_NO_PROMPT=1 \
       -e DEBIAN_FRONTEND=noninteractive \
       "$SMOKE_IMAGE"
-  fi
-fi
 
-if [[ "$SKIP_FRESHNESS" == "1" ]]; then
-  echo "==> Skip installer npm freshness smoke (OPENCLAW_INSTALL_SMOKE_SKIP_FRESHNESS=1)"
+    if [[ "$SKIP_NPM_GLOBAL" == "1" ]]; then
+      echo "==> Skip direct npm global smoke (OPENCLAW_INSTALL_SMOKE_SKIP_NPM_GLOBAL=1)"
+    else
+      echo "==> Run direct npm global smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
+      run_install_smoke_container --rm -t \
+        --platform "$SMOKE_PLATFORM" \
+        ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
+        ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
+        ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
+        -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
+        -e OPENCLAW_INSTALL_SMOKE_MODE=npm-global \
+        -e OPENCLAW_INSTALL_UPDATE_BASELINE="$UPDATE_BASELINE_VERSION" \
+        -e OPENCLAW_INSTALL_UPDATE_BASELINE_TAG_URL="$BASELINE_TAG_URL" \
+        -e OPENCLAW_INSTALL_UPDATE_EXPECT_VERSION="$UPDATE_EXPECT_VERSION" \
+        -e OPENCLAW_INSTALL_UPDATE_TAG_URL="$UPDATE_TAG_URL" \
+        -e OPENCLAW_NO_ONBOARD=1 \
+        -e OPENCLAW_NO_PROMPT=1 \
+        -e DEBIAN_FRONTEND=noninteractive \
+        "$SMOKE_IMAGE"
+    fi
+  fi
+
+  if [[ "$SKIP_FRESHNESS" == "1" ]]; then
+    echo "==> Skip installer npm freshness smoke (OPENCLAW_INSTALL_SMOKE_SKIP_FRESHNESS=1)"
+  else
+    prepare_npm_cache
+    echo "==> Run installer npm freshness smoke"
+    run_install_smoke_container --rm -t \
+      --platform "$SMOKE_PLATFORM" \
+      ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
+      "${INSTALL_SCRIPT_DOCKER_ARGS[@]}" \
+      ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
+      -e OPENCLAW_INSTALL_URL="$FRESHNESS_INSTALL_URL" \
+      -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
+      -e OPENCLAW_INSTALL_SMOKE_MODE=freshness \
+      -e OPENCLAW_INSTALL_FRESHNESS_VERSION="${OPENCLAW_INSTALL_FRESHNESS_VERSION:-latest}" \
+      -e OPENCLAW_INSTALL_FRESHNESS_MIN_RELEASE_AGE="$FRESHNESS_MIN_RELEASE_AGE" \
+      -e OPENCLAW_INSTALL_FRESHNESS_NPM_VERSION="$FRESHNESS_NPM_VERSION" \
+      -e OPENCLAW_NO_ONBOARD=1 \
+      -e OPENCLAW_NO_PROMPT=1 \
+      -e DEBIAN_FRONTEND=noninteractive \
+      "$SMOKE_IMAGE"
+  fi
 else
-  prepare_npm_cache
-  echo "==> Run installer npm freshness smoke"
-  run_install_smoke_container --rm -t \
-    --platform "$SMOKE_PLATFORM" \
-    ${NPM_CACHE_DOCKER_ARGS[@]+"${NPM_CACHE_DOCKER_ARGS[@]}"} \
-    "${INSTALL_SCRIPT_DOCKER_ARGS[@]}" \
-    ${SMOKE_RUNNER_ENV_ARGS[@]+"${SMOKE_RUNNER_ENV_ARGS[@]}"} \
-    -e OPENCLAW_INSTALL_URL="$FRESHNESS_INSTALL_URL" \
-    -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
-    -e OPENCLAW_INSTALL_SMOKE_MODE=freshness \
-    -e OPENCLAW_INSTALL_FRESHNESS_VERSION="${OPENCLAW_INSTALL_FRESHNESS_VERSION:-latest}" \
-    -e OPENCLAW_INSTALL_FRESHNESS_MIN_RELEASE_AGE="$FRESHNESS_MIN_RELEASE_AGE" \
-    -e OPENCLAW_INSTALL_FRESHNESS_NPM_VERSION="$FRESHNESS_NPM_VERSION" \
-    -e OPENCLAW_NO_ONBOARD=1 \
-    -e OPENCLAW_NO_PROMPT=1 \
-    -e DEBIAN_FRONTEND=noninteractive \
-    "$SMOKE_IMAGE"
+  echo "==> Skip update installer smoke group"
 fi
 
 LATEST_VERSION="${LATEST_VERSION:-}"
+
+if [[ "$RUN_NONROOT_GROUP" != "1" ]]; then
+  echo "==> Skip non-root installer smoke group"
+  exit 0
+fi
+
+if [[ -z "$LATEST_VERSION" ]]; then
+  echo "==> Resolve public npm version for non-root installer assertion"
+  LATEST_VERSION="$(quiet_npm view "$PACKAGE_NAME" version)"
+fi
 
 if [[ "$SKIP_NONROOT" == "1" ]]; then
   echo "==> Skip non-root installer smoke (OPENCLAW_INSTALL_SMOKE_SKIP_NONROOT=1)"

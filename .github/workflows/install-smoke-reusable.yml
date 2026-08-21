@@ -536,11 +536,95 @@ jobs:
             "
           '
 
-  installer_smoke:
-    needs: [preflight, root_dockerfile_image, root_dockerfile_image_ready]
+  installer_smoke_image:
+    needs: [preflight]
     if: needs.preflight.outputs.run_full_install_smoke == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: update
+            artifact_key: install-smoke-update
+            dockerfile: ./scripts/docker/install-sh-smoke/Dockerfile
+            image_ref: openclaw-install-smoke:local
+          - group: nonroot
+            artifact_key: install-smoke-nonroot
+            dockerfile: ./scripts/docker/install-sh-nonroot/Dockerfile
+            image_ref: openclaw-install-nonroot:local
+    env:
+      DOCKER_BUILD_SUMMARY: "false"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Checkout trusted installer harness
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ needs.preflight.outputs.workflow_repository }}
+          ref: ${{ needs.preflight.outputs.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Blacksmith Docker Builder
+        uses: useblacksmith/setup-docker-builder@6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1
+        with:
+          max-cache-size-mb: 800000
+
+      - name: Build installer smoke image
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_REF: ${{ matrix.image_ref }}
+        run: |
+          timeout --kill-after=30s 20m docker buildx build \
+            --progress=plain \
+            --load \
+            -t "$IMAGE_REF" \
+            -f "$DOCKERFILE" \
+            ./scripts/docker
+
+      - name: Pack installer smoke image artifact
+        id: image_artifact
+        env:
+          ARTIFACT_KEY: ${{ matrix.artifact_key }}
+          IMAGE_REF: ${{ matrix.image_ref }}
+          TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/${ARTIFACT_KEY}-image"
+          artifact_name="${ARTIFACT_KEY}-image-${TARGET_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/docker/shared-image-artifact.sh \
+            pack "$artifact_dir" "$ARTIFACT_KEY" "$TARGET_SHA" "$WORKFLOW_SHA" "$IMAGE_REF"
+          {
+            echo "artifact_name=$artifact_name"
+            echo "artifact_path=$artifact_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload installer smoke image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.image_artifact.outputs.artifact_name }}
+          path: ${{ steps.image_artifact.outputs.artifact_path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  installer_smoke_group:
+    needs: [preflight, root_dockerfile_image, root_dockerfile_image_ready, installer_smoke_image]
+    if: needs.preflight.outputs.run_full_install_smoke == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: update
+            artifact_key: install-smoke-update
+            image_ref: openclaw-install-smoke:local
+            timeout_minutes: 120
+          - group: nonroot
+            artifact_key: install-smoke-nonroot
+            image_ref: openclaw-install-nonroot:local
+            timeout_minutes: 60
     env:
       DOCKER_BUILD_SUMMARY: "false"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -561,6 +645,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout trusted image artifact helper
+        if: matrix.group == 'update'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ needs.preflight.outputs.workflow_repository }}
@@ -569,6 +654,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate root Dockerfile image artifact binding
+        if: matrix.group == 'update'
         env:
           ARCHIVE_SHA256: ${{ needs.root_dockerfile_image.outputs.archive_sha256 }}
           ARTIFACT_DIGEST: ${{ needs.root_dockerfile_image.outputs.artifact_digest }}
@@ -610,6 +696,7 @@ jobs:
             "$ARTIFACT_RUN_ID" "$ARTIFACT_RUN_ATTEMPT"
 
       - name: Download root Dockerfile image artifact
+        if: matrix.group == 'update'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.root_dockerfile_image.outputs.artifact_id }}
@@ -618,6 +705,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Verify and load root Dockerfile image artifact
+        if: matrix.group == 'update'
         env:
           IMAGE_REF: ${{ needs.root_dockerfile_image.outputs.image_ref }}
           OPENCLAW_SHARED_IMAGE_ARCHIVE_SHA256: ${{ needs.root_dockerfile_image.outputs.archive_sha256 }}
@@ -632,42 +720,44 @@ jobs:
             "$TARGET_SHA" "$WORKFLOW_SHA" "$IMAGE_REF"
 
       - name: Require local root Dockerfile image
+        if: matrix.group == 'update'
         env:
           IMAGE_REF: ${{ needs.root_dockerfile_image.outputs.image_ref }}
         run: docker image inspect "$IMAGE_REF" >/dev/null
 
-      - name: Set up Blacksmith Docker Builder
-        uses: useblacksmith/setup-docker-builder@6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1
+      - name: Download installer smoke image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          max-cache-size-mb: 800000
+          name: ${{ format('{0}-image-{1}-{2}-{3}', matrix.artifact_key, needs.preflight.outputs.target_sha, github.run_id, github.run_attempt) }}
+          path: ${{ runner.temp }}/installer-smoke-image
 
-      - name: Build installer smoke image
+      - name: Verify and load installer smoke image artifact
+        env:
+          ARTIFACT_KEY: ${{ matrix.artifact_key }}
+          IMAGE_REF: ${{ matrix.image_ref }}
+          TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
         run: |
-          timeout --kill-after=30s 20m docker buildx build \
-            --progress=plain \
-            --load \
-            -t openclaw-install-smoke:local \
-            -f ./scripts/docker/install-sh-smoke/Dockerfile \
-            ./scripts/docker
+          set -euo pipefail
+          bash scripts/docker/shared-image-artifact.sh \
+            load "${RUNNER_TEMP}/installer-smoke-image" "$ARTIFACT_KEY" \
+            "$TARGET_SHA" "$WORKFLOW_SHA" "$IMAGE_REF"
 
-      - name: Build installer non-root image
-        run: |
-          timeout --kill-after=30s 20m docker buildx build \
-            --progress=plain \
-            --load \
-            -t openclaw-install-nonroot:local \
-            -f ./scripts/docker/install-sh-nonroot/Dockerfile \
-            ./scripts/docker
+      - name: Require local installer smoke image
+        env:
+          IMAGE_REF: ${{ matrix.image_ref }}
+        run: docker image inspect "$IMAGE_REF" >/dev/null
 
       - name: Setup Node environment for installer smoke
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
-          install-deps: "true"
+          install-deps: ${{ matrix.group == 'update' && 'true' || 'false' }}
 
       - name: Run installer docker tests
         env:
           OPENCLAW_INSTALL_SMOKE_ALLOW_UNRELEASED_CHANGELOG: ${{ inputs.allow_unreleased_changelog }}
+          OPENCLAW_INSTALL_SMOKE_GROUP: ${{ matrix.group }}
           OPENCLAW_INSTALL_URL: file:///tmp/openclaw-install.sh
           OPENCLAW_INSTALL_CLI_URL: file:///tmp/openclaw-install-cli.sh
           OPENCLAW_NO_ONBOARD: "1"
@@ -684,6 +774,7 @@ jobs:
         run: bash scripts/test-install-sh-docker.sh
 
       - name: Run Rocky Linux installer smoke
+        if: matrix.group == 'update'
         run: |
           timeout --kill-after=30s 20m docker run --rm \
             --platform linux/amd64 \
@@ -694,6 +785,7 @@ jobs:
             bash -lc 'dnf install -y -q ca-certificates tar gzip xz findutils which sudo >/dev/null && bash /tmp/install.sh --install-method npm --version latest --no-onboard --no-prompt --verify && openclaw --version'
 
       - name: Run Rocky Linux CLI installer smoke
+        if: matrix.group == 'update'
         run: |
           timeout --kill-after=30s 20m docker run --rm \
             --platform linux/amd64 \
@@ -702,6 +794,29 @@ jobs:
             -v "$PWD/candidate/scripts/install-cli.sh:/tmp/install-cli.sh:ro" \
             rockylinux:9@sha256:d644d203142cd5b54ad2a83a203e1dee68af2229f8fe32f52a30c6e1d3c3a9e0 \
             bash -lc 'dnf install -y -q ca-certificates tar gzip xz findutils which sudo >/dev/null && bash /tmp/install-cli.sh --prefix /tmp/openclaw-cli --version latest --no-onboard && /tmp/openclaw-cli/bin/openclaw --version'
+
+  installer_smoke:
+    needs: [preflight, installer_smoke_image, installer_smoke_group]
+    if: always() && needs.preflight.result == 'success' && needs.preflight.outputs.run_full_install_smoke == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify installer smoke groups
+        env:
+          CONSUMER_RESULT: ${{ needs.installer_smoke_group.result }}
+          PRODUCER_RESULT: ${{ needs.installer_smoke_image.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "$PRODUCER_RESULT" != "success" ]]; then
+            echo "::error::Installer smoke image producers ended with ${PRODUCER_RESULT}."
+            failed=1
+          fi
+          if [[ "$CONSUMER_RESULT" != "success" ]]; then
+            echo "::error::Installer smoke consumers ended with ${CONSUMER_RESULT}."
+            failed=1
+          fi
+          exit "$failed"
 
   bun_global_install_smoke:
     needs: [preflight, root_dockerfile_image, root_dockerfile_image_ready]

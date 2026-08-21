@@ -7454,7 +7454,15 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     expect(installSmoke.jobs?.root_dockerfile_image_ready?.["timeout-minutes"]).toBe(5);
     expect(installSmoke.jobs?.qr_package_install_smoke?.["timeout-minutes"]).toBe(30);
     expect(installSmoke.jobs?.root_dockerfile_smokes?.["timeout-minutes"]).toBe(90);
-    expect(installSmoke.jobs?.installer_smoke?.["timeout-minutes"]).toBe(150);
+    expect(installSmoke.jobs?.installer_smoke_image?.["timeout-minutes"]).toBe(45);
+    expect(
+      evaluatedJobTimeouts(
+        INSTALL_SMOKE_REUSABLE_WORKFLOW,
+        "installer_smoke_group",
+        workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "installer_smoke_group"),
+      ),
+    ).toEqual([120, 60]);
+    expect(installSmoke.jobs?.installer_smoke?.["timeout-minutes"]).toBe(5);
     expect(installSmoke.jobs?.bun_global_install_smoke?.["timeout-minutes"]).toBe(60);
     expect(installSmoke.jobs?.["docker-e2e-fast"]?.["timeout-minutes"]).toBe(12);
     expect(crossOs.jobs?.prepare?.["timeout-minutes"]).toBe(90);
@@ -7631,24 +7639,42 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     expect(
       jobNeeds(workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "root_dockerfile_image_ready")),
     ).toEqual(["preflight", "root_dockerfile_image"]);
+    expect(jobNeeds(workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "installer_smoke_image"))).toEqual(
+      ["preflight"],
+    );
+    expect(jobNeeds(workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "installer_smoke_group"))).toEqual(
+      [
+        "preflight",
+        "root_dockerfile_image",
+        "root_dockerfile_image_ready",
+        "installer_smoke_image",
+      ],
+    );
     expect(jobNeeds(workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "installer_smoke"))).toEqual([
       "preflight",
-      "root_dockerfile_image",
-      "root_dockerfile_image_ready",
+      "installer_smoke_image",
+      "installer_smoke_group",
     ]);
     expect(jobNeeds(releaseSummary)).toContain("install_smoke_release_checks");
+    const installerGroupTimeout = Math.max(
+      ...evaluatedJobTimeouts(
+        INSTALL_SMOKE_REUSABLE_WORKFLOW,
+        "installer_smoke_group",
+        workflowJob(INSTALL_SMOKE_REUSABLE_WORKFLOW, "installer_smoke_group"),
+      ),
+    );
     const releaseInstallPath = [
       timeoutForProfile(releaseChecks.jobs?.resolve_target?.["timeout-minutes"], "stable"),
       timeoutForProfile(installSmoke.jobs?.preflight?.["timeout-minutes"], "stable"),
-      timeoutForProfile(installSmoke.jobs?.root_dockerfile_image?.["timeout-minutes"], "stable"),
-      timeoutForProfile(
-        installSmoke.jobs?.root_dockerfile_image_ready?.["timeout-minutes"],
-        "stable",
+      Math.max(
+        timeoutForProfile(installSmoke.jobs?.root_dockerfile_image?.["timeout-minutes"], "stable"),
+        timeoutForProfile(installSmoke.jobs?.installer_smoke_image?.["timeout-minutes"], "stable"),
       ),
+      installerGroupTimeout,
       timeoutForProfile(installSmoke.jobs?.installer_smoke?.["timeout-minutes"], "stable"),
       timeoutForProfile(releaseChecks.jobs?.summary?.["timeout-minutes"], "stable"),
     ];
-    expect(releaseInstallPath).toEqual([30, 15, 60, 5, 150, 5]);
+    expect(releaseInstallPath).toEqual([30, 15, 60, 120, 5, 5]);
 
     const releaseQaLive = workflowJob(RELEASE_CHECKS_WORKFLOW, "qa_live_release_checks");
     expect(jobNeeds(releaseQaLive)).toEqual(["resolve_target"]);
@@ -7679,7 +7705,7 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
       expect(420 - childTimeout, `release-checks:${pathName}`).toBeGreaterThanOrEqual(60);
     }
     expect(releaseCrossOsPath.reduce((total, timeout) => total + timeout, 0)).toBe(200);
-    expect(releaseInstallPath.reduce((total, timeout) => total + timeout, 0)).toBe(265);
+    expect(releaseInstallPath.reduce((total, timeout) => total + timeout, 0)).toBe(235);
     expect(releaseQaLivePath.reduce((total, timeout) => total + timeout, 0)).toBe(165);
 
     expect(

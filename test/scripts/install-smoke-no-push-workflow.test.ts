@@ -22,7 +22,14 @@ type WorkflowJob = {
   needs?: string | string[];
   outputs?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
+  strategy?: {
+    "fail-fast"?: boolean;
+    matrix?: {
+      include?: Array<Record<string, unknown>>;
+    };
+  };
   steps?: WorkflowStep[];
+  "timeout-minutes"?: number | string;
   uses?: string;
   with?: Record<string, unknown>;
 };
@@ -199,13 +206,15 @@ describe("install smoke no-push root image transport", () => {
     const workflow = readWorkflow(INSTALL_SMOKE_REUSABLE);
     for (const jobName of [
       "root_dockerfile_smokes",
-      "installer_smoke",
+      "installer_smoke_group",
       "bun_global_install_smoke",
     ]) {
       const consumer = job(workflow, jobName);
+      const updateOnly =
+        jobName === "installer_smoke_group" ? "matrix.group == 'update'" : undefined;
       expect(consumer.needs, jobName).toContain("root_dockerfile_image_ready");
       expect(consumer.env?.OPENCLAW_DOCKER_E2E_REQUIRE_LOCAL_IMAGE, jobName).toBe("1");
-      expect(step(consumer, "Checkout trusted image artifact helper").if, jobName).toBeUndefined();
+      expect(step(consumer, "Checkout trusted image artifact helper").if, jobName).toBe(updateOnly);
       expect(
         consumer.steps?.find((candidate) => candidate.name === "Log in to GHCR"),
         jobName,
@@ -216,7 +225,7 @@ describe("install smoke no-push root image transport", () => {
       ).toBeUndefined();
 
       const binding = step(consumer, "Validate root Dockerfile image artifact binding");
-      expect(binding.if, jobName).toBeUndefined();
+      expect(binding.if, jobName).toBe(updateOnly);
       expect(binding.env, jobName).toMatchObject({
         ARCHIVE_SHA256: "${{ needs.root_dockerfile_image.outputs.archive_sha256 }}",
         ARTIFACT_DIGEST: "${{ needs.root_dockerfile_image.outputs.artifact_digest }}",
@@ -242,7 +251,7 @@ describe("install smoke no-push root image transport", () => {
       expect(binding.run, jobName).not.toContain("<<<");
 
       const download = step(consumer, "Download root Dockerfile image artifact");
-      expect(download.if, jobName).toBeUndefined();
+      expect(download.if, jobName).toBe(updateOnly);
       expect(download.with, jobName).toMatchObject({
         "artifact-ids": "${{ needs.root_dockerfile_image.outputs.artifact_id }}",
         "github-token": "${{ github.token }}",
@@ -251,20 +260,117 @@ describe("install smoke no-push root image transport", () => {
       });
 
       const load = step(consumer, "Verify and load root Dockerfile image artifact");
-      expect(load.if, jobName).toBeUndefined();
+      expect(load.if, jobName).toBe(updateOnly);
       expect(load.run, jobName).toContain(
         'load "${RUNNER_TEMP}/install-smoke-root-image" install-smoke-root',
       );
       expect(load.run, jobName).toContain('"$TARGET_SHA" "$WORKFLOW_SHA" "$IMAGE_REF"');
 
       const requireLocal = step(consumer, "Require local root Dockerfile image");
-      expect(requireLocal.if, jobName).toBeUndefined();
+      expect(requireLocal.if, jobName).toBe(updateOnly);
       expect(requireLocal.run, jobName).toBe('docker image inspect "$IMAGE_REF" >/dev/null');
     }
 
     const text = readFileSync(INSTALL_SMOKE_REUSABLE, "utf8");
     expect(text.match(/verify-upload "Root image"/g)).toHaveLength(3);
     expect(text).not.toContain("gh api");
+  });
+
+  it("builds and consumes installer images in independent non-fail-fast groups", () => {
+    const workflow = readWorkflow(INSTALL_SMOKE_REUSABLE);
+    const producer = job(workflow, "installer_smoke_image");
+    const consumer = job(workflow, "installer_smoke_group");
+    const aggregate = job(workflow, "installer_smoke");
+
+    expect(producer.needs).toEqual(["preflight"]);
+    expect(producer["timeout-minutes"]).toBe(45);
+    expect(producer.strategy).toEqual({
+      "fail-fast": false,
+      matrix: {
+        include: [
+          {
+            artifact_key: "install-smoke-update",
+            dockerfile: "./scripts/docker/install-sh-smoke/Dockerfile",
+            group: "update",
+            image_ref: "openclaw-install-smoke:local",
+          },
+          {
+            artifact_key: "install-smoke-nonroot",
+            dockerfile: "./scripts/docker/install-sh-nonroot/Dockerfile",
+            group: "nonroot",
+            image_ref: "openclaw-install-nonroot:local",
+          },
+        ],
+      },
+    });
+    expect(step(producer, "Build installer smoke image").run).toContain('-f "$DOCKERFILE"');
+    expect(step(producer, "Pack installer smoke image artifact").run).toContain(
+      'pack "$artifact_dir" "$ARTIFACT_KEY" "$TARGET_SHA" "$WORKFLOW_SHA" "$IMAGE_REF"',
+    );
+    expect(step(producer, "Upload installer smoke image artifact").with).toMatchObject({
+      "compression-level": 0,
+      "if-no-files-found": "error",
+      name: "${{ steps.image_artifact.outputs.artifact_name }}",
+    });
+
+    expect(consumer.needs).toEqual([
+      "preflight",
+      "root_dockerfile_image",
+      "root_dockerfile_image_ready",
+      "installer_smoke_image",
+    ]);
+    expect(consumer["timeout-minutes"]).toBe("${{ matrix.timeout_minutes }}");
+    expect(consumer.strategy).toEqual({
+      "fail-fast": false,
+      matrix: {
+        include: [
+          {
+            artifact_key: "install-smoke-update",
+            group: "update",
+            image_ref: "openclaw-install-smoke:local",
+            timeout_minutes: 120,
+          },
+          {
+            artifact_key: "install-smoke-nonroot",
+            group: "nonroot",
+            image_ref: "openclaw-install-nonroot:local",
+            timeout_minutes: 60,
+          },
+        ],
+      },
+    });
+    expect(step(consumer, "Download installer smoke image artifact").with).toMatchObject({
+      name: "${{ format('{0}-image-{1}-{2}-{3}', matrix.artifact_key, needs.preflight.outputs.target_sha, github.run_id, github.run_attempt) }}",
+      path: "${{ runner.temp }}/installer-smoke-image",
+    });
+    expect(step(consumer, "Verify and load installer smoke image artifact").run).toContain(
+      'load "${RUNNER_TEMP}/installer-smoke-image" "$ARTIFACT_KEY"',
+    );
+    expect(step(consumer, "Setup Node environment for installer smoke").with).toMatchObject({
+      "install-bun": "false",
+      "install-deps": "${{ matrix.group == 'update' && 'true' || 'false' }}",
+    });
+    expect(step(consumer, "Run installer docker tests").env).toMatchObject({
+      OPENCLAW_INSTALL_SMOKE_GROUP: "${{ matrix.group }}",
+    });
+    expect(step(consumer, "Run Rocky Linux installer smoke").if).toBe("matrix.group == 'update'");
+    expect(step(consumer, "Run Rocky Linux CLI installer smoke").if).toBe(
+      "matrix.group == 'update'",
+    );
+
+    expect(aggregate.needs).toEqual([
+      "preflight",
+      "installer_smoke_image",
+      "installer_smoke_group",
+    ]);
+    expect(aggregate["timeout-minutes"]).toBe(5);
+    const verify = step(aggregate, "Verify installer smoke groups");
+    expect(verify.env).toEqual({
+      CONSUMER_RESULT: "${{ needs.installer_smoke_group.result }}",
+      PRODUCER_RESULT: "${{ needs.installer_smoke_image.result }}",
+    });
+    expect(verify.run).toContain('if [[ "$PRODUCER_RESULT" != "success" ]]');
+    expect(verify.run).toContain('if [[ "$CONSUMER_RESULT" != "success" ]]');
   });
 
   it("selects the read-only reusable core from release checks", () => {
@@ -286,7 +392,9 @@ describe("install smoke no-push root image transport", () => {
 
   it("passes package changelog intent only to current-tree smoke scripts", () => {
     const workflow = readWorkflow(INSTALL_SMOKE_REUSABLE);
-    expect(step(job(workflow, "installer_smoke"), "Run installer docker tests").env).toMatchObject({
+    expect(
+      step(job(workflow, "installer_smoke_group"), "Run installer docker tests").env,
+    ).toMatchObject({
       OPENCLAW_INSTALL_SMOKE_ALLOW_UNRELEASED_CHANGELOG: "${{ inputs.allow_unreleased_changelog }}",
     });
     expect(
