@@ -65,17 +65,19 @@ function createPluginToolDelivery(params: {
   context: OpenClawPluginToolContext;
   resolveConfig: () => OpenClawConfig | undefined;
 }): OpenClawPluginToolDelivery | undefined {
-  const route = params.context.deliveryContext;
+  const deliveryContext = params.context.deliveryContext;
   const agentId = params.context.agentId;
   const sessionKey = params.context.sessionKey;
   const sessionId = params.context.sessionId;
+  const senderIsOwner = params.context.senderIsOwner;
+  const conversationReadOrigin = params.context.conversationReadOrigin;
   const runId = params.options?.runId;
   const token = params.options?.messageActionTurnCapability;
   const activeRegistry = getActivePluginRegistry();
   const activeRegistryVersion = getActivePluginRegistryVersion();
   if (
-    !route?.channel ||
-    !route.to ||
+    !deliveryContext?.channel ||
+    !deliveryContext.to ||
     !agentId ||
     !sessionKey ||
     !runId ||
@@ -84,6 +86,12 @@ function createPluginToolDelivery(params: {
   ) {
     return undefined;
   }
+  const route = {
+    channel: deliveryContext.channel,
+    to: deliveryContext.to,
+    accountId: deliveryContext.accountId,
+    threadId: deliveryContext.threadId,
+  };
 
   const resolveAuthorization = () => {
     if (
@@ -133,8 +141,8 @@ function createPluginToolDelivery(params: {
             requesterSenderId: authorization.requesterSenderId,
             toolContext: authorization.toolContext,
           },
-          senderIsOwner: params.context.senderIsOwner,
-          conversationReadOrigin: params.context.conversationReadOrigin,
+          senderIsOwner,
+          conversationReadOrigin,
           toolContext: authorization.toolContext,
           sessionKey,
           sessionId,
