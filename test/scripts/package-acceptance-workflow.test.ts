@@ -4977,7 +4977,7 @@ describe("package artifact reuse", () => {
     const resolverScript = resolver.steps?.find((step) => step.id === "resolve")?.run ?? "";
     const mainResolverScript = mainResolver.steps?.find((step) => step.id === "resolve")?.run ?? "";
     const reusableWorkflow =
-      "openclaw/openclaw-windows-node/.github/workflows/release-candidate-e2e.yml@c92fa583dcdb0ce9d63ba2965a7579a95992d7a4";
+      "openclaw/openclaw-windows-node/.github/workflows/release-candidate-e2e.yml@d3ed6c78bf1448444d0e8618b24848bb88121b40";
 
     expect(resolver.outputs).toMatchObject({
       stable_asset_name: "${{ steps.resolve.outputs.stable_asset_name }}",
@@ -5034,7 +5034,7 @@ describe("package artifact reuse", () => {
       windows_node_source: "release",
       windows_node_source_sha:
         "${{ needs.resolve_windows_node_release_artifacts.outputs.prerelease_release_sha }}",
-      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+      windows_node_workflow_sha: "d3ed6c78bf1448444d0e8618b24848bb88121b40",
     });
     expect(stable.uses).toBe(reusableWorkflow);
     expect(stable.with).toMatchObject({
@@ -5047,7 +5047,7 @@ describe("package artifact reuse", () => {
       windows_node_source: "release",
       windows_node_source_sha:
         "${{ needs.resolve_windows_node_release_artifacts.outputs.stable_release_sha }}",
-      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+      windows_node_workflow_sha: "d3ed6c78bf1448444d0e8618b24848bb88121b40",
     });
     expect(main.uses).toBe(reusableWorkflow);
     expect(main.needs).toEqual([
@@ -5061,7 +5061,7 @@ describe("package artifact reuse", () => {
       windows_node_source: "main",
       windows_node_source_sha:
         "${{ needs.resolve_windows_node_main_source.outputs.main_source_sha }}",
-      windows_node_workflow_sha: "c92fa583dcdb0ce9d63ba2965a7579a95992d7a4",
+      windows_node_workflow_sha: "d3ed6c78bf1448444d0e8618b24848bb88121b40",
       allow_protocol_mismatch: false,
     });
   });
