@@ -60,10 +60,18 @@ function hasDisplayRowTable(db: DatabaseSync, tableName: string): boolean {
   );
 }
 
-function validateExistingDisplayRowSchema(db: DatabaseSync): boolean {
+export function validateOpenClawAgentDisplayRowSchema(db: DatabaseSync): boolean {
   const statePresent = hasDisplayRowTable(db, SESSION_TRANSCRIPT_DISPLAY_STATE_TABLE);
   const rowsPresent = hasDisplayRowTable(db, SESSION_TRANSCRIPT_DISPLAY_ROWS_TABLE);
-  if (!statePresent && !rowsPresent) {
+  const semanticTables = [
+    SESSION_TRANSCRIPT_DISPLAY_ROW_SOURCES_TABLE,
+    SESSION_TRANSCRIPT_DISPLAY_CANVAS_TABLE,
+    SESSION_TRANSCRIPT_DISPLAY_CARRY_TABLE,
+  ];
+  const presentSemanticTables = semanticTables.filter((tableName) =>
+    hasDisplayRowTable(db, tableName),
+  );
+  if (!statePresent && !rowsPresent && presentSemanticTables.length === 0) {
     return false;
   }
   if (!statePresent || !rowsPresent) {
@@ -73,14 +81,6 @@ function validateExistingDisplayRowSchema(db: DatabaseSync): boolean {
     db,
     "OpenClaw agent display-row foundation schema",
     AGENT_DISPLAY_ROW_FOUNDATION_SCHEMA_SQL,
-  );
-  const semanticTables = [
-    SESSION_TRANSCRIPT_DISPLAY_ROW_SOURCES_TABLE,
-    SESSION_TRANSCRIPT_DISPLAY_CANVAS_TABLE,
-    SESSION_TRANSCRIPT_DISPLAY_CARRY_TABLE,
-  ];
-  const presentSemanticTables = semanticTables.filter((tableName) =>
-    hasDisplayRowTable(db, tableName),
   );
   if (presentSemanticTables.length === 0) {
     return false;
@@ -98,7 +98,7 @@ function cacheDisplayRowSchemaAfterTransaction(db: DatabaseSync): void {
       return;
     }
     try {
-      if (validateExistingDisplayRowSchema(db)) {
+      if (validateOpenClawAgentDisplayRowSchema(db)) {
         ENSURED_DATABASES.add(db);
       }
     } catch {
@@ -115,7 +115,7 @@ export function ensureOpenClawAgentDisplayRowSchema(db: DatabaseSync): void {
   const ensure = () => {
     const statePresent = hasDisplayRowTable(db, SESSION_TRANSCRIPT_DISPLAY_STATE_TABLE);
     const rowsPresent = hasDisplayRowTable(db, SESSION_TRANSCRIPT_DISPLAY_ROWS_TABLE);
-    const complete = validateExistingDisplayRowSchema(db);
+    const complete = validateOpenClawAgentDisplayRowSchema(db);
     if (!statePresent && !rowsPresent) {
       db.exec(AGENT_DISPLAY_ROW_SCHEMA_SQL); // sqlite-allow-raw -- Canonical additive DDL only.
     } else if (!complete) {

@@ -22,7 +22,6 @@ import {
   hasTranscriptMessage,
   invalidateSessionTranscriptDisplayInTransaction,
   isSessionTranscriptDisplayBoundary,
-  readSessionTranscriptDisplayState,
   shouldProjectActiveEvent,
 } from "./session-transcript-display.js";
 import {
@@ -132,26 +131,6 @@ export function sessionTranscriptIndexNeedsReconcile(db: DatabaseSync, sessionId
     !sessionTranscriptProjectionBindingMatches(
       readSessionTranscriptProjectionBindingInTransaction(db, sessionId, "active"),
       source.generation,
-    )
-  );
-}
-
-export function sessionTranscriptDisplayNeedsReconcile(
-  db: DatabaseSync,
-  sessionId: string,
-): boolean {
-  const source = readSessionTranscriptSourceGenerationInTransaction(db, sessionId);
-  const state = readSessionTranscriptDisplayState(db, sessionId);
-  if (!source || !state) {
-    return false;
-  }
-  return (
-    state.needsRebuild ||
-    state.indexedSeq !== source.indexedSeq ||
-    !sessionTranscriptProjectionBindingMatches(
-      readSessionTranscriptProjectionBindingInTransaction(db, sessionId, "display"),
-      source.generation,
-      state.generation,
     )
   );
 }

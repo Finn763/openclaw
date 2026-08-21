@@ -36,6 +36,7 @@ import {
   SESSION_TRANSCRIPT_DISPLAY_ROWS_TABLE,
   SESSION_TRANSCRIPT_DISPLAY_ROW_SOURCES_TABLE,
   SESSION_TRANSCRIPT_DISPLAY_STATE_TABLE,
+  validateOpenClawAgentDisplayRowSchema,
 } from "./openclaw-agent-display-row-schema.js";
 import { MESSAGE_TOOL_RUN_OUTCOMES_TABLE } from "./openclaw-agent-message-tool-outcome-schema.js";
 import {
@@ -142,6 +143,7 @@ export function assertOpenClawAgentCurrentRuntimeSchema(
     );
   }
   assertOpenClawAgentSchemaContains(database, options.pathname, OPENCLAW_AGENT_SCHEMA_SQL);
+  validateOpenClawAgentDisplayRowSchema(database);
   validateOpenClawAgentTranscriptProjectionBindingSchema(database);
 }
 
