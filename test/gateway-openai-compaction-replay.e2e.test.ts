@@ -50,7 +50,6 @@ describe("Gateway OpenAI Responses compaction replay", () => {
         env: {
           OPENCLAW_DEBUG_MODEL_TRANSPORT: "1",
           OPENCLAW_SKIP_PROVIDERS: undefined,
-          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
         },
       });
       instances.push(instance);
