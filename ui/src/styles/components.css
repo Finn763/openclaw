@@ -5678,6 +5678,20 @@ td.data-table-key-col {
      everything on its line. Rows outside this host keep the ring's own size. */
   --session-row-ring-size: calc(var(--session-row-glyph-size) - 3px);
 
+  /* One grid for everything in the trailing column. The action buttons set it:
+     they need a 24px target plus a hair of separation so adjacent hover fills
+     stay distinct, and the endcap's bare glyphs then borrow the same pitch and
+     the same inset. Left to their own values the buttons stepped 25px while the
+     badges stepped 20px and sat 5px further right, so no glyph ever landed
+     under the one above it. */
+  --session-row-action-size: 24px;
+  --session-row-action-gap: 1px;
+  --session-row-glyph-pitch: calc(var(--session-row-action-size) + var(--session-row-action-gap));
+  --session-row-glyph-gap: calc(var(--session-row-glyph-pitch) - var(--session-row-glyph-size));
+  --session-row-glyph-inset: calc(
+    (var(--session-row-action-size) - var(--session-row-glyph-size)) / 2
+  );
+
   position: relative;
 }
 
@@ -5757,7 +5771,13 @@ td.data-table-key-col {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--session-row-glyph-gap, 6px);
+  /* The ring and the unread dot are bare shapes, not icons in a box, so
+     right-flush they hung 2-4px past the icon column above them. One glyph-wide
+     floor plus the centring above puts whatever the row is showing on the same
+     axis as the icons. No fallback on purpose: outside a row host the token is
+     undefined, min-width falls back to auto, and other surfaces are unchanged. */
+  min-width: var(--session-row-glyph-size);
   pointer-events: none;
 }
 
@@ -5781,7 +5801,7 @@ td.data-table-key-col {
 .session-row-badges {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--session-row-glyph-gap, 6px);
   flex: 0 0 auto;
 }
 
@@ -5853,15 +5873,15 @@ td.data-table-key-col {
 .session-row-actions {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
+  gap: var(--session-row-action-gap, 1px);
 }
 
 .session-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--session-row-action-size, 24px);
+  height: var(--session-row-action-size, 24px);
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);

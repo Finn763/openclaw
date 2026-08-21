@@ -248,7 +248,7 @@ suite.define(() => {
     }
   });
 
-  it("spaces endcap glyphs evenly when the state holds a single dot", async () => {
+  it("lines the whole trailing column up on one pitch", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -259,12 +259,17 @@ suite.define(() => {
       methodResponses: {
         "sessions.list": sessionsListResponse([
           sessionRow("agent:main:main", "Main", Date.now()),
-          sessionRow("agent:main:badged", "Badged session", Date.now() - 1, {
-            hasAutomation: true,
-            incognito: true,
-            status: "done",
-            unread: true,
-          }),
+          // A preview gives the row its second line, which is where the endcap
+          // sits directly under the action icons.
+          Object.assign(
+            sessionRow("agent:main:badged", "Badged session", Date.now() - 1, {
+              hasAutomation: true,
+              incognito: true,
+              status: "done",
+              unread: true,
+            }),
+            { lastMessagePreview: "Kept the endcap lit under the hover actions" },
+          ),
         ]),
       },
       sessionKey: "agent:main:main",
@@ -275,24 +280,45 @@ suite.define(() => {
       const row = page.locator('[data-session-key="agent:main:badged"]');
       await row.waitFor({ state: "visible", timeout: 10_000 });
       await expect.poll(() => row.locator(".session-unread-dot").isVisible()).toBe(true);
+      await row.hover();
+      await expect
+        .poll(() =>
+          row.locator("[data-session-menu]").evaluate((el) => getComputedStyle(el).opacity),
+        )
+        .toBe("1");
 
-      const gaps = await row.evaluate((element) => {
-        const endcap = element.querySelector(".sidebar-recent-session__details-endcap");
-        const glyphs = [...endcap.querySelectorAll("svg, .session-unread-dot")]
-          .map((glyph) => glyph.getBoundingClientRect())
-          .filter((rect) => rect.width > 0)
-          .sort((left, right) => left.left - right.left);
-        return glyphs
-          .slice(1)
-          .map((rect, index) => Math.round((rect.left - glyphs[index].right) * 10) / 10);
+      const column = await row.evaluate((element) => {
+        const centres = (root: Element | null, selector: string) =>
+          [...(root?.querySelectorAll(selector) ?? [])]
+            .map((glyph) => glyph.getBoundingClientRect())
+            .filter((rect) => rect.width > 0)
+            .map((rect) => Math.round((rect.left + rect.width / 2) * 10) / 10)
+            .sort((left, right) => left - right);
+        return {
+          actions: centres(element, ".session-action svg"),
+          endcap: centres(
+            element.querySelector(".sidebar-recent-session__details-endcap"),
+            "svg, .session-unread-dot, .session-run-spinner",
+          ),
+        };
       });
 
-      // A 7px dot inside a box padded to some other control's width sits adrift
-      // from the badges beside it; every gap here should be the endcap's own.
-      expect(gaps.length).toBeGreaterThan(1);
-      for (const gap of gaps) {
-        expect(gap, JSON.stringify(gaps)).toBeCloseTo(gaps[0] as number, 0);
+      // The endcap's bare glyphs and the action icons above them read as one
+      // column, so they need one pitch and one right-hand axis. Sized to their
+      // own boxes the buttons stepped 25px while the badges stepped 20px and
+      // ended 5px further right, so nothing sat under anything.
+      expect(column.endcap.length).toBeGreaterThan(1);
+      expect(column.actions.length).toBeGreaterThan(1);
+      const stepsOf = (centres: number[]) =>
+        centres.slice(1).map((centre, index) => Math.round(centre - (centres[index] as number)));
+      const steps = [...stepsOf(column.endcap), ...stepsOf(column.actions)];
+      for (const step of steps) {
+        expect(step, JSON.stringify(column)).toBe(steps[0]);
       }
+      expect(column.endcap.at(-1), JSON.stringify(column)).toBeCloseTo(
+        column.actions.at(-1) as number,
+        0,
+      );
     } finally {
       await context.close();
     }
