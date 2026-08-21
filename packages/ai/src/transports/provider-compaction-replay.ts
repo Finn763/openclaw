@@ -44,14 +44,11 @@ export function replaceCompactionReplayOwnerContent(
     // This checkpoint is anchored to retained user turns, not assistant content indexes.
     return next;
   }
-  if (
-    content.length === message.content.length &&
-    content.every((block, index) => block === message.content[index])
-  ) {
-    return next;
-  }
   const replayIndex = replay.replayIndex ?? 0;
-  if (content.length === 0 || replayIndex > message.content.length) {
+  if (
+    (content.length === 0 && message.content.length > 0) ||
+    replayIndex > message.content.length
+  ) {
     return stripCompactionReplayCheckpoint(next);
   }
   let sourceIndex = 0;
