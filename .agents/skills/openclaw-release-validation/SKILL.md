@@ -1,75 +1,90 @@
 ---
 name: openclaw-release-validation
-description: Safely copy an existing gateway, upgrade it to an OpenClaw beta, and guide human release testing with one Markdown worksheet.
+description: Safely copy an existing gateway, test the latest OpenClaw main commit, and guide human release-campaign feedback with one Markdown worksheet.
 user-invocable: true
 disable-model-invocation: true
 ---
 
 # OpenClaw Release Validation
 
-Help a human validate one beta against a copy of a real gateway. Automate only
+Help a human validate the latest main commit against a copy of a real gateway. Automate only
 fixture setup and reporting. Let the human drive OpenClaw and judge quality.
 
-Use one editable Markdown worksheet as the entire run record. Do not create
-`run.json`, mission state, receipts, or other tracking files.
+For a ready gateway, use one editable Markdown worksheet as the entire run
+record. A blocked upgrade has no worksheet or surface-testing phase; its final
+report draft is the only local record. Do not create `run.json`, mission state,
+receipts, or other tracking files.
 
 ## Start the run
 
 At the start of every **Validate release** run, give a concise introduction:
-this skill creates an isolated copy of a gateway, upgrades that copy to the
-selected beta, reports upgrade problems, then helps the tester manually check
-the release and submit one consolidated feedback comment. The source gateway is
-not modified.
+this skill creates an isolated copy of a gateway, upgrades that copy to an
+immutable build of the latest `origin/main`, reports upgrade problems, then
+helps the tester manually check it and submit one consolidated feedback comment
+to the current release's shared campaign issue. The source gateway is not modified.
 
 Use the agent's available native checklist or plan tool to show progress and
 check items off as they complete. Start with this visible checklist:
 
-1. Confirm the beta and shared campaign
+1. Confirm the release campaign and main test target
 2. Choose a gateway to copy
 3. Copy, upgrade, and verify readiness
-4. Create the testing worksheet
-5. Test surfaces and record feedback
-6. Finish validation and publish feedback
+4. Optionally capture local diagnostics
+5. Create the testing worksheet
+6. Test surfaces and record feedback
+7. Draft, review, and publish feedback
 
 For **Initialize campaign**, instead explain that the run creates the shared
-issue and worksheet for a beta, then ends; use a corresponding three-item
-checklist: identify beta, create or reuse campaign, close older campaigns.
+issue and worksheet for a release, then ends; use a corresponding three-item
+checklist: identify release, create or reuse campaign, close older campaigns.
 
 ## Workflows
 
 Choose the workflow from the request:
 
 - **Initialize campaign** is the asynchronous release-process path. Create or
-  reuse the canonical issue for the exact candidate, close older open campaign
+  reuse the canonical issue for the exact campaign release, close older open campaign
   issues, print the current issue URL, and stop.
 - **Validate release** is the default human-testing path. Join the existing
-  candidate issue, copy and upgrade a gateway, then guide testing. This workflow
-  never creates or rewrites the canonical issue.
+  campaign issue, copy a gateway, build the latest immutable `origin/main`
+  target through OCM, then guide testing. This workflow never creates or
+  rewrites the canonical issue.
 
 Before the upgrade reaches a terminal ready or blocked result, keep tester-facing
-output to the campaign issue, candidate identity, gateway choice, and upgrade
+output to the campaign issue, campaign release identity, gateway choice, and upgrade
 progress or errors. The worksheet, priority surfaces, testing instructions, and
 `finish validation` phrase are disclosed only after that gate.
 
-## 1. Candidate and shared issue
-
-Use an explicit beta when supplied. Otherwise run
-`gh api 'repos/openclaw/openclaw/releases?per_page=100'` once, then select the
-newest published tag matching
-`vYYYY.M.D-beta.N` locally. Do not paginate release history. If that bounded
-response has no matching beta, ask for an explicit version rather than making a
-slow unbounded request. Record the selected version and commit.
+## 1. Campaign release and shared issue
 
 When the request supplies an issue URL or number, resolve it directly with
 `gh issue view`. Accept it only when it is open and its body contains the exact
-`<!-- openclaw-release-validation:<tag> -->` marker. This direct verification is
-authoritative: do not run a subsequent search or let a search result override it.
+`<!-- openclaw-release-validation:<tag> -->` marker. Treat that tag as the
+**campaign release**, then fetch only that exact GitHub release to record its
+commit. This direct verification is authoritative: do not list releases or
+search issues first.
 
-When no issue is supplied, enumerate open repository issues through `gh api`
-and inspect their bodies locally for the exact marker. Ignore pull requests and
-closed issues. Do not use GitHub full-text search for this lookup: hidden HTML
-comments are not reliably indexed. Fail clearly if more than one open issue has
-the marker.
+When no issue is supplied, use an explicit release when supplied. Otherwise run
+`gh api 'repos/openclaw/openclaw/releases?per_page=100'` once, then select the
+newest published tag matching `vYYYY.M.D-beta.N` locally. Do not paginate
+release history. If that bounded response has no matching release, ask for an
+explicit version rather than making a slow unbounded request. Record the selected
+version and commit as the **campaign release**. It identifies the shared issue
+and worksheet; it is not the runtime this validation run tests.
+
+Then run exactly one bounded lookup:
+
+```sh
+gh api 'repos/openclaw/openclaw/issues?state=open&labels=release-validation&per_page=2'
+```
+
+Ignore pull requests in the response. Require exactly one labeled issue and
+require its hidden marker to equal the selected campaign-release tag. The label
+is the fast discovery index; the exact marker remains the identity check. If no
+labeled issue exists, tell the tester that campaign initialization has not
+completed and stop. If more than one is labeled or the marker does not match,
+stop and show the conflicting issue URLs. Never fall back to an unbounded
+repository issue scan.
 
 Whenever the workflow reaches its issue announcement, use this exact shape with
 one raw URL and no commentary about discovery or campaign counts:
@@ -84,6 +99,10 @@ format above, then read its body and use the worksheet between
 `<!-- validation-worksheet:start -->` and
 `<!-- validation-worksheet:end -->`. Keep its release priorities and template
 unchanged. Those exact bytes are the canonical campaign template for this run.
+After announcing the issue, resolve the test target separately and immediately
+show: `Test target: origin/main at <full SHA>`. This immutable SHA is the
+runtime that this run will build and test; it never changes the release campaign
+identity or its release-note priorities.
 
 In **Initialize campaign**, first ensure the repository has a
 `release-validation` label. Check for the exact label with
@@ -161,11 +180,11 @@ not exist, generate it:
 6. Resolve the campaign creator's GitHub login with `gh api user`; ask for a
    login only when authentication cannot identify it. Enumerate every PR authored
    by that login whose merge commit is included between the previous release tag
-   and the candidate tag. Add the complete linked list under **Your changes in
+   and the campaign release tag. Add the complete linked list under **Your changes in
    this release**, or `- None in this release.` when empty. This explicit author
    list is separate from surface summaries and may contain PR links.
 7. Make a working copy of the worksheet asset and fill it with the exact
-   candidate identity, release-notes URL, live scorecard and taxonomy URLs,
+   campaign-release identity, release-notes URL, live scorecard and taxonomy URLs,
    score-band guidance, and generated surface sections. The issue callout must
    say that its catalog and labels come from the live maturity taxonomy and that
    priority reflects release change volume, size, impact, upgrade risk, and
@@ -178,9 +197,9 @@ not exist, generate it:
    Re-query open issues for the marker after creation and fail on duplicates.
 
 After the current issue exists, find open campaign issues whose marker names a
-release published before the current candidate. Comment on each with the current
+release published before the current campaign release. Comment on each with the current
 issue URL, then close it as completed. Never close the current issue or a campaign
-for a later release. Re-query and require the current candidate to be the only
+for a later release. Re-query and require the current campaign release to be the only
 open campaign. Announce its URL once in the exact format above and end the
 initializer workflow without waiting for testing.
 
@@ -252,51 +271,215 @@ credential owner and restore it when validation ends. For an OCM source, use
 `ocm service stop <source-env>`; for the plain source, use `openclaw gateway
 stop`. There is no `ocm stop` command.
 
-## 3. Upgrade and report errors
+## 3. Build the latest main target, upgrade, and report errors
 
-Install the exact candidate runtime and use the runtime name returned by OCM:
+For every **Validate release** run, resolve a fresh immutable main target after
+the campaign issue is known and before building the runtime. Never build from
+the caller's active checkout. Resolve exactly one SHA, create a run-owned
+isolated checkout at that SHA, and prove the checkout did not move:
 
 ```sh
-ocm runtime install --version <tag-without-v> --json
-ocm runtime verify <runtime-name> --json
-ocm upgrade <test-env> --runtime <runtime-name> --dry-run --json
-ocm upgrade <test-env> --runtime <runtime-name> --json
-ocm start <test-env> --runtime <runtime-name> --json
+main_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/main | awk 'NR == 1 { print $1 }')"
+test "$(printf '%s' "$main_sha" | wc -c | tr -d ' ')" = 40
+main_checkout="$(mktemp -d "${TMPDIR:-/tmp}/openclaw-release-validation-main.XXXXXX")"
+git -C "$main_checkout" init -q
+git -C "$main_checkout" remote add origin https://github.com/openclaw/openclaw.git
+git -C "$main_checkout" fetch --depth 1 origin "$main_sha"
+git -C "$main_checkout" checkout --detach -q FETCH_HEAD
+test "$(git -C "$main_checkout" rev-parse HEAD)" = "$main_sha"
+```
+
+If resolution, fetch, checkout, or SHA verification fails, report the setup
+blocker conversationally and pause. Do not fall back to a moving branch, a
+caller checkout, or the campaign release package.
+
+Give the run-owned runtime a unique name containing the short main SHA and a
+UTC timestamp, then build and verify that exact checkout through OCM. Use the
+same named runtime for the disposable fixture:
+
+```sh
+ocm runtime build-local <run-runtime-name> --repo <main-checkout> --force
+ocm runtime verify <run-runtime-name>
+ocm upgrade <test-env> --runtime <run-runtime-name> --dry-run --json
+ocm upgrade <test-env> --runtime <run-runtime-name> --json
+ocm service start <test-env>
 ```
 
 Stop any current owner of copied channel credentials immediately before the
-`ocm start` command.
+`ocm service start` command. Record `origin/main` and the full `main_sha` in
+the private worksheet as the **Test target** and **Test commit**. The campaign
+campaign release tag and commit remain the worksheet's **Release** and **Commit** fields.
 
 Verify `ocm service status <test-env>`, `ocm @<test-env> -- --version`, and
 `ocm logs <test-env> --tail 100`. OCM's successful managed upgrade already
 requires HTTP health and gateway reachability.
 
 Report every error to the tester immediately, including errors recovered by a
-retry. Retain candidate OpenClaw behavior caused by the upgrade for **Upgrade
-findings** after the worksheet is created; it is eligible for the GitHub
-comment. Keep OCM, copying, local tooling, setup, and cleanup problems in the
-conversation only; they never enter the worksheet or GitHub comment.
+retry. Retain test-target OpenClaw behavior caused by the upgrade as an
+eligible **Upgrade finding** for the final report; add it to the worksheet only
+when readiness is verified. Keep OCM, copying, local tooling, setup, and cleanup
+problems in the conversation only; they never enter the worksheet or GitHub
+comment.
 
-Complete this step only when candidate readiness is either verified or blocked
+Complete this step only when test-target readiness is either verified or blocked
 with a concrete terminal finding. Do not continue to testing while the upgrade
 or gateway readiness is unresolved.
 
-## 4. Create and reveal the worksheet
+If readiness is **blocked**, this is a terminal upgrade-validation result: mark
+the optional diagnostics, worksheet, and surface-testing checklist items as
+skipped. Do not create, open, mention, or ask the tester to use a worksheet;
+there is no running gateway to test. State plainly:
 
-Only after the upgrade gate above, copy the canonical worksheet between the
+```text
+Upgrade blocked — the copied gateway never started, so manual surface testing cannot begin.
+Reply exactly `finish validation` to prepare a reviewable report of this upgrade finding, or tell me any final feedback to include.
+```
+
+Then wait for final feedback or `finish validation`.
+
+## 4. Optional local diagnostics capture
+
+Offer this step only after the test target is ready. It is opt-in and only
+applies to the disposable test environment. Say:
+
+```text
+Optional local diagnostics can capture traces, metrics, and logs from this
+test gateway. It installs OpenClaw's diagnostics-otel plugin only in the
+disposable copy and sends OTLP only to a collector on this machine. Content
+capture stays off. Nothing is sent to a hosted endpoint, and you will review
+the exact release-report draft before any GitHub comment is posted.
+
+Reply exactly `enable local diagnostics` to enable it, or `skip local diagnostics` to continue without it.
+```
+
+Do nothing until the tester chooses. If they skip it, record no diagnostic
+state and continue to the worksheet. If Docker is unavailable or its daemon is
+not running, state that local diagnostics are unavailable and continue without
+it. Do not install Docker, use a hosted collector, or fall back to a remote
+endpoint.
+
+When the tester replies `enable local diagnostics`:
+
+1. Create a `telemetry/` directory beside the private local worksheet artifact
+   directory. It is private run data, not worksheet content and never GitHub
+   content. Create this collector configuration as `otel-collector.yaml` in
+   that directory:
+
+   ```yaml
+   receivers:
+     otlp:
+       protocols:
+         http:
+           endpoint: 0.0.0.0:4318
+   processors:
+     batch:
+       timeout: 1s
+       send_batch_size: 256
+   exporters:
+     file/traces:
+       path: /telemetry/traces.jsonl
+       rotation:
+         max_megabytes: 8
+         max_backups: 1
+     file/metrics:
+       path: /telemetry/metrics.jsonl
+       rotation:
+         max_megabytes: 8
+         max_backups: 1
+     file/logs:
+       path: /telemetry/logs.jsonl
+       rotation:
+         max_megabytes: 8
+         max_backups: 1
+   service:
+     telemetry:
+       logs:
+         level: warn
+     pipelines:
+       traces:
+         receivers: [otlp]
+         processors: [batch]
+         exporters: [file/traces]
+       metrics:
+         receivers: [otlp]
+         processors: [batch]
+         exporters: [file/metrics]
+       logs:
+         receivers: [otlp]
+         processors: [batch]
+         exporters: [file/logs]
+   ```
+
+2. Start one run-owned collector with the maintained, pinned
+   `otel/opentelemetry-collector-contrib:0.104.0` image. Mount the configuration
+   read-only and the private telemetry directory read-write. Use
+   `-p 127.0.0.1::4318` so Docker chooses an unused host port and publishes it
+   only on loopback. Use `--read-only`, `--cap-drop=ALL`,
+   `--security-opt no-new-privileges`, `--pids-limit 128`, and a small `/tmp`
+   tmpfs. Inspect the running container and resolve its assigned host port with
+   `docker port <collector-name> 4318/tcp`. Require a `127.0.0.1:<port>`
+   binding; stop the collector and skip capture if anything else is exposed.
+   The collector configuration has file exporters only: never add an exporter,
+   endpoint, header, or credential supplied by the source gateway.
+3. Install the current official ClawHub package into the fixture only:
+   `ocm @<test-env> -- plugins install clawhub:@openclaw/diagnostics-otel`.
+   The test target verifies the plugin API compatibility during installation.
+   Require a successful `plugins inspect diagnostics-otel --json` that reports
+   the official ClawHub source and an accepted compatible version. If that
+   compatibility check fails, stop the collector, report capture unavailable,
+   and continue without diagnostics. Do not force the install, use a local code
+   checkout, or select an unverified package version. Enable it with
+   `ocm @<test-env> -- plugins enable diagnostics-otel`.
+4. Replace only the fixture's `diagnostics.otel` object with this exact
+   JSON value using `ocm @<test-env> -- config set diagnostics.otel <json>
+   --strict-json`; do not merge so old signal-specific or remote endpoints
+   cannot survive:
+
+   ```json
+   {
+     "enabled": true,
+     "endpoint": "http://127.0.0.1:<assigned-port>",
+     "protocol": "http/protobuf",
+     "serviceName": "openclaw-release-validation",
+     "traces": true,
+     "metrics": true,
+     "logs": true,
+     "logsExporter": "otlp",
+     "sampleRate": 1,
+     "flushIntervalMs": 1000,
+     "captureContent": false
+   }
+   ```
+
+   Also set `diagnostics.enabled` to `true`, validate the fixture config, then
+   restart it through `ocm service restart <test-env>`. Verify the plugin is
+   enabled, the collector remains loopback-only, and the fixture is healthy.
+   On any failure, disable the plugin, set `diagnostics.otel.enabled` to
+   `false`, stop the collector, and continue the release test without local
+   diagnostics. Keep these setup failures out of the worksheet and GitHub.
+
+Keep the collector running only while the fixture is under test. It captures
+traces, metrics, and logs locally with bounded file rotation. The source
+gateway, personal OpenClaw home, and shared GitHub issue remain untouched.
+
+## 5. Create and reveal the worksheet (ready runs only)
+
+Only when readiness is verified, copy the canonical worksheet between the
 shared issue's markers byte-for-byte to
 `.artifacts/openclaw-release-validation/<tag>-<timestamp>.md`. Fill in the
-source, shared issue URL, terminal upgrade result, and eligible upgrade findings
-without changing the campaign priorities. Refresh **Your changes in this
-release** for the current tester.
+source, shared issue URL, test target and commit, terminal upgrade result, and
+eligible upgrade findings without changing the campaign priorities. Refresh
+**Your changes in this release** for the current tester.
 
 Preserve every other heading, table, callout, surface order, maturity score,
 release theme, and recommended test exactly as copied. The only validation-run
-edits are the source fields, **Your changes in this release**, **Upgrade
-findings**, **Upgrade result**, non-empty **Testing notes** cells, and **Final
-feedback**, plus replacing every `{{TEST_ENV}}` token (and legacy
+edits are the source fields, **Test target**, **Test commit**, **Your changes in
+this release**, **Upgrade findings**, **Upgrade result**, non-empty **Testing
+notes** cells, and **Final feedback**, plus replacing every `{{TEST_ENV}}` token (and legacy
 `<test-env>` token) in local command guidance with the actual disposable
-environment name. Never regenerate, reformat, or substitute the campaign
+environment name. If an older shared campaign template lacks **Test target** or
+**Test commit**, add those two fields directly under its campaign-release header
+in the private copy only. Never regenerate, reformat, or substitute the campaign
 template, and never write this local substitution back to GitHub.
 
 Resolve the worksheet's absolute path and open it yourself with the appropriate
@@ -328,14 +511,13 @@ Finish with the exit instruction: **You can stop after any amount of testing;
 you do not need to cover every surface. When you are ready to wrap up, reply
 exactly `finish validation`.** That tells the agent to collect any missing
 promotion feedback, stop the disposable fixture, restore any source gateway it
-stopped, and post one consolidated release-feedback comment. Then ask which
-surface they want to test first.
+stopped, and prepare a reviewable consolidated release-feedback draft. Then ask
+which surface they want to test first.
 
-This worksheet is the only checklist and note store. If readiness is verified,
-continue to human-driven testing. If readiness is blocked, state that testing
-cannot begin and wait for final feedback or `finish validation`.
+This worksheet is the only checklist and note store. Readiness is verified at
+this point, so continue to human-driven testing.
 
-## 5. Human-driven testing
+## 6. Human-driven testing
 
 Ask: **What do you want to test first?** Recommend starting with a release
 priority, but let the tester choose one surface at a time in any order. After
@@ -351,39 +533,104 @@ A surface counts as tested only when tester-authored text appears in its
 **Testing notes** row. The **Maturity score**, **What changed**, and
 **Recommended testing** rows are campaign guidance, never test evidence. An
 empty Testing notes value means untouched. Escape table pipes and use `<br>`
-between multiple notes. Add candidate problems found during surface testing to
+between multiple notes. Add test-target problems found during surface testing to
 that cell.
 
-## 6. Finish and publish
+## 7. Draft, review, and publish
 
 When the tester says `finish validation`:
 
-1. Read the worksheet and ask only for a missing promotion vote or final
-   feedback.
-2. Stop the copied gateway and restore any source gateway stopped for channel
-   ownership. Ask before destroying the disposable environment.
-3. Synthesize one final release-analysis comment from candidate identity, source
+1. If readiness is verified, read the worksheet and ask only for a missing
+   promotion vote or final feedback. If readiness is blocked, do not create or
+   read a worksheet: use the recorded campaign, source, test-target, terminal
+   upgrade result, and eligible upgrade findings, then ask only for missing
+   promotion feedback.
+2. Collect a small **Test environment** profile for the visible report draft.
+   This is diagnostic context, not a finding and never enters the hidden
+   structured payload. Include only the OS name and version, CPU architecture,
+   logical CPU count, memory rounded to the nearest whole GiB, and OCM version.
+   Read those individual values with narrow native commands; omit an unavailable
+   value rather than collecting a broader system profile. Never read or report
+   the hostname, username, device model, serial number, UUID, network addresses,
+   disk layout, installed software, environment, or a raw command output.
+3. If local diagnostics are active, stop the copied gateway first so its OTLP
+   exporters flush, wait briefly for the collector's one-second batch flush,
+   then stop the run-owned collector. Read only its three private telemetry
+   files. Select at most three short snippets that directly corroborate a
+   worksheet note, final feedback, or an eligible upgrade finding. Telemetry
+   can strengthen an existing finding but cannot create a new one.
+4. Treat telemetry as unsafe source material. Never copy raw JSON, log bodies,
+   attributes, resource values, timestamps, trace/span IDs, hostnames, file
+   paths, session identifiers, request identifiers, prompts, responses, tool
+   inputs, tool outputs, or credentials. A permitted snippet contains only an
+   aggregate signal count, a known OpenClaw operation name, a span status, or a
+   low-cardinality error category. If relevance or redaction is uncertain, omit
+   the telemetry. Label included prose **Local telemetry evidence** and keep it
+   immediately below the finding it corroborates. Do not put telemetry in the
+   hidden structured payload.
+5. Restore any source gateway stopped for channel ownership. Ask before
+   destroying the disposable environment. If it is retained, retain the
+   run-owned runtime too and disable `diagnostics-otel`, set
+   `diagnostics.otel.enabled` to `false`, restart the fixture through OCM, and
+   remove the plugin with `ocm @<test-env> -- plugins uninstall diagnostics-otel
+   --force`. If the fixture is destroyed, remove only its run-owned runtime with
+   `ocm runtime remove <run-runtime-name>` after the fixture is gone. Remove the
+   run-owned isolated main checkout after no build or fixture command is using
+   it. Never remove a shared runtime. Remove the run-owned collector in all cases.
+6. Synthesize one final release-analysis comment from the **Campaign release**
+   release tag and commit, the exact **Tested main commit** full SHA, source
    version/commit, upgrade findings, tester feedback, the yes/no promotion vote,
-   and only the surfaces with non-empty Testing notes cells. Use those cells as
-   the source of observed results; do not report the other table rows as evidence.
-4. Remove local paths, gateway names, secrets, user identifiers, raw logs, OCM
-   notes, setup details, and cleanup details from the comment.
-5. Read and apply the [structured report contract](references/structured-report.md).
-   Append its hidden v1 payload to the visible Markdown, validate it, then create
-   or update this GitHub user's one report comment for the release. Show the
-   tester the resulting comment URL.
-6. Give the tester this concise copy-ready Discord summary, populated only from
+   and only the surfaces with non-empty Testing notes cells. State clearly that
+   the release identifies the feedback campaign while the runtime tested was
+   `origin/main` at that SHA. Use those cells as the source of observed results;
+   do not report the other table rows as evidence. For a blocked run, list no
+   tested surfaces and use the recorded upgrade finding as the sole evidence.
+   Start the visible comment with these two lines so the tested binary is never
+   ambiguous:
+
+   ```md
+   - Campaign release: <release tag> (<campaign release commit>)
+   - Tested main commit: <full SHA>
+
+    ## Test environment
+
+    - OS: <name and version>
+    - CPU: <architecture>, <logical core count> logical cores
+    - Memory: <whole GiB> GiB
+    - OCM: <version>
+   ```
+   Omit any unavailable value; do not add substitute device facts. The profile
+   is brief diagnostic context, not an upgrade finding or surface result.
+7. Remove local paths, gateway names, secrets, user identifiers, raw logs, OCM
+   notes, setup details, and cleanup details from the comment. Keep the
+   allow-listed **Test environment** values from the preceding step.
+8. Read and apply the [structured report contract](references/structured-report.md).
+   Append its hidden v1 payload and validate the complete comment. Write the
+   proposed comment to a private Markdown draft beside the worksheet, open it
+   for the tester, and say:
+
+   ```text
+   I opened the proposed release report for review. It has not been sent.
+   Reply exactly `approve report` to post this draft, or tell me what to change.
+   ```
+
+   On edits, revise and reopen the same draft. On `approve report`, re-read the
+   draft, re-run the privacy, schema, and size validation, then create or update
+   this GitHub user's one report comment for the release. Never post a comment
+   from `finish validation` alone. Show the tester the resulting comment URL.
+9. Give the tester this concise copy-ready Discord summary, populated only from
    the same release-facing worksheet evidence and final comment:
 
    ```md
-   **Release validation — <tag>**
+   **Release validation — <campaign-release-tag>**
+   Tested main: <full SHA>
    Tested: <surfaces with non-empty Testing notes, or "No manual surface testing completed">
    Key findings: <concise release findings, or "None reported">
    Recommendation: <yes / no>
    Details: <GitHub comment URL>
    ```
 
-   Keep it to these five lines. Exclude source gateway details, local paths,
+   Keep it to these six lines. Exclude source gateway details, local paths,
    OCM/setup information, cleanup, credentials, and untested surface guidance.
    This is a copy/paste handoff for the tester; do not post it automatically.
 

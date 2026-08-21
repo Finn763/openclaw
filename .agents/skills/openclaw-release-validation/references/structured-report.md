@@ -9,8 +9,17 @@ consume the same evidence without interpreting prose.
 Derive both representations from the sanitized worksheet evidence. Turn each
 distinct tester observation into one finding. Split multiple behaviors into
 separate findings; keep expected and observed behavior only when the tester
-provided them. A positive check is a `pass`, candidate misbehavior is a
+provided them. A positive check is a `pass`, test-target misbehavior is a
 `problem`, and useful neutral context is an `observation`.
+
+Optional local telemetry may appear only as a short visible evidence note below
+an existing finding it corroborates. It never creates a finding and never goes
+in this payload. Apply the same privacy filter: omit raw records and every
+identifier, path, timestamp, attribute, resource value, or log body.
+
+The visible report may include the skill's allow-listed **Test environment**
+profile. It is diagnostic context only: keep it out of this payload and do not
+turn it into a finding.
 
 Use the surface's live-taxonomy URL fragment as its stable `id`. Use `unmapped`
 only when no scorecard surface fits. Include only surfaces with non-empty
@@ -33,7 +42,7 @@ The JSON object has this exact shape:
   "kind": "openclaw-release-validation-report",
   "release": {
     "tag": "vYYYY.M.D-beta.N",
-    "candidateCommit": "full candidate commit"
+    "candidateCommit": "full campaign release commit"
   },
   "revision": 1,
   "updatedAt": "ISO-8601 timestamp",
@@ -63,6 +72,10 @@ The JSON object has this exact shape:
   ]
 }
 ```
+
+`release.tag` and `release.candidateCommit` identify the campaign release, not the
+runtime tested by an individual run. Keep the exact tested-main SHA in the
+visible Markdown report only; do not change this v1 payload schema.
 
 Allowed `upgrade.result` values are `pass`, `problem`, `blocked`, and `unknown`.
 Allowed `promotionVote` values are `yes`, `no`, and `unknown`. Use `null` for an

@@ -1,9 +1,11 @@
 # OpenClaw release validation
 
-## Candidate
+## Campaign release
 
 - Release:
 - Commit:
+- Test target: origin/main
+- Test commit:
 - Release notes: {{RELEASE_NOTES_URL}}
 - Source version:
 - Source commit:
@@ -12,14 +14,14 @@
 
 ## Upgrade findings
 
-Automatically populated by the agent with candidate OpenClaw problems observed
+Automatically populated by the agent with test-target OpenClaw problems observed
 while upgrading or starting the copied gateway.
 
 - None yet.
 
 ## Your changes in this release
 
-<!-- Campaign creator: enumerate every PR by the authenticated GitHub user included between the previous release tag and this candidate, then remove this comment. -->
+<!-- Campaign creator: enumerate every PR by the authenticated GitHub user included between the previous release tag and this campaign release, then remove this comment. -->
 
 ## Priority surfaces to test
 
@@ -33,9 +35,8 @@ while upgrading or starting the copied gateway.
 > [maturity taxonomy]({{TAXONOMY_URL}}). Priority reflects this release's change
 > volume, change size, impact scope, upgrade risk, and maturity expectations.
 >
-> **Score bands:** Experimental 0–50%; Alpha 50–70%; Beta 70–80%; Stable
-> 80–95%; Clawesome 95–100%. Higher maturity means a stronger regression
-> expectation.
+> **Score bands:** See the linked maturity scorecard. Higher maturity means a
+> stronger regression expectation.
 
 > [!TIP]
 > Want help with a surface? Ask the agent to walk you through its manual test.

@@ -1132,8 +1132,9 @@ node --import tsx scripts/openclaw-npm-postpublish-verify.ts <published-version>
     The initializer creates or reuses the current campaign issue and closes
     older open campaign issues. Record the task id, then let publication and
     postpublish verification continue in parallel. Issue generation is not a
-    publication blocker; confirm its resulting URL before inviting humans to
-    validate the release. If persistent task creation is unavailable, record
+    publication blocker; before inviting humans to validate the release, confirm
+    its resulting URL has the exact `release-validation` label and the campaign
+    marker for `<tag>`. If persistent task creation is unavailable, record
     campaign initialization as an explicit release follow-up instead of running
     it synchronously inside the release task.
 28. Run the post-published beta verification roster. Do not scan current `main`
