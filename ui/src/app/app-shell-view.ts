@@ -49,7 +49,7 @@ import {
   loadSettings,
   normalizeCatalogOpenTarget,
 } from "./settings.ts";
-import type { UpdateProgress } from "./update-confirmation.ts";
+import { createUpdateProgressWatcher } from "./update-overlay-helpers.ts";
 
 const EMPTY_SESSION_HAS_DRAFT = () => false;
 const PALETTE_SHORTCUT = /Mac|iP(hone|ad|od)/i.test(globalThis.navigator?.platform ?? "")
@@ -99,6 +99,7 @@ export interface ShellViewHost {
   readonly custodianMinimizeRequestId: number;
   readonly desktopNavigationExpanded: boolean;
   readonly execApprovalElement: OptionalCustomElement;
+  readonly onboardingMemoryImportElement: OptionalCustomElement;
   readonly lazyCustomElements: LazyCustomElementRequestController;
   readonly nativeHistoryState: NativeHistoryState;
   readonly navDrawerOpen: boolean;
@@ -259,26 +260,7 @@ export function renderApplicationShell(host: ShellViewHost) {
   // The install keeps running after `update.run` answers, so the reconciliation
   // — not the request — decides how long the update surfaces stay busy.
   const updateBusy = overlaySnapshot.updateRunning || overlaySnapshot.updateReconciliationPending;
-  // The update dialog outlives this render and the connection, so it reads live
-  // snapshots rather than the values captured here.
-  const watchUpdateProgress = (listener: (progress: UpdateProgress) => void) => {
-    const emit = () => {
-      const update = context.overlays.snapshot;
-      const banner = update.updateStatusBanner;
-      listener({
-        busy: update.updateRunning || update.updateReconciliationPending,
-        connected: context.gateway.snapshot.phase === "connected",
-        failure: banner && banner.tone !== "info" ? banner.text : null,
-      });
-    };
-    const stopOverlays = context.overlays.subscribe(emit);
-    const stopGateway = context.gateway.subscribe(emit);
-    emit();
-    return () => {
-      stopOverlays();
-      stopGateway();
-    };
-  };
+  const watchUpdateProgress = createUpdateProgressWatcher(context);
   const terminalAvailable = isTerminalAvailable(
     gatewaySnapshot,
     context.config.current.terminalEnabled ?? false,
@@ -318,6 +300,11 @@ export function renderApplicationShell(host: ShellViewHost) {
     canAdmin: operatorAccess.canAdmin,
   });
   const onboarding = host.onboardingMode;
+  const memoryImportActive = onboarding && activeRoute !== "custodian";
+  host.lazyCustomElements.requestWhileActive(
+    host.onboardingMemoryImportElement,
+    memoryImportActive,
+  );
   const navDrawerOpen = host.navDrawerOpen && !onboarding;
   const mobileNavLayout = isMobileNavLayout();
   const mergedChatChrome = shouldMergeChatChrome({
@@ -456,6 +443,7 @@ export function renderApplicationShell(host: ShellViewHost) {
         onExit: () => host.exitSettings(),
         onRetryConnect: () => context.gateway.connect(),
         onNavigate: (routeId, options) => host.navigate(routeId, options),
+        onOpenApprovals: () => host.openApprovals(),
         onPreload: (routeId) => context.preload(routeId),
         onSearchQueryChange: (nextQuery) => {
           void host.handleSettingsSearchQueryChange(nextQuery);
@@ -639,6 +627,8 @@ export function renderApplicationShell(host: ShellViewHost) {
           onRefresh: () => host.refreshControlUi(),
           onHoldUpdate: () => context.overlays.holdUpdate(),
           onReviewUpdate: () => host.navigate("updates"),
+          onNavigate: (routeId) => host.navigate(routeId),
+          onOpenApprovals: () => host.openApprovals(),
         })}
         ${pageActionsBlocked && gatewaySnapshot.phase !== "reload-required"
           ? html`<div class="connection-action-block" role="status" aria-live="polite">
@@ -723,7 +713,7 @@ export function renderApplicationShell(host: ShellViewHost) {
           host.navigate("apps");
         },
       })}
-      ${onboarding && activeRoute !== "custodian"
+      ${memoryImportActive && isOptionalElementDefined(host.onboardingMemoryImportElement)
         ? html`<openclaw-onboarding-memory-import
             .active=${true}
             .context=${context}

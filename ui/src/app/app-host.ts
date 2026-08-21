@@ -4,7 +4,6 @@ import "../components/app-topbar.ts";
 import "../components/macos-titlebar-controls.ts";
 import "../components/modal-dialog.ts";
 import { formatDocumentTitle, titleForRoute } from "../app-navigation.ts";
-import "../components/onboarding-memory-import.ts";
 import "../components/resizable-divider.ts";
 import "../components/sidebar-update-card.ts";
 import "../components/update-banner.ts";
@@ -68,6 +67,7 @@ import {
   DESKTOP_PANEL_ELEMENT,
   EXEC_APPROVAL_ELEMENT,
   LazyCustomElementRequestController,
+  type OptionalCustomElement,
   TERMINAL_PANEL_ELEMENT,
 } from "./lazy-custom-element.ts";
 import { hasStoredLazyShellAction } from "./lazy-shell-action.ts";
@@ -142,6 +142,11 @@ class OpenClawShell
   readonly desktopPanelElement = DESKTOP_PANEL_ELEMENT;
   readonly custodianPanelElement = CUSTODIAN_PANEL_ELEMENT;
   readonly execApprovalElement = EXEC_APPROVAL_ELEMENT;
+  readonly onboardingMemoryImportElement = {
+    tagName: "openclaw-onboarding-memory-import",
+    label: t("onboarding.memoryImport.title"),
+    loadModule: () => import("../components/onboarding-memory-import.ts"),
+  } satisfies OptionalCustomElement;
   readonly lazyCustomElements = new LazyCustomElementRequestController(
     this,
     () => this.shellChrome.cancelPendingLazyAction(),
