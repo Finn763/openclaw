@@ -162,7 +162,7 @@ describe("agent runtime plugin registries", () => {
     });
   });
 
-  it("preserves the gateway startup scope and ordering", () => {
+  it("keeps an explicit metadata generation source-default without Gateway selection", () => {
     const config = {} as never;
     const metadataSnapshot = createMetadataSnapshot();
 
@@ -182,8 +182,10 @@ describe("agent runtime plugin registries", () => {
     expect(hoisted.loadPluginRegistryHandle).toHaveBeenCalledWith(
       expect.objectContaining({
         channelPluginLoadIntent: "full",
-        preferBuiltPluginArtifacts: true,
       }),
+    );
+    expect(hoisted.loadPluginRegistryHandle).toHaveBeenCalledWith(
+      expect.not.objectContaining({ preferBuiltPluginArtifacts: true }),
     );
   });
 
@@ -243,6 +245,7 @@ describe("agent runtime plugin registries", () => {
       env,
       workspaceDir: "/tmp/agent-workspace",
       metadataSnapshot: snapshot as never,
+      preferBuiltPluginArtifacts: true,
     });
 
     expect(hoisted.resolveAgentRuntimePluginLoadPlan).toHaveBeenCalledWith({

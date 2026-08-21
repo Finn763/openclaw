@@ -345,7 +345,7 @@ async function buildSnapshotBatch(
     const prepared = await prepareWorkspaceBuildGroup(
       groupInputs,
       catalogMode,
-      {},
+      { preferBuiltPluginArtifacts: prepareInboundPluginRegistry },
       prepareInboundPluginRegistry ? loadInboundPluginRegistry : undefined,
       pluginGeneration,
       pluginMetadataSnapshot,

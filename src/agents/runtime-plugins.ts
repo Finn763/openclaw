@@ -28,7 +28,8 @@ type AgentRuntimePluginRegistryParams = {
   /** Explicit base scope for hosts without a Gateway startup registry. */
   basePluginIds?: readonly string[];
   selections?: readonly AgentHarnessPluginSelection[];
-  /** Lifecycle metadata pins built artifacts; omission selects a standalone source generation. */
+  /** Lifecycle-owned selection; standalone/direct generations stay source-default. */
+  preferBuiltPluginArtifacts?: boolean;
   metadataSnapshot?: PluginMetadataSnapshot;
 };
 
@@ -63,7 +64,7 @@ function resolveAgentRuntimePluginRegistryLoad(params: AgentRuntimePluginRegistr
     ...(metadataSnapshot.discovery ? { discovery: metadataSnapshot.discovery } : {}),
     installRecords: extractPluginInstallRecordsFromInstalledPluginIndex(metadataSnapshot.index),
     manifestRegistry: metadataSnapshot.manifestRegistry,
-    ...(params.metadataSnapshot ? { preferBuiltPluginArtifacts: true } : {}),
+    ...(params.preferBuiltPluginArtifacts ? { preferBuiltPluginArtifacts: true } : {}),
     ...(workspaceDir ? { workspaceDir } : {}),
   };
   const requestPluginRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
