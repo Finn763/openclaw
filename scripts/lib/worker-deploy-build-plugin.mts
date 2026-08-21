@@ -9,7 +9,9 @@ const PLAYWRIGHT_PACKAGE_INIT = `    packageRoot = import_path9.default.join(__d
     binPath = import_path9.default.join(packageRoot, "bin");`;
 const PLAYWRIGHT_BROWSER_REGISTRY_INIT =
   '    registry = new Registry(require(import_path20.default.join(packageRoot, "browsers.json")));';
-const WORKER_BROWSER_RUNTIME_COMPOSITION = `import { createAttachedBrowserToolRuntime } from "../../extensions/browser/runtime-api.js";
+const WORKER_BROWSER_RUNTIME_COMPOSITION = `import "playwright-core";
+import "playwright-core/lib/coreBundle";
+import { createAttachedBrowserToolRuntime } from "../../extensions/browser/runtime-api.js";
 export default { createAttachedBrowserToolRuntime };`;
 const UNDICI_REQUIRE_BOOTSTRAP = [
   'import { createRequire } from "node:module";',
