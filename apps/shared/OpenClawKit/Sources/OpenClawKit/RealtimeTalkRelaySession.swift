@@ -1490,6 +1490,12 @@ extension RealtimeTalkRelaySession {
         }
     }
 
+    // periphery:ignore - package tests await output cancellation retirement before successors.
+    func _test_waitForOutputCancellation() async {
+        let task = self.outputCancellationTask
+        await task?.value
+    }
+
     // periphery:ignore - package tests assert the startup budget without duplicating the constant.
     func _test_startupReadyTimeoutSeconds() -> Int {
         Self.startupReadyTimeoutSeconds
