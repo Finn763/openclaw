@@ -184,31 +184,28 @@ private final class TestRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
 private actor RealtimeRelayStartupBarrier {
     private var entered = false
     private var released = false
+    private var enteredWaiter: CheckedContinuation<Void, Never>?
     private var releaseWaiter: CheckedContinuation<Void, Never>?
-    private let enteredSignal = RealtimeRelayTestSignal<Void>()
 
     func suspend() async {
         self.entered = true
-        self.enteredSignal.send(())
-        if self.released {
-            return
+        self.enteredWaiter?.resume()
+        self.enteredWaiter = nil
+        guard !self.released else { return }
+        await withCheckedContinuation { continuation in
+            if self.released { continuation.resume() } else { self.releaseWaiter = continuation }
         }
-        await withCheckedContinuation { self.releaseWaiter = $0 }
     }
 
     func waitUntilEntered() async {
-        if self.entered {
-            return
-        }
-        do {
-            _ = try await self.enteredSignal.next("request barrier entry")
-        } catch {
-            self.release()
-            Issue.record(error)
+        guard !self.entered else { return }
+        await withCheckedContinuation { continuation in
+            if self.entered { continuation.resume() } else { self.enteredWaiter = continuation }
         }
     }
 
     func release() {
+        guard !self.released else { return }
         self.released = true
         self.releaseWaiter?.resume()
         self.releaseWaiter = nil
@@ -537,6 +534,10 @@ extension RealtimeTalkRelaySessionTests {
 
     @Test func `stale player completion cannot finish replacement turn playback`() async throws {
         let player = IndexedPCMStreamingAudioPlayer()
+        let replacementFinished = AsyncStream.makeStream(
+            of: Void.self,
+            bufferingPolicy: .bufferingNewest(1))
+        var replacementIsCompleting = false
         var speakingStates: [Bool] = []
         let session = RealtimeTalkRelaySession(
             transport: unusedRealtimeRelayTransport(),
@@ -544,7 +545,10 @@ extension RealtimeTalkRelaySessionTests {
             audioCapture: TestRealtimeTalkAudioCapture(),
             pcmPlayer: player,
             onStatus: { _ in },
-            onSpeakingChanged: { speakingStates.append($0) })
+            onSpeakingChanged: {
+                speakingStates.append($0)
+                if replacementIsCompleting, !$0 { replacementFinished.continuation.yield() }
+            })
         defer {
             session.stop()
             player.shutdown()
@@ -566,8 +570,10 @@ extension RealtimeTalkRelaySessionTests {
         #expect(session._test_isOutputPlaying())
         #expect(speakingStates == [true, false, true])
 
+        var replacementFinishIterator = replacementFinished.stream.makeAsyncIterator()
+        replacementIsCompleting = true
         player.complete(1)
-        try await player.waitUntilCompletionWasHandled(1)
+        _ = await replacementFinishIterator.next()
 
         #expect(!session._test_isOutputPlaying())
         #expect(speakingStates == [true, false, true, false])
@@ -1119,9 +1125,10 @@ extension RealtimeTalkRelaySessionTests {
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(session.cancelOutput())
         await barrier.waitUntilEntered()
+        let cancellationTask = session._test_outputCancellationTask()
         session.stop()
         await barrier.release()
-        await Task.yield()
+        await cancellationTask?.value
 
         #expect(issues.isEmpty)
     }
@@ -1280,7 +1287,8 @@ extension RealtimeTalkRelaySessionTests {
         let events = RealtimeRelayEventSource()
         let requests = RealtimeRelayStartupRequestLog()
         let audioCapture = TestRealtimeTalkAudioCapture()
-        var issues: [RealtimeTalkRelayIssue] = []
+        let issueNotification = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        defer { issueNotification.continuation.finish() }
         let result = TalkSessionCreateResult(
             sessionid: "talk-session",
             mode: AnyCodable("realtime"),
@@ -1303,7 +1311,7 @@ extension RealtimeTalkRelaySessionTests {
             audioCapture: audioCapture,
             pcmPlayer: UnusedPCMStreamingAudioPlayer(),
             onStatus: { _ in },
-            onIssue: { issues.append($0) },
+            onIssue: { _ in issueNotification.continuation.yield() },
             onSpeakingChanged: { _ in })
         let start = Task { @MainActor in
             do {
@@ -1315,10 +1323,9 @@ extension RealtimeTalkRelaySessionTests {
         }
         await barrier.waitUntilEntered()
 
+        var issueIterator = issueNotification.stream.makeAsyncIterator()
         await events.finish()
-        while issues.isEmpty {
-            await Task.yield()
-        }
+        _ = await issueIterator.next()
         await barrier.release()
 
         #expect(await start.value == "Realtime connection ended before it became ready.")

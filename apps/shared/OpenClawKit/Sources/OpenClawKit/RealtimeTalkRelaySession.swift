@@ -1496,6 +1496,11 @@ extension RealtimeTalkRelaySession {
         await task?.value
     }
 
+    // periphery:ignore - package tests retain cancellation ownership across stop().
+    func _test_outputCancellationTask() -> Task<Void, Never>? {
+        self.outputCancellationTask
+    }
+
     // periphery:ignore - package tests assert the startup budget without duplicating the constant.
     func _test_startupReadyTimeoutSeconds() -> Int {
         Self.startupReadyTimeoutSeconds

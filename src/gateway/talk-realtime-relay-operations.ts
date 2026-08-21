@@ -72,7 +72,7 @@ export function ensureTalkRealtimeRelayVoiceSession(params: {
   }
 }
 
-export function abortRelayAgentRuns(session: RelaySession, reason: string): void {
+function abortRelayAgentRuns(session: RelaySession, reason: string): void {
   for (const [runId, sessionKey] of session.activeAgentRuns) {
     abortChatRunById(session.context, {
       runId,
