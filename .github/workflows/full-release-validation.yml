@@ -1117,6 +1117,8 @@ jobs:
           EVIDENCE_SHA: ${{ needs.evidence_reuse.outputs.evidence_sha }}
           EVIDENCE_POLICY: ${{ needs.evidence_reuse.outputs.evidence_policy }}
           EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}
+          EVIDENCE_MANIFEST: ${{ needs.evidence_reuse.outputs.evidence_manifest }}
+          TRUSTED_WORKFLOW_JSON: ${{ needs.resolve_target.outputs.trusted_workflow_json }}
           RELEASE_PACKAGE_SPEC: ${{ inputs.release_package_spec }}
           PACKAGE_ACCEPTANCE_PACKAGE_SPEC: ${{ inputs.package_acceptance_package_spec }}
           NPM_TELEGRAM_PACKAGE_SPEC: ${{ inputs.npm_telegram_package_spec }}
@@ -1149,12 +1151,14 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$FULL_RELEASE_RESTORE_PLAN" != "true" ]]; then
+            evidence_manifest="${EVIDENCE_MANIFEST:-null}"
             export FULL_RELEASE_PLAN_INPUTS_JSON="$(
             jq -cn \
               --arg parentRunId "$GITHUB_RUN_ID" \
               --arg parentRunAttempt "$GITHUB_RUN_ATTEMPT" \
               --arg workflowRef "$GITHUB_REF_NAME" \
               --arg workflowSha "$GITHUB_SHA" \
+              --argjson trustedWorkflow "$TRUSTED_WORKFLOW_JSON" \
               --arg evidenceReuse "$EVIDENCE_REUSE" \
               --arg evidenceRunId "$EVIDENCE_RUN_ID" \
               --arg evidenceRootRunId "$EVIDENCE_ROOT_RUN_ID" \
@@ -1162,6 +1166,7 @@ jobs:
               --arg evidenceSha "$EVIDENCE_SHA" \
               --arg evidencePolicy "$EVIDENCE_POLICY" \
               --argjson evidenceChangedPaths "$EVIDENCE_CHANGED_PATHS" \
+              --argjson evidenceManifest "$evidence_manifest" \
               --arg rerunGroup "$RERUN_GROUP" \
               --arg releasePackageSpec "$RELEASE_PACKAGE_SPEC" \
               --arg packageAcceptancePackageSpec "$PACKAGE_ACCEPTANCE_PACKAGE_SPEC" \
@@ -1195,6 +1200,7 @@ jobs:
                 parentRunAttempt: $parentRunAttempt,
                 workflowRef: $workflowRef,
                 workflowSha: $workflowSha,
+                trustedWorkflow: $trustedWorkflow,
                 evidenceReuse: $evidenceReuse,
                 evidenceRunId: $evidenceRunId,
                 evidenceRootRunId: $evidenceRootRunId,
@@ -1202,6 +1208,7 @@ jobs:
                 evidenceSha: $evidenceSha,
                 evidencePolicy: $evidencePolicy,
                 evidenceChangedPaths: $evidenceChangedPaths,
+                evidenceManifest: $evidenceManifest,
                 rerunGroup: $rerunGroup,
                 releasePackageSpec: $releasePackageSpec,
                 packageAcceptancePackageSpec: $packageAcceptancePackageSpec,
@@ -1223,7 +1230,7 @@ jobs:
           node scripts/full-release-validation-state.mjs plan
 
       - name: Upload immutable release execution plan
-        if: ${{ github.run_attempt == 1 }}
+        if: ${{ always() && github.run_attempt == 1 }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: full-release-execution-plan-${{ github.run_id }}
@@ -1233,7 +1240,7 @@ jobs:
   release_decision:
     name: Release Decision
     needs: [resolve_target, release_execution_plan]
-    if: always() && needs.release_execution_plan.result == 'success'
+    if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 720
     outputs:
@@ -1294,7 +1301,7 @@ jobs:
   diagnostic_drain:
     name: Diagnostic Drain
     needs: [resolve_target, release_execution_plan]
-    if: always() && needs.release_execution_plan.result == 'success'
+    if: always()
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 720
     outputs:
@@ -1400,17 +1407,30 @@ jobs:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
 
-      - name: Download exact release decision
+      - name: Download release decision attempts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: full-release-decision-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/full-release-decision
+          pattern: full-release-decision-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/full-release-decision-attempts
 
-      - name: Download exact diagnostic drain
+      - name: Download diagnostic drain attempts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: full-release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/full-release-diagnostics
+          pattern: full-release-diagnostics-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/full-release-diagnostic-attempts
+
+      - name: Select newest compatible release state artifacts
+        id: selected_state
+        env:
+          RELEASE_PROFILE: ${{ inputs.release_profile }}
+          RERUN_GROUP: ${{ inputs.rerun_group }}
+          TARGET_SHA: ${{ needs.resolve_target.outputs.sha }}
+          RELEASE_EXECUTION_PLAN_PATH: ${{ runner.temp }}/full-release-execution-plan/full-release-execution-plan.json
+          RELEASE_DECISION_ATTEMPTS_PATH: ${{ runner.temp }}/full-release-decision-attempts
+          DIAGNOSTIC_DRAIN_ATTEMPTS_PATH: ${{ runner.temp }}/full-release-diagnostic-attempts
+          RELEASE_DECISION_PATH: ${{ runner.temp }}/full-release-decision/full-release-decision.json
+          DIAGNOSTIC_DRAIN_PATH: ${{ runner.temp }}/full-release-diagnostics/full-release-diagnostic-manifest.json
+        run: node scripts/full-release-validation-state.mjs select
 
       - name: Verify exact release state artifacts
         env:
@@ -1429,13 +1449,14 @@ jobs:
           TARGET_REF: ${{ inputs.ref }}
           PACKAGE_SPEC: ${{ inputs.evidence_package_spec || inputs.npm_telegram_package_spec }}
           GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
-          RELEASE_CHECKS_RESULT: ${{ needs.release_checks.result }}
-          EVIDENCE_REUSE: ${{ needs.evidence_reuse.outputs.reuse }}
-          EVIDENCE_ROOT_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_root_run_id }}
-          EVIDENCE_POLICY: ${{ needs.evidence_reuse.outputs.evidence_policy }}
+          RELEASE_EXECUTION_PLAN_PATH: ${{ runner.temp }}/full-release-execution-plan/full-release-execution-plan.json
         run: |
           set -euo pipefail
-          if [[ "$RELEASE_CHECKS_RESULT" == "skipped" && "$EVIDENCE_REUSE" != "true" ]]; then
+          EVIDENCE_REUSE="$(jq -r '.evidenceReuse.requested' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_ROOT_RUN_ID="$(jq -r '.evidenceReuse.rootRunId // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_POLICY="$(jq -r '.evidenceReuse.policy // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          RELEASE_CHECKS_SELECTED="$(jq -r '.children[] | select(.key == "releaseChecks") | .selected' "$RELEASE_EXECUTION_PLAN_PATH")"
+          if [[ "$RELEASE_CHECKS_SELECTED" != "true" && "$EVIDENCE_REUSE" != "true" ]]; then
             echo "Release checks were skipped by rerun group; skipping automatic release evidence update."
             exit 0
           fi
@@ -1511,23 +1532,9 @@ jobs:
         if: ${{ success() }}
         env:
           TARGET_REF: ${{ startsWith(github.ref, 'refs/heads/release-ci/') && needs.resolve_target.outputs.sha || inputs.ref }}
-          TARGET_SHA: ${{ needs.resolve_target.outputs.sha }}
           RELEASE_PROFILE: ${{ inputs.release_profile }}
           RERUN_GROUP: ${{ inputs.rerun_group }}
           RUN_RELEASE_SOAK: ${{ inputs.run_release_soak || inputs.release_profile == 'stable' || inputs.release_profile == 'full' }}
-          NORMAL_CI_RUN_ID: ${{ needs.normal_ci.outputs.run_id }}
-          PLUGIN_PRERELEASE_RUN_ID: ${{ needs.plugin_prerelease.outputs.run_id }}
-          RELEASE_CHECKS_RUN_ID: ${{ needs.release_checks.outputs.run_id }}
-          NPM_TELEGRAM_RUN_ID: ${{ needs.npm_telegram.outputs.run_id }}
-          PERFORMANCE_RUN_ID: ${{ needs.performance.outputs.run_id }}
-          PERFORMANCE_CONCLUSION: ${{ needs.diagnostic_drain.outputs.performance_conclusion }}
-          EVIDENCE_REUSE: ${{ needs.evidence_reuse.outputs.reuse }}
-          EVIDENCE_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_run_id }}
-          EVIDENCE_ROOT_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_root_run_id }}
-          EVIDENCE_SHA: ${{ needs.evidence_reuse.outputs.evidence_sha }}
-          EVIDENCE_POLICY: ${{ needs.evidence_reuse.outputs.evidence_policy }}
-          EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}
-          EVIDENCE_MANIFEST: ${{ needs.evidence_reuse.outputs.evidence_manifest }}
           PROVIDER: ${{ inputs.provider }}
           MODE: ${{ inputs.mode }}
           TARGET_CONTEXT_REF: ${{ inputs.target_context_ref }}
@@ -1543,10 +1550,12 @@ jobs:
           ALLOW_UNRELEASED_CHANGELOG: ${{ inputs.allow_unreleased_changelog || (inputs.target_context_ref == '' && (inputs.ref == 'main' || inputs.ref == 'refs/heads/main')) }}
           PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON: ${{ inputs.plugin_prerelease_node_exclude_patterns_json }}
           RELEASE_EXECUTION_PLAN_PATH: ${{ runner.temp }}/full-release-execution-plan/full-release-execution-plan.json
+          DIAGNOSTIC_DRAIN_PATH: ${{ runner.temp }}/full-release-diagnostics/full-release-diagnostic-manifest.json
         run: |
           set -euo pipefail
           manifest_dir="${RUNNER_TEMP}/full-release-validation"
           mkdir -p "$manifest_dir"
+          TARGET_SHA="$(jq -r '.targetSha' "$RELEASE_EXECUTION_PLAN_PATH")"
           NORMAL_CI_RUN_ID="$(jq -r '.children[] | select(.key == "normalCi") | .runId' "$RELEASE_EXECUTION_PLAN_PATH")"
           PLUGIN_PRERELEASE_RUN_ID="$(jq -r '.children[] | select(.key == "pluginPrerelease") | .runId' "$RELEASE_EXECUTION_PLAN_PATH")"
           RELEASE_CHECKS_RUN_ID="$(jq -r '.children[] | select(.key == "releaseChecks") | .runId' "$RELEASE_EXECUTION_PLAN_PATH")"
@@ -1554,6 +1563,14 @@ jobs:
           PERFORMANCE_RUN_ID="$(jq -r '.children[] | select(.key == "productPerformance") | .runId' "$RELEASE_EXECUTION_PLAN_PATH")"
           EXECUTION_PLAN_SHA256="$(jq -r '.sha256' "$RELEASE_EXECUTION_PLAN_PATH")"
           SOURCE_PARENT_RUN_ATTEMPT="$(jq -r '.parentRunAttempt' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_REUSE="$(jq -r '.evidenceReuse.requested' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_RUN_ID="$(jq -r '.evidenceReuse.selectedRunId // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_ROOT_RUN_ID="$(jq -r '.evidenceReuse.rootRunId // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_SHA="$(jq -r '.evidenceReuse.evidenceSha // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_POLICY="$(jq -r '.evidenceReuse.policy // ""' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_CHANGED_PATHS="$(jq -c '.evidenceReuse.changedPaths // []' "$RELEASE_EXECUTION_PLAN_PATH")"
+          EVIDENCE_MANIFEST="$(jq -c '.evidenceReuse.sourceManifest // empty' "$RELEASE_EXECUTION_PLAN_PATH")"
+          PERFORMANCE_CONCLUSION="$(jq -r '.children.productPerformance.conclusion // ""' "$DIAGNOSTIC_DRAIN_PATH")"
           if [[ "$EVIDENCE_REUSE" == "true" ]]; then
             # Inherit the evidence manifest (profile, soak, child runs) so future
             # reuse lookups and evidence consumers keep resolving the chain root.

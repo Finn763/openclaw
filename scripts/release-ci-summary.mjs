@@ -1253,6 +1253,14 @@ export function createReleaseEvidenceClient(repository = DEFAULT_REPO) {
     getParentJobs(runId) {
       return findParentJobsAll(runId, normalizedRepository);
     },
+    getRef(fullRef) {
+      const refPath = String(fullRef)
+        .replace(/^refs\//u, "")
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+      return githubRestJson(`git/ref/${refPath}`, normalizedRepository);
+    },
     getRun(runId) {
       return githubRestJson(`actions/runs/${runId}`, normalizedRepository);
     },
@@ -1349,6 +1357,19 @@ export function validateTrustedProducerIdentity(
   const shaPinned = SHA_PINNED_BRANCH_PATTERN.test(manifest.workflowRef ?? "");
   const protectedTagRoute = trustedIdentity.type === "tag";
   if (protectedTagRoute) {
+    let liveTag;
+    try {
+      liveTag = client.getRef(trustedIdentity.fullRef);
+    } catch (error) {
+      throw new Error(
+        `protected tooling tag is unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (liveTag?.object?.sha !== trustedIdentity.sha) {
+      throw new Error("protected tooling tag moved after release validation was sealed");
+    }
     if (!shaPinned) {
       throw new Error("protected-tag release evidence must use a canonical release-ci branch");
     }

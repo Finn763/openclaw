@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -12,6 +12,8 @@ import {
   buildReleaseStateArtifact,
   classifyReleaseSnapshot,
   formatReleaseStateOutcome,
+  releasePlanGateFailures,
+  selectReleaseStateArtifacts,
   validateReleaseExecutionPlanArtifact,
   verifyReleaseStateArtifacts,
 } from "./full-release-validation-policy.mjs";
@@ -210,18 +212,6 @@ export function parsePlanInputs(value) {
   return parsed;
 }
 
-function localFailures(gates) {
-  return gates
-    .filter((gate) => gate.required && gate.result !== "success")
-    .map((gate) => ({
-      child: "<parent>",
-      conclusion: stringValue(gate.result, "missing"),
-      job: stringValue(gate.name, "parent gate"),
-      kind: "parent_gate_failure",
-      message: `${stringValue(gate.name, "parent gate")} did not succeed`,
-    }));
-}
-
 export function hydrateReusedPlan(plan, evidence) {
   const byRole = new Map((evidence.children ?? []).map((child) => [child.role, child]));
   return plan.map((child) => {
@@ -269,7 +259,11 @@ async function validateReuse(plan, planInputs, signal) {
       "--repo",
       requiredString(process.env.GITHUB_REPOSITORY, "GitHub repository"),
       "--trusted-workflow-ref",
-      "main",
+      requiredString(planInputs.trustedWorkflow?.ref, "trusted workflow ref"),
+      "--trusted-workflow-full-ref",
+      requiredString(planInputs.trustedWorkflow?.fullRef, "trusted workflow full ref"),
+      "--trusted-workflow-sha",
+      requiredString(planInputs.trustedWorkflow?.sha, "trusted workflow SHA"),
       "--verifier-source-sha",
       requiredString(planInputs.workflowSha, "workflow SHA"),
       "--verifier-source-file",
@@ -319,9 +313,13 @@ async function validateReuse(plan, planInputs, signal) {
   }
 }
 
-function writeResult(path, payload) {
+function writeArtifact(path, payload) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function writeResult(path, payload) {
+  writeArtifact(path, payload);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `state=${payload.state}\n`);
     for (const [key, child] of Object.entries(payload.children ?? {})) {
@@ -331,8 +329,7 @@ function writeResult(path, payload) {
 }
 
 function writeExecutionPlan(path, payload) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
+  writeArtifact(path, payload);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, `sha256=${payload.sha256}\n`);
     appendFileSync(
@@ -390,11 +387,12 @@ function readArtifact(path, label) {
 
 function verifyMode() {
   const expected = {
-    parentRunAttempt: positiveInteger(process.env.GITHUB_RUN_ATTEMPT, "parent run attempt"),
+    maxParentRunAttempt: positiveInteger(process.env.GITHUB_RUN_ATTEMPT, "parent run attempt"),
     parentRunId: requiredString(process.env.GITHUB_RUN_ID, "parent run ID"),
     releaseProfile: requiredString(process.env.RELEASE_PROFILE, "release profile"),
     rerunGroup: requiredString(process.env.RERUN_GROUP, "rerun group"),
     targetSha: requiredString(process.env.TARGET_SHA, "target SHA"),
+    workflowRef: requiredString(process.env.GITHUB_REF_NAME, "workflow ref"),
     workflowSha: requiredString(process.env.GITHUB_SHA, "workflow SHA"),
   };
   const verified = verifyReleaseStateArtifacts(
@@ -417,6 +415,7 @@ function planExpected() {
     rerunGroup: requiredString(process.env.RERUN_GROUP, "rerun group"),
     targetSha: stringValue(process.env.TARGET_SHA),
     workflowSha: requiredString(process.env.GITHUB_SHA, "workflow SHA"),
+    workflowRef: requiredString(process.env.GITHUB_REF_NAME, "workflow ref"),
   };
 }
 
@@ -429,7 +428,12 @@ function evidenceReuseFromInputs(planInputs) {
     rootRunId: stringValue(planInputs.evidenceRootRunId),
     runUrl: stringValue(planInputs.evidenceRunUrl),
     selectedRunId: stringValue(planInputs.evidenceRunId),
+    sourceManifest: planInputs.evidenceManifest,
   };
+}
+
+function trustedWorkflowFromInputs(planInputs) {
+  return planInputs.trustedWorkflow;
 }
 
 async function planMode() {
@@ -463,6 +467,7 @@ async function planMode() {
     gates: built.gates,
     releaseProfile: expected.releaseProfile,
     rerunGroup: expected.rerunGroup,
+    trustedWorkflow: trustedWorkflowFromInputs(planInputs),
   });
   const stop = () => {
     if (finished) {
@@ -485,6 +490,7 @@ async function planMode() {
       gates: plan.gates,
       releaseProfile: expected.releaseProfile,
       rerunGroup: expected.rerunGroup,
+      trustedWorkflow: plan.trustedWorkflow,
     });
     writeExecutionPlan(outputPath, plan);
     finished = true;
@@ -506,6 +512,7 @@ async function planMode() {
     gates: built.gates,
     releaseProfile: expected.releaseProfile,
     rerunGroup: expected.rerunGroup,
+    trustedWorkflow: trustedWorkflowFromInputs(planInputs),
   });
   writeExecutionPlan(outputPath, plan);
   finished = true;
@@ -539,7 +546,7 @@ async function collectMode(mode) {
     },
   );
   const plan = executionPlan.children;
-  const gateFailures = localFailures(executionPlan.gates);
+  const gateFailures = releasePlanGateFailures(executionPlan.gates);
   const failFast = mode === "decision" && process.env.FAIL_FAST === "true";
   const pollIntervalMs =
     Number(process.env.FULL_RELEASE_POLL_INTERVAL_MS) || DEFAULT_POLL_INTERVAL_MS;
@@ -610,6 +617,7 @@ async function collectMode(mode) {
         evidenceRootRunId: executionPlan.evidenceReuse.rootRunId,
         evidenceRunUrl: executionPlan.evidenceReuse.runUrl,
         evidenceSha: executionPlan.evidenceReuse.evidenceSha,
+        trustedWorkflow: executionPlan.trustedWorkflow,
         workflowSha: executionPlan.workflowSha,
       },
       abortController.signal,
@@ -692,6 +700,82 @@ async function collectMode(mode) {
   }
 }
 
+function readNewestStateCandidate(root, prefix, runId, maxParentRunAttempt, filename) {
+  const pattern = new RegExp(`^${prefix}-${runId}-([1-9][0-9]*)$`, "u");
+  const newest = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const match = pattern.exec(entry.name);
+      return match ? { attempt: Number(match[1]), name: entry.name } : undefined;
+    })
+    .filter(Boolean)
+    .filter((entry) => entry.attempt <= maxParentRunAttempt)
+    .toSorted((left, right) => right.attempt - left.attempt)[0];
+  if (!newest) {
+    return [];
+  }
+  return [
+    {
+      name: newest.name,
+      payload: readArtifact(join(root, newest.name, filename), newest.name),
+    },
+  ];
+}
+
+function selectMode() {
+  const expected = {
+    maxParentRunAttempt: positiveInteger(
+      process.env.GITHUB_RUN_ATTEMPT,
+      "current parent run attempt",
+    ),
+    parentRunId: requiredString(process.env.GITHUB_RUN_ID, "parent run ID"),
+    releaseProfile: requiredString(process.env.RELEASE_PROFILE, "release profile"),
+    rerunGroup: requiredString(process.env.RERUN_GROUP, "rerun group"),
+    targetSha: requiredString(process.env.TARGET_SHA, "target SHA"),
+    workflowRef: requiredString(process.env.GITHUB_REF_NAME, "workflow ref"),
+    workflowSha: requiredString(process.env.GITHUB_SHA, "workflow SHA"),
+  };
+  const selected = selectReleaseStateArtifacts(
+    readArtifact(
+      requiredString(process.env.RELEASE_EXECUTION_PLAN_PATH, "execution plan path"),
+      "execution plan",
+    ),
+    readNewestStateCandidate(
+      requiredString(process.env.RELEASE_DECISION_ATTEMPTS_PATH, "decision attempts path"),
+      "full-release-decision",
+      expected.parentRunId,
+      expected.maxParentRunAttempt,
+      "full-release-decision.json",
+    ),
+    readNewestStateCandidate(
+      requiredString(process.env.DIAGNOSTIC_DRAIN_ATTEMPTS_PATH, "drain attempts path"),
+      "full-release-diagnostics",
+      expected.parentRunId,
+      expected.maxParentRunAttempt,
+      "full-release-diagnostic-manifest.json",
+    ),
+    expected,
+  );
+  writeArtifact(
+    requiredString(process.env.RELEASE_DECISION_PATH, "selected decision path"),
+    selected.decision,
+  );
+  writeArtifact(
+    requiredString(process.env.DIAGNOSTIC_DRAIN_PATH, "selected drain path"),
+    selected.drain,
+  );
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `decision_source_attempt=${selected.sourceAttempts.decision}\n`,
+    );
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `drain_source_attempt=${selected.sourceAttempts.drain}\n`,
+    );
+  }
+}
+
 async function main() {
   const mode = process.argv[2];
   if (mode === "plan") {
@@ -702,8 +786,12 @@ async function main() {
     verifyMode();
     return;
   }
+  if (mode === "select") {
+    selectMode();
+    return;
+  }
   if (!["decision", "drain"].includes(mode)) {
-    throw new Error("usage: full-release-validation-state.mjs <plan|decision|drain|verify>");
+    throw new Error("usage: full-release-validation-state.mjs <plan|decision|drain|select|verify>");
   }
   await collectMode(mode);
 }

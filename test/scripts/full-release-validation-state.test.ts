@@ -11,6 +11,7 @@ import {
   buildReleaseStateArtifact,
   classifyReleaseSnapshot,
   formatReleaseStateOutcome,
+  selectReleaseStateArtifacts,
   validateChildBinding,
   validateReleaseExecutionPlanArtifact,
   verifyReleaseStateArtifacts,
@@ -20,6 +21,11 @@ import { waitForChildClose, waitForFile } from "../helpers/process-wait.js";
 const SCRIPT = resolve("scripts/full-release-validation-state.mjs");
 const SHA = "a".repeat(40);
 const TARGET_SHA = "b".repeat(40);
+const TRUSTED_MAIN = { fullRef: "refs/heads/main", ref: "main", sha: SHA };
+
+function evidenceManifest() {
+  return { runAttempt: 1, runId: "99", targetSha: TARGET_SHA };
+}
 
 function child(key: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -85,6 +91,7 @@ function executionPlan(
     gates: built.gates,
     releaseProfile: "stable",
     rerunGroup: String(overrides.rerunGroup ?? "all"),
+    trustedWorkflow: TRUSTED_MAIN,
     ...artifactOverrides,
   });
 }
@@ -177,6 +184,7 @@ describe("full release execution plan", () => {
           rootRunId: "99",
           runUrl: "https://example.invalid/runs/99",
           selectedRunId: "99",
+          sourceManifest: evidenceManifest(),
         },
       },
     );
@@ -304,10 +312,15 @@ describe("release decision policy", () => {
 });
 
 describe("release state artifacts", () => {
-  function artifact(mode: "decision" | "drain") {
-    const sealedPlan = executionPlan({ rerunGroup: "ci" });
+  function artifact(
+    mode: "decision" | "drain",
+    parentRunAttempt = 2,
+    sealedPlan = executionPlan({ rerunGroup: "ci" }),
+  ) {
+    const plannedChild = sealedPlan.children.find((entry) => entry.key === "normalCi");
     const children = [
       child("normalCi", {
+        ...plannedChild,
         conclusion: "success",
         createdAt: "2026-08-21T00:00:00Z",
         status: "completed",
@@ -319,7 +332,7 @@ describe("release state artifacts", () => {
       decision: { activeRunIds: [], blockers: [], errors: [], state: "passed" },
       executionPlan: sealedPlan,
       expected: {
-        parentRunAttempt: 2,
+        parentRunAttempt,
         parentRunId: "77",
         targetSha: TARGET_SHA,
         workflowRef: "release-ci/tooling",
@@ -349,6 +362,89 @@ describe("release state artifacts", () => {
     ).toMatchObject({ decision: { state: "passed" }, drain: { state: "passed" } });
   });
 
+  it("selects the newest decision and drain independently across asymmetric retries", () => {
+    const sealedPlan = executionPlan({ rerunGroup: "ci" });
+    const selected = selectReleaseStateArtifacts(
+      sealedPlan,
+      [
+        { name: "full-release-decision-77-1", payload: artifact("decision", 1, sealedPlan) },
+        { name: "full-release-decision-77-2", payload: artifact("decision", 2, sealedPlan) },
+      ],
+      [{ name: "full-release-diagnostics-77-1", payload: artifact("drain", 1, sealedPlan) }],
+      {
+        maxParentRunAttempt: 3,
+        parentRunId: "77",
+        releaseProfile: "stable",
+        rerunGroup: "ci",
+        targetSha: TARGET_SHA,
+        workflowRef: "release-ci/tooling",
+        workflowSha: SHA,
+      },
+    );
+    expect(selected.sourceAttempts).toEqual({ decision: 2, drain: 1, executionPlan: 1 });
+  });
+
+  it.each([
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.displayTitle = "nearby title";
+      },
+      name: "changed child display title",
+      reason: "provenance differs",
+    },
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.workflow = "nearby.yml";
+      },
+      name: "changed child workflow",
+      reason: "provenance differs",
+    },
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.workflowRef = "main";
+      },
+      name: "changed child workflow ref",
+      reason: "provenance differs",
+    },
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.workflowSha = "f".repeat(40);
+      },
+      name: "changed child tooling SHA",
+      reason: "provenance differs",
+    },
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.conclusion = "failure";
+      },
+      name: "failed child hidden behind passed state",
+      reason: "canonical terminal release policy",
+    },
+    {
+      mutate: (drain: Record<string, any>) => {
+        drain.children.normalCi.errors = [{ kind: "api_error", message: "hidden" }];
+      },
+      name: "hidden child collector error",
+      reason: "contains collector errors",
+    },
+  ])("rejects a malformed passed drain with $name", ({ mutate, reason }) => {
+    const sealedPlan = executionPlan({ rerunGroup: "ci" });
+    const decision = artifact("decision", 2, sealedPlan);
+    const drain = structuredClone(artifact("drain", 2, sealedPlan));
+    mutate(drain);
+    expect(() =>
+      verifyReleaseStateArtifacts(sealedPlan, decision, drain, {
+        maxParentRunAttempt: 2,
+        parentRunId: "77",
+        releaseProfile: "stable",
+        rerunGroup: "ci",
+        targetSha: TARGET_SHA,
+        workflowRef: "release-ci/tooling",
+        workflowSha: SHA,
+      }),
+    ).toThrow(reason);
+  });
+
   it("uses state-specific operator guidance", () => {
     expect(
       formatReleaseStateOutcome({
@@ -370,12 +466,18 @@ describe("collector subprocess", () => {
       evidenceSha: TARGET_SHA,
       name: "exact-target",
       policy: "exact-target-full-validation-v1",
+      trustedWorkflow: TRUSTED_MAIN,
     },
     {
       changedPaths: ["CHANGELOG.md"],
       evidenceSha: "c".repeat(40),
       name: "changelog-only",
       policy: "changelog-only-release-v1",
+      trustedWorkflow: {
+        fullRef: `refs/tags/release-publish/${SHA.slice(0, 12)}-123`,
+        ref: `release-publish/${SHA.slice(0, 12)}-123`,
+        sha: SHA,
+      },
     },
   ])("seals and revalidates the complete $name reuse tuple", (reuse) => {
     const root = mkdtempSync(join(tmpdir(), "frv-plan-reuse-"));
@@ -406,6 +508,7 @@ console.log(JSON.stringify({
       children: {},
       dockerPreflightResult: "skipped",
       evidenceChangedPaths: reuse.changedPaths,
+      evidenceManifest: evidenceManifest(),
       evidencePolicy: reuse.policy,
       evidenceReuse: true,
       evidenceRootRunId: "99",
@@ -417,6 +520,7 @@ console.log(JSON.stringify({
       prepareCandidateResult: "skipped",
       rerunGroup: "all",
       resolveTargetResult: "success",
+      trustedWorkflow: reuse.trustedWorkflow,
       workflowRef: "release-ci/tooling",
       workflowSha: SHA,
     };
@@ -430,6 +534,9 @@ console.log(JSON.stringify({
           "--expected-root-run-id": "99",
           "--expected-selected-run-id": "99",
           "--expected-target-sha": TARGET_SHA,
+          "--trusted-workflow-full-ref": reuse.trustedWorkflow.fullRef,
+          "--trusted-workflow-ref": reuse.trustedWorkflow.ref,
+          "--trusted-workflow-sha": reuse.trustedWorkflow.sha,
           "--validate-run": "99",
         }),
         FRV_REUSED_CHILDREN: JSON.stringify(reusedEvidenceChildren()),
@@ -466,9 +573,85 @@ console.log(JSON.stringify({
         rootRunId: "99",
         runUrl: "https://example.invalid/runs/99",
         selectedRunId: "99",
+        sourceManifest: evidenceManifest(),
       },
+      trustedWorkflow: reuse.trustedWorkflow,
     });
     expect(JSON.parse(readFileSync(validatorArgs, "utf8"))).toContain("--expected-selected-run-id");
+  });
+
+  it("persists a classified plan that Release Decision can consume after reuse rejection", () => {
+    const root = mkdtempSync(join(tmpdir(), "frv-classified-plan-"));
+    const output = join(root, "full-release-execution-plan.json");
+    const decisionOutput = join(root, "full-release-decision.json");
+    const validator = join(root, "release-evidence-validator.mjs");
+    writeFileSync(
+      validator,
+      'console.error("sealed reuse selection rejected"); process.exit(1);\n',
+    );
+    const planInputs = {
+      children: {},
+      dockerPreflightResult: "skipped",
+      evidenceChangedPaths: [],
+      evidenceManifest: evidenceManifest(),
+      evidencePolicy: "exact-target-full-validation-v1",
+      evidenceReuse: true,
+      evidenceRootRunId: "99",
+      evidenceRunId: "99",
+      evidenceRunUrl: "https://example.invalid/runs/99",
+      evidenceSha: TARGET_SHA,
+      parentRunAttempt: 1,
+      parentRunId: "77",
+      prepareCandidateResult: "skipped",
+      rerunGroup: "all",
+      resolveTargetResult: "success",
+      trustedWorkflow: TRUSTED_MAIN,
+      workflowRef: "release-ci/tooling",
+      workflowSha: SHA,
+    };
+    const baseEnv = {
+      ...process.env,
+      FULL_RELEASE_EXECUTION_PLAN_PATH: output,
+      GITHUB_REF_NAME: "release-ci/tooling",
+      GITHUB_REPOSITORY: "openclaw/openclaw",
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "77",
+      GITHUB_SHA: SHA,
+      OPENCLAW_RELEASE_CI_SUMMARY_VALIDATOR: validator,
+      RELEASE_PROFILE: "stable",
+      RERUN_GROUP: "all",
+      TARGET_SHA,
+    };
+    const planResult = spawnSync(process.execPath, [SCRIPT, "plan"], {
+      encoding: "utf8",
+      env: {
+        ...baseEnv,
+        FULL_RELEASE_PLAN_INPUTS_JSON: JSON.stringify(planInputs),
+      },
+      timeout: 10_000,
+    });
+    expect(planResult.status).toBe(2);
+    expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({
+      blockers: [expect.objectContaining({ kind: "reused_evidence_invalid" })],
+      errors: [],
+    });
+
+    const decisionResult = spawnSync(process.execPath, [SCRIPT, "decision"], {
+      encoding: "utf8",
+      env: {
+        ...baseEnv,
+        FAIL_FAST: "false",
+        FULL_RELEASE_STATE_PATH: decisionOutput,
+      },
+      timeout: 10_000,
+    });
+    expect(decisionResult.status).toBe(1);
+    expect(JSON.parse(readFileSync(decisionOutput, "utf8"))).toMatchObject({
+      state: "blocked_complete",
+    });
+    expect(JSON.parse(readFileSync(decisionOutput, "utf8")).blockers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "reused_evidence_invalid" })]),
+    );
   });
 
   it("adopts the immutable attempt-one plan on an attempt-two collector retry", () => {
@@ -481,6 +664,7 @@ console.log(JSON.stringify({
         ...process.env,
         FULL_RELEASE_EXECUTION_PLAN_PATH: output,
         FULL_RELEASE_RESTORE_PLAN: "true",
+        GITHUB_REF_NAME: "release-ci/tooling",
         GITHUB_RUN_ATTEMPT: "2",
         GITHUB_RUN_ID: "77",
         GITHUB_SHA: SHA,
@@ -515,6 +699,7 @@ console.log(JSON.stringify({
           children: { normalCi: { result: "skipped", runAttempt: "", runId: "" } },
           dockerPreflightResult: "skipped",
           evidenceChangedPaths: [],
+          evidenceManifest: evidenceManifest(),
           evidencePolicy: "exact-target-full-validation-v1",
           evidenceReuse: true,
           evidenceRootRunId: "99",
@@ -526,6 +711,7 @@ console.log(JSON.stringify({
           prepareCandidateResult: "skipped",
           rerunGroup: "ci",
           resolveTargetResult: "success",
+          trustedWorkflow: TRUSTED_MAIN,
           workflowRef: "release-ci/tooling",
           workflowSha: SHA,
         }),

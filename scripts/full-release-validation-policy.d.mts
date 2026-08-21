@@ -29,6 +29,9 @@ export function terminalPolicyPass(
 ): boolean;
 
 export function classifyReleaseSnapshot(input: Record<string, any>): Record<string, any>;
+export function releasePlanGateFailures(
+  gates: Array<Record<string, any>>,
+): Array<Record<string, any>>;
 export function buildReleaseStateArtifact(input: Record<string, any>): Record<string, any>;
 export function validateReleaseStateArtifact(
   payload: unknown,
@@ -44,6 +47,26 @@ export function verifyReleaseStateArtifacts(
   decision: Record<string, any>;
   drain: Record<string, any>;
   executionPlan: Record<string, any>;
+  sourceAttempts: {
+    decision: number;
+    drain: number;
+    executionPlan: number;
+  };
+};
+export function selectReleaseStateArtifacts(
+  executionPlanPayload: unknown,
+  decisionCandidates: Array<{ name: string; payload: unknown }>,
+  drainCandidates: Array<{ name: string; payload: unknown }>,
+  expected?: Record<string, unknown>,
+): {
+  decision: Record<string, any>;
+  drain: Record<string, any>;
+  executionPlan: Record<string, any>;
+  sourceAttempts: {
+    decision: number;
+    drain: number;
+    executionPlan: number;
+  };
 };
 export function releaseStateDetailLines(payload: Record<string, any>, maxItems?: number): string[];
 export function formatReleaseStateOutcome(payload: Record<string, any>): string;

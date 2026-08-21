@@ -189,6 +189,12 @@ function normalizedEvidenceReuse(evidenceReuse) {
     rootRunId: boundedString(evidenceReuse.rootRunId, MAX_LABEL_LENGTH),
     runUrl: boundedString(evidenceReuse.runUrl, MAX_URL_LENGTH),
     selectedRunId: boundedString(evidenceReuse.selectedRunId, MAX_LABEL_LENGTH),
+    sourceManifest:
+      evidenceReuse.sourceManifest &&
+      typeof evidenceReuse.sourceManifest === "object" &&
+      !Array.isArray(evidenceReuse.sourceManifest)
+        ? JSON.parse(JSON.stringify(evidenceReuse.sourceManifest))
+        : null,
   };
 }
 
@@ -206,8 +212,23 @@ function validEvidenceReuseIdentity(evidenceReuse) {
     /^[a-f0-9]{40}$/u.test(evidenceReuse.evidenceSha) &&
     /^[1-9][0-9]*$/u.test(evidenceReuse.rootRunId) &&
     /^[1-9][0-9]*$/u.test(evidenceReuse.selectedRunId) &&
+    evidenceReuse.sourceManifest !== null &&
     validChangedPaths
   );
+}
+
+function normalizedTrustedWorkflow(identity) {
+  const ref = boundedString(identity?.ref, MAX_LABEL_LENGTH);
+  const fullRef = boundedString(identity?.fullRef, MAX_LABEL_LENGTH);
+  const sha = boundedString(identity?.sha, MAX_LABEL_LENGTH);
+  if (
+    !ref ||
+    !/^[a-f0-9]{40}$/u.test(sha) ||
+    (fullRef !== `refs/heads/${ref}` && fullRef !== `refs/tags/${ref}`)
+  ) {
+    throw new Error("release execution plan trusted workflow identity is invalid");
+  }
+  return { fullRef, ref, sha };
 }
 
 function executionPlanDigestPayload(plan) {
@@ -223,6 +244,7 @@ function executionPlanDigestPayload(plan) {
     releaseProfile: plan.releaseProfile,
     rerunGroup: plan.rerunGroup,
     targetSha: plan.targetSha,
+    trustedWorkflow: plan.trustedWorkflow,
     version: plan.version,
     workflowRef: plan.workflowRef,
     workflowSha: plan.workflowSha,
@@ -244,6 +266,7 @@ export function buildReleaseExecutionPlanArtifact({
   gates,
   releaseProfile,
   rerunGroup,
+  trustedWorkflow,
 }) {
   const normalizedReuse = normalizedEvidenceReuse(evidenceReuse);
   if (!validEvidenceReuseIdentity(normalizedReuse)) {
@@ -257,6 +280,7 @@ export function buildReleaseExecutionPlanArtifact({
     workflowRef: boundedString(expected.workflowRef, MAX_LABEL_LENGTH),
     workflowSha: boundedString(expected.workflowSha, MAX_LABEL_LENGTH),
     targetSha: boundedString(expected.targetSha, MAX_LABEL_LENGTH),
+    trustedWorkflow: normalizedTrustedWorkflow(trustedWorkflow),
     releaseProfile: boundedString(releaseProfile, MAX_LABEL_LENGTH),
     rerunGroup: boundedString(rerunGroup, MAX_LABEL_LENGTH),
     evidenceReuse: normalizedReuse,
@@ -281,6 +305,8 @@ export function validateReleaseExecutionPlanArtifact(payload, expected = {}) {
     (payload.targetSha !== "" && !/^[a-f0-9]{40}$/u.test(String(payload.targetSha ?? ""))) ||
     (expected.parentRunId !== undefined &&
       String(payload.parentRunId) !== String(expected.parentRunId)) ||
+    (expected.maxParentRunAttempt !== undefined &&
+      Number(payload.parentRunAttempt) > Number(expected.maxParentRunAttempt)) ||
     (expected.workflowRef !== undefined && payload.workflowRef !== expected.workflowRef) ||
     (expected.workflowSha !== undefined && payload.workflowSha !== expected.workflowSha) ||
     (expected.releaseProfile !== undefined && payload.releaseProfile !== expected.releaseProfile) ||
@@ -293,6 +319,7 @@ export function validateReleaseExecutionPlanArtifact(payload, expected = {}) {
   if (!validEvidenceReuseIdentity(evidenceReuse)) {
     throw new Error("release execution plan evidence reuse binding is invalid");
   }
+  const trustedWorkflow = normalizedTrustedWorkflow(payload.trustedWorkflow);
   const plan = {
     ...payload,
     parentRunAttempt: positiveInteger(payload.parentRunAttempt),
@@ -302,6 +329,7 @@ export function validateReleaseExecutionPlanArtifact(payload, expected = {}) {
     errors: normalizeIssues(payload.errors, "orchestration_error"),
     evidenceReuse,
     gates: Array.isArray(payload.gates) ? payload.gates.map(normalizedGate) : [],
+    trustedWorkflow,
   };
   const sha256 = releaseExecutionPlanSha256(plan);
   if (payload.sha256 !== sha256) {
@@ -658,11 +686,15 @@ export function validateReleaseStateArtifact(payload, expected = {}, expectedMod
     payload.kind !== expectedKind ||
     !RELEASE_DECISION_STATE_SET.has(stringValue(payload.state)) ||
     !/^[a-f0-9]{64}$/u.test(String(payload.executionPlanSha256 ?? "")) ||
+    positiveInteger(payload.parentRunAttempt) === undefined ||
     positiveInteger(payload.sourceParentRunAttempt) === undefined ||
     (expected.parentRunId !== undefined &&
       String(payload.parentRunId) !== String(expected.parentRunId)) ||
     (expected.parentRunAttempt !== undefined &&
       Number(payload.parentRunAttempt) !== Number(expected.parentRunAttempt)) ||
+    (expected.maxParentRunAttempt !== undefined &&
+      Number(payload.parentRunAttempt) > Number(expected.maxParentRunAttempt)) ||
+    (expected.workflowRef !== undefined && payload.workflowRef !== expected.workflowRef) ||
     (expected.workflowSha !== undefined && payload.workflowSha !== expected.workflowSha) ||
     (expected.targetSha !== undefined && payload.targetSha !== expected.targetSha) ||
     (expected.releaseProfile !== undefined && payload.releaseProfile !== expected.releaseProfile) ||
@@ -675,13 +707,135 @@ export function validateReleaseStateArtifact(payload, expected = {}, expectedMod
   const activeRunIds = Array.isArray(payload.activeRunIds)
     ? payload.activeRunIds.map(String).filter((runId) => /^[1-9][0-9]*$/u.test(runId))
     : [];
+  const children =
+    payload.children && typeof payload.children === "object" && !Array.isArray(payload.children)
+      ? Object.fromEntries(
+          Object.entries(payload.children).map(([key, child]) => {
+            if (!child || typeof child !== "object" || Array.isArray(child)) {
+              throw new Error(`release state child snapshot is invalid: ${key}`);
+            }
+            const timingJobs = Array.isArray(child.timing?.jobs)
+              ? child.timing.jobs.map((job) => ({
+                  conclusion: stringValue(job?.conclusion),
+                  durationMinutes:
+                    typeof job?.durationMinutes === "number" ? job.durationMinutes : null,
+                  name: boundedString(job?.name, MAX_LABEL_LENGTH),
+                  startedAt: stringValue(job?.startedAt),
+                  status: stringValue(job?.status),
+                  url: boundedString(job?.url, MAX_URL_LENGTH),
+                }))
+              : [];
+            return [
+              key,
+              {
+                conclusion: stringValue(child.conclusion),
+                displayTitle: boundedString(child.displayTitle, MAX_LABEL_LENGTH),
+                errors: normalizeIssues(child.errors, "orchestration_error"),
+                runAttempt: positiveInteger(child.runAttempt),
+                runId: String(child.runId ?? ""),
+                status: stringValue(child.status),
+                timing: {
+                  durationMinutes:
+                    typeof child.timing?.durationMinutes === "number"
+                      ? child.timing.durationMinutes
+                      : null,
+                  jobs: timingJobs,
+                },
+                url: boundedString(child.url, MAX_URL_LENGTH),
+                workflow: boundedString(child.workflow, MAX_LABEL_LENGTH),
+                workflowRef: boundedString(child.workflowRef, MAX_LABEL_LENGTH),
+                workflowSha: boundedString(child.workflowSha, MAX_LABEL_LENGTH),
+              },
+            ];
+          }),
+        )
+      : {};
   return {
     ...payload,
     activeRunIds,
     blockers,
+    children,
     errors,
+    parentRunAttempt: positiveInteger(payload.parentRunAttempt),
     sourceParentRunAttempt: positiveInteger(payload.sourceParentRunAttempt),
   };
+}
+
+export function releasePlanGateFailures(gates) {
+  return gates
+    .filter((gate) => gate.required && gate.result !== "success")
+    .map((gate) => ({
+      child: "<parent>",
+      conclusion: stringValue(gate.result, "missing"),
+      job: stringValue(gate.name, "parent gate"),
+      kind: "parent_gate_failure",
+      message: `${stringValue(gate.name, "parent gate")} did not succeed`,
+    }));
+}
+
+function verifyStateChildren(state, executionPlan, label) {
+  const selected = executionPlan.children.filter((entry) => entry.selected);
+  const expectedKeys = selected.map((child) => child.key).toSorted();
+  const actualKeys = Object.keys(state.children).toSorted();
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+    throw new Error(`${label} child set differs from the immutable execution plan`);
+  }
+  if (
+    state.activeRunIds.length > 0 ||
+    state.cancellation?.requested === true ||
+    (state.cancellation?.cancelledRunIds?.length ?? 0) > 0
+  ) {
+    throw new Error(`${label} claims passed with active or cancelled children`);
+  }
+  const snapshots = selected.map((child) => {
+    if (!child.runId || !child.runAttempt) {
+      throw new Error(`selected release child omitted exact identity: ${child.key}`);
+    }
+    const snapshot = state.children[child.key];
+    if (
+      !snapshot ||
+      snapshot.runId !== child.runId ||
+      snapshot.runAttempt !== child.runAttempt ||
+      snapshot.displayTitle !== child.displayTitle ||
+      snapshot.workflow !== child.workflow ||
+      snapshot.workflowRef !== child.workflowRef ||
+      snapshot.workflowSha !== child.workflowSha
+    ) {
+      throw new Error(`${label} child provenance differs from the immutable plan: ${child.key}`);
+    }
+    if (snapshot.errors.length > 0) {
+      throw new Error(`${label} child contains collector errors: ${child.key}`);
+    }
+    return {
+      ...child,
+      ...snapshot,
+      jobs: snapshot.timing.jobs.map((job) => ({
+        conclusion: job.conclusion,
+        html_url: job.url,
+        name: job.name,
+        status: job.status,
+        url: job.url,
+      })),
+    };
+  });
+  const recomputed = classifyReleaseSnapshot({
+    children: snapshots,
+    extraBlockers: executionPlan.blockers,
+    extraErrors: executionPlan.errors,
+    localFailures: releasePlanGateFailures(executionPlan.gates),
+    releaseProfile: executionPlan.releaseProfile,
+    workflowRef: executionPlan.workflowRef,
+  });
+  if (
+    state.state !== "passed" ||
+    state.blockers.length > 0 ||
+    state.errors.length > 0 ||
+    recomputed.state !== "passed" ||
+    recomputed.blockers.length > 0 ||
+    recomputed.errors.length > 0
+  ) {
+    throw new Error(`${label} does not satisfy canonical terminal release policy`);
+  }
 }
 
 export function verifyReleaseStateArtifacts(
@@ -701,33 +855,70 @@ export function verifyReleaseStateArtifacts(
   ) {
     throw new Error("release decision and diagnostic drain execution plans differ");
   }
-  if (
-    decision.state !== "passed" ||
-    drain.state !== "passed" ||
-    decision.blockers.length > 0 ||
-    decision.errors.length > 0 ||
-    drain.blockers.length > 0 ||
-    drain.errors.length > 0
-  ) {
-    throw new Error(
-      `release state artifacts are not green: decision=${decision.state} drain=${drain.state}`,
-    );
+  verifyStateChildren(decision, executionPlan, "release decision");
+  verifyStateChildren(drain, executionPlan, "diagnostic drain");
+  return {
+    decision,
+    drain,
+    executionPlan,
+    sourceAttempts: {
+      decision: decision.parentRunAttempt,
+      drain: drain.parentRunAttempt,
+      executionPlan: executionPlan.parentRunAttempt,
+    },
+  };
+}
+
+function newestStateCandidate(candidates, mode, runId, expected) {
+  const prefix = mode === "decision" ? "full-release-decision" : "full-release-diagnostics";
+  const pattern = new RegExp(`^${prefix}-${runId}-([1-9][0-9]*)$`, "u");
+  const maxParentRunAttempt =
+    expected.maxParentRunAttempt === undefined
+      ? Number.POSITIVE_INFINITY
+      : Number(expected.maxParentRunAttempt);
+  const sorted = candidates
+    .map((candidate) => {
+      const match = pattern.exec(String(candidate.name ?? ""));
+      return match ? { ...candidate, attempt: Number(match[1]) } : undefined;
+    })
+    .filter(Boolean)
+    .filter((candidate) => candidate.attempt <= maxParentRunAttempt)
+    .toSorted((left, right) => right.attempt - left.attempt);
+  const newest = sorted[0];
+  if (!newest) {
+    throw new Error(`no ${mode} artifact exists at or before the current parent attempt`);
   }
-  for (const child of executionPlan.children.filter((entry) => entry.selected)) {
-    if (!child.runId || !child.runAttempt) {
-      throw new Error(`selected release child omitted exact identity: ${child.key}`);
-    }
-    const snapshot = drain.children?.[child.key];
-    if (
-      !snapshot ||
-      String(snapshot.runId) !== child.runId ||
-      Number(snapshot.runAttempt) !== child.runAttempt ||
-      snapshot.status !== "completed"
-    ) {
-      throw new Error(`diagnostic drain child is not terminal and exact: ${child.key}`);
-    }
+  const payload = validateReleaseStateArtifact(newest.payload, expected, mode);
+  if (payload.parentRunAttempt !== newest.attempt) {
+    throw new Error(`${mode} artifact name and source attempt differ`);
   }
-  return { decision, drain, executionPlan };
+  return payload;
+}
+
+export function selectReleaseStateArtifacts(
+  executionPlanPayload,
+  decisionCandidates,
+  drainCandidates,
+  expected = {},
+) {
+  const executionPlan = validateReleaseExecutionPlanArtifact(executionPlanPayload, expected);
+  const selectionExpected = {
+    ...expected,
+    parentRunAttempt: undefined,
+  };
+  const decision = newestStateCandidate(
+    decisionCandidates,
+    "decision",
+    executionPlan.parentRunId,
+    selectionExpected,
+  );
+  const drain = newestStateCandidate(
+    drainCandidates,
+    "drain",
+    executionPlan.parentRunId,
+    selectionExpected,
+  );
+  return verifyReleaseStateArtifacts(executionPlan, decision, drain, selectionExpected);
 }
 
 function issueSummary(prefix, issue) {

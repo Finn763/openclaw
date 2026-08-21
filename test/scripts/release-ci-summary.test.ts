@@ -617,6 +617,9 @@ function trustedMainPackageFixture({
       expect(requestedRunId).toBe(runId);
       return [parentJob];
     },
+    getRef(fullRef: string) {
+      return { object: { sha: workflowSha }, ref: fullRef };
+    },
     getRun(requestedRunId: string) {
       if (requestedRunId === runId) {
         return parentRun;
@@ -1369,6 +1372,10 @@ describe("release CI summary child correlation", () => {
       workflowSha: olderWorkflowSha,
     });
     olderFixture.manifest.targetRef = olderFixture.targetSha;
+    olderFixture.client.getRef = (fullRef: string) => ({
+      object: { sha: trustedWorkflowSha },
+      ref: fullRef,
+    });
     expect(() =>
       validateReleaseRunEvidence(
         {
@@ -1404,6 +1411,41 @@ describe("release CI summary child correlation", () => {
         sameNameFixture.client,
       ),
     ).toThrow("canonical release-ci branch");
+  });
+
+  it("rejects a protected tooling tag that moved or disappeared after sealing", () => {
+    const workflowSha = "7".repeat(40);
+    const workflowRef = `release-ci/${workflowSha.slice(0, 12)}-1783705000000`;
+    const trustedWorkflowRef = `release-publish/${workflowSha.slice(0, 12)}-123`;
+    const fixture = trustedMainPackageFixture({
+      manifestVersion: 3,
+      targetSha: "8".repeat(40),
+      workflowFullRef: `refs/heads/${workflowRef}`,
+      workflowRef,
+      workflowSha,
+    });
+    fixture.manifest.targetRef = fixture.targetSha;
+    const options = {
+      repository: "openclaw/openclaw",
+      runId: fixture.runId,
+      trustedWorkflowFullRef: `refs/tags/${trustedWorkflowRef}`,
+      trustedWorkflowRef,
+      trustedWorkflowSha: workflowSha,
+      verifierSourceContent: readFileSync(SCRIPT),
+      verifierSourceSha: "c".repeat(40),
+    };
+
+    fixture.client.getRef = () => ({ object: { sha: "6".repeat(40) } });
+    expect(() => validateReleaseRunEvidence(options, fixture.client)).toThrow(
+      "protected tooling tag moved",
+    );
+
+    fixture.client.getRef = () => {
+      throw new Error("HTTP 404");
+    };
+    expect(() => validateReleaseRunEvidence(options, fixture.client)).toThrow(
+      "protected tooling tag is unavailable",
+    );
   });
 
   it.each(["main", "refs/heads/main"])(

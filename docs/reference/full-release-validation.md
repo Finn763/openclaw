@@ -53,7 +53,13 @@ verifier consume this artifact. Collector retries restore it and adopt the
 same children; they never rebuild the plan or redispatch tests.
 Release Decision also repeats canonical reuse-chain validation before a reused
 run can pass. The sealed target SHA, evidence SHA, policy, changed-path set,
-selected run, root run, and child tuple must all still match.
+selected run, root run, source manifest, trusted tooling identity, and child
+tuple must all still match.
+
+On a parent retry, final verification selects the newest available Release
+Decision and Diagnostic Drain artifacts independently. Both must bind the same
+immutable plan and exact child tuple; their source attempts remain recorded in
+the artifacts and may differ when only one collector needed a retry.
 
 The helper creates a temporary `release-ci/*` ref pinned to the Tooling SHA,
 passes the Validation SHA as both the candidate ref and `expected_sha`, and

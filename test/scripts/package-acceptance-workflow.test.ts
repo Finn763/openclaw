@@ -2967,10 +2967,16 @@ describe("package acceptance workflow", () => {
     const decisionUpload = workflowStep(decision, "Upload release decision");
     const drainUpload = workflowStep(drain, "Upload diagnostic drain manifest");
     const planStep = workflowStep(executionPlan, "Seal immutable release execution plan");
+    const planUpload = workflowStep(executionPlan, "Upload immutable release execution plan");
     const manifestStep = workflowStep(summary, "Write release validation manifest");
+    const selectState = workflowStep(summary, "Select newest compatible release state artifacts");
+    const decisionDownloads = workflowStep(summary, "Download release decision attempts");
+    const drainDownloads = workflowStep(summary, "Download diagnostic drain attempts");
 
     expect(decision.needs).toEqual(["resolve_target", "release_execution_plan"]);
     expect(drain.needs).toEqual(["resolve_target", "release_execution_plan"]);
+    expect(decision.if).toBe("always()");
+    expect(drain.if).toBe("always()");
     expect(decisionStep.run).toBe(drainStep.run);
     expect(decisionStep.env).toMatchObject({
       FAIL_FAST: "${{ inputs.fail_fast }}",
@@ -2986,21 +2992,34 @@ describe("package acceptance workflow", () => {
     expect(planStep.run).toContain("FULL_RELEASE_PLAN_INPUTS_JSON");
     expect(planStep.env).toMatchObject({
       EVIDENCE_CHANGED_PATHS: "${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}",
+      EVIDENCE_MANIFEST: "${{ needs.evidence_reuse.outputs.evidence_manifest }}",
       EVIDENCE_RUN_ID: "${{ needs.evidence_reuse.outputs.evidence_run_id }}",
+      TRUSTED_WORKFLOW_JSON: "${{ needs.resolve_target.outputs.trusted_workflow_json }}",
     });
     expect(planStep.run).toContain('--arg evidenceRunId "$EVIDENCE_RUN_ID"');
-    expect(manifestStep.env).toMatchObject({
-      EVIDENCE_CHANGED_PATHS: "${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}",
-    });
-    expect(workflowStep(executionPlan, "Upload immutable release execution plan").with?.name).toBe(
-      "full-release-execution-plan-${{ github.run_id }}",
+    expect(planStep.run).toContain('--argjson trustedWorkflow "$TRUSTED_WORKFLOW_JSON"');
+    expect(planUpload.if).toBe("${{ always() && github.run_attempt == 1 }}");
+    expect(planUpload.with?.name).toBe("full-release-execution-plan-${{ github.run_id }}");
+    expect(manifestStep.env).not.toHaveProperty("EVIDENCE_MANIFEST");
+    expect(manifestStep.run).toContain(
+      'EVIDENCE_MANIFEST="$(jq -c \'.evidenceReuse.sourceManifest // empty\' "$RELEASE_EXECUTION_PLAN_PATH")"',
     );
+    expect(manifestStep.run).not.toContain("needs.evidence_reuse.outputs");
     expect(decisionUpload.with?.name).toBe(
       "full-release-decision-${{ github.run_id }}-${{ github.run_attempt }}",
     );
     expect(drainUpload.with?.name).toBe(
       "full-release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}",
     );
+    expect(decisionDownloads.with).toMatchObject({
+      path: "${{ runner.temp }}/full-release-decision-attempts",
+      pattern: "full-release-decision-${{ github.run_id }}-*",
+    });
+    expect(drainDownloads.with).toMatchObject({
+      path: "${{ runner.temp }}/full-release-diagnostic-attempts",
+      pattern: "full-release-diagnostics-${{ github.run_id }}-*",
+    });
+    expect(selectState.run).toBe("node scripts/full-release-validation-state.mjs select");
     expect(summary.needs).toEqual(expect.arrayContaining(["release_decision", "diagnostic_drain"]));
     for (const jobId of [
       "docker_runtime_assets_preflight",
@@ -3015,6 +3034,28 @@ describe("package acceptance workflow", () => {
         "github.run_attempt == 1",
       );
     }
+  });
+
+  it("builds a rerun-all manifest from sealed plan A instead of retry-B job outputs", () => {
+    const summary = workflowJob(FULL_RELEASE_VALIDATION_WORKFLOW, "summary");
+    const manifest = workflowStep(summary, "Write release validation manifest");
+    const evidenceDispatch = workflowStep(summary, "Request release evidence update");
+
+    expect(manifest.env).not.toHaveProperty("TARGET_SHA");
+    expect(manifest.env).not.toHaveProperty("NORMAL_CI_RUN_ID");
+    expect(manifest.env).not.toHaveProperty("EVIDENCE_REUSE");
+    expectTextToIncludeAll(manifest.run, [
+      'TARGET_SHA="$(jq -r \'.targetSha\' "$RELEASE_EXECUTION_PLAN_PATH")"',
+      'NORMAL_CI_RUN_ID="$(jq -r \'.children[] | select(.key == "normalCi") | .runId\' "$RELEASE_EXECUTION_PLAN_PATH")"',
+      'EVIDENCE_RUN_ID="$(jq -r \'.evidenceReuse.selectedRunId // ""\' "$RELEASE_EXECUTION_PLAN_PATH")"',
+      'EVIDENCE_MANIFEST="$(jq -c \'.evidenceReuse.sourceManifest // empty\' "$RELEASE_EXECUTION_PLAN_PATH")"',
+      'PERFORMANCE_CONCLUSION="$(jq -r \'.children.productPerformance.conclusion // ""\' "$DIAGNOSTIC_DRAIN_PATH")"',
+    ]);
+    expect(manifest.run).not.toContain("needs.evidence_reuse.outputs");
+    expect(evidenceDispatch.run).toContain(
+      'EVIDENCE_REUSE="$(jq -r \'.evidenceReuse.requested\' "$RELEASE_EXECUTION_PLAN_PATH")"',
+    );
+    expect(evidenceDispatch.env).not.toHaveProperty("EVIDENCE_REUSE");
   });
 
   it("pins every Full Release Validation artifact download to the canonical action", () => {

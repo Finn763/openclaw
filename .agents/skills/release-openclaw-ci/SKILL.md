@@ -63,7 +63,10 @@ Use this with `$release-openclaw-maintainer` and `$openclaw-testing` when a rele
   permission to redispatch.
 - Reused evidence is not trusted merely because plan sealing found it. Release
   Decision repeats the sealed target SHA, evidence SHA, policy, changed paths,
-  selected run, root run, and exact-child checks before returning `passed`.
+  selected run, root run, source manifest, trusted tooling identity, and
+  exact-child checks before returning `passed`.
+- Parent retries select the newest Decision and Drain artifacts independently;
+  both must bind the same immutable plan even when their source attempts differ.
 - Use one release operator, one transition-only watcher, and at most one
   investigator for the current failed surface. Do not build audit-review-plan
   trees around a single workflow transition.
