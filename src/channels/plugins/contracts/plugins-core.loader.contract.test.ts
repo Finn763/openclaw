@@ -114,14 +114,14 @@ describe("channel plugin loader", () => {
     expect(loaded).toBe(demoOutbound);
   });
 
-  it("falls back to the active registry when the scoped registry omits the channel", async () => {
+  it("does not escape the scoped registry when the channel is omitted", async () => {
     setActivePluginRegistry(registryWithDemoLoader);
 
     const loaded = await withPluginRuntimeRegistryScope(emptyRegistry, () =>
       loadChannelOutboundAdapter("demo-loader"),
     );
 
-    expect(loaded).toBe(demoOutbound);
+    expect(loaded).toBeUndefined();
   });
 
   it("preserves a missing adapter from the scoped channel registration", async () => {

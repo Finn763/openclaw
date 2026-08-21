@@ -5,9 +5,19 @@
  * auth profiles, and the current runtime config snapshot.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getActivePluginRegistry } from "../plugins/runtime.js";
-import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  resolveMessageActionTurnCapability,
+  selectMessageActionRequesterIdentity,
+} from "../gateway/message-action-turn-capability.js";
+import { getActivePluginRegistry, getActivePluginRegistryVersion } from "../plugins/runtime.js";
+import {
+  getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimeRegistryScope,
+} from "../plugins/runtime/gateway-request-scope.js";
+import type { OpenClawPluginToolDelivery } from "../plugins/tool-types.js";
 import { resolvePluginTools } from "../plugins/tools.js";
+import type { OpenClawPluginToolContext } from "../plugins/types.js";
+import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { resolveApiKeyForProfile, resolveAuthProfileOrder } from "./auth-profiles.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import {
@@ -46,6 +56,98 @@ type ResolveOpenClawPluginToolsOptions = OpenClawPluginToolOptions & {
   authProfileStore?: AuthProfileStore;
 };
 
+const loadMessageActionRunner = createLazyRuntimeModule(
+  () => import("../infra/outbound/message-action-runner.js"),
+);
+
+function createPluginToolDelivery(params: {
+  options: ResolveOpenClawPluginToolsOptions | undefined;
+  context: OpenClawPluginToolContext;
+  resolveConfig: () => OpenClawConfig | undefined;
+}): OpenClawPluginToolDelivery | undefined {
+  const route = params.context.deliveryContext;
+  const agentId = params.context.agentId;
+  const sessionKey = params.context.sessionKey;
+  const sessionId = params.context.sessionId;
+  const runId = params.options?.runId;
+  const token = params.options?.messageActionTurnCapability;
+  const activeRegistry = getActivePluginRegistry();
+  const activeRegistryVersion = getActivePluginRegistryVersion();
+  if (
+    !route?.channel ||
+    !route.to ||
+    !agentId ||
+    !sessionKey ||
+    !runId ||
+    !token ||
+    !activeRegistry
+  ) {
+    return undefined;
+  }
+
+  const resolveAuthorization = () => {
+    if (
+      getActivePluginRegistry() !== activeRegistry ||
+      getActivePluginRegistryVersion() !== activeRegistryVersion
+    ) {
+      throw new Error("plugin delivery capability is no longer active");
+    }
+    const authorization = resolveMessageActionTurnCapability({
+      token,
+      agentId,
+      runId,
+      sessionKey,
+      sessionId,
+    });
+    if (!authorization) {
+      throw new Error("plugin delivery capability is no longer active");
+    }
+    return authorization;
+  };
+
+  return {
+    send: async ({ text, mediaUrl }) => {
+      resolveAuthorization();
+      const { runMessageAction } = await loadMessageActionRunner();
+      const authorization = resolveAuthorization();
+      const cfg = params.resolveConfig();
+      if (!cfg) {
+        throw new Error("plugin delivery requires an active runtime config");
+      }
+      await withPluginRuntimeRegistryScope(activeRegistry, () =>
+        runMessageAction({
+          cfg,
+          action: "send",
+          params: {
+            channel: route.channel,
+            target: route.to,
+            ...(route.accountId ? { accountId: route.accountId } : {}),
+            ...(route.threadId != null ? { threadId: route.threadId } : {}),
+            ...(text !== undefined ? { message: text } : {}),
+            ...(mediaUrl !== undefined ? { mediaUrl } : {}),
+          },
+          defaultAccountId: route.accountId,
+          ...selectMessageActionRequesterIdentity(authorization),
+          messageActionAuthorization: {
+            requesterAccountId: authorization.requesterAccountId,
+            requesterSenderId: authorization.requesterSenderId,
+            toolContext: authorization.toolContext,
+          },
+          senderIsOwner: params.context.senderIsOwner,
+          conversationReadOrigin: params.context.conversationReadOrigin,
+          toolContext: authorization.toolContext,
+          sessionKey,
+          sessionId,
+          runId,
+          agentId,
+          dryRun: false,
+        }),
+      );
+      resolveAuthorization();
+    },
+  };
+}
+
 /** Resolves plugin tools for an agent run and applies delivery-context defaults. */
 export function resolveOpenClawPluginToolsForOptions(params: {
   options?: ResolveOpenClawPluginToolsOptions;
@@ -69,6 +171,11 @@ export function resolveOpenClawPluginToolsForOptions(params: {
   });
   const authProfileStore = params.options?.authProfileStore;
   const availabilityConfig = resolveCurrentRuntimeConfig();
+  const delivery = createPluginToolDelivery({
+    options: params.options,
+    context: pluginToolInputs.context,
+    resolveConfig: resolveCurrentRuntimeConfig,
+  });
   const availabilityRuntimeLookup = authProfileStore
     ? createRuntimeProviderAuthLookup({
         cfg: availabilityConfig,
@@ -146,6 +253,7 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     ...pluginToolInputs,
     context: {
       ...pluginToolInputs.context,
+      ...(delivery ? { delivery } : {}),
       ...(hasAuthForProvider ? { hasAuthForProvider } : {}),
       ...(resolveApiKeyForProvider ? { resolveApiKeyForProvider } : {}),
     },

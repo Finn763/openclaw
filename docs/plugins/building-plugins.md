@@ -244,7 +244,9 @@ loads the owning plugin runtime.
 
 Tool factories receive trusted runtime context, including `deliveryContext`,
 `nativeChannelId` for the active platform conversation when available, and
-`requesterSenderId`.
+`requesterSenderId`. Use `delivery.send(...)` to send text or media to the
+current conversation. OpenClaw binds the route, account, thread, and media
+access policy; the capability expires when the turn ends.
 
 ```typescript
 register(api) {
