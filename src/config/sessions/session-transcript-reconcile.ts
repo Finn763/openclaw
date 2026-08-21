@@ -279,6 +279,9 @@ export async function reconcileSessionTranscriptIndexes(
   } catch (error) {
     throw toStringifiedError(error);
   }
+  const workerExit = new Promise<void>((resolveExit) => {
+    worker.once("exit", () => resolveExit());
+  });
 
   return new Promise<SessionTranscriptReconcileResult>((resolve, reject) => {
     let active: ActivePreparedProjection | undefined;
@@ -320,6 +323,7 @@ export async function reconcileSessionTranscriptIndexes(
           settle(() => reject(toStringifiedError(error)), true);
           return;
         }
+        await workerExit;
         settle(() => resolve({ reconciledSessions }), false);
         return;
       }
