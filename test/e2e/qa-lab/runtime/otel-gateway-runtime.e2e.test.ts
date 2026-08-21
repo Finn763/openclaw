@@ -50,6 +50,16 @@ function indexSpansById(spans: CapturedSpan[]): Map<string, CapturedSpan> {
   return new Map(spans.flatMap((span) => (span.spanId ? ([[span.spanId, span]] as const) : [])));
 }
 
+function summarizeRuntimeEvidence(spans: CapturedSpan[]) {
+  const traces = new Map<string, Record<string, number>>();
+  for (const span of spans) {
+    const trace = traces.get(span.traceId ?? "missing") ?? {};
+    trace[span.name] = (trace[span.name] ?? 0) + 1;
+    traces.set(span.traceId ?? "missing", trace);
+  }
+  return [...traces].slice(-8).map(([traceId, names]) => ({ traceId, names }));
+}
+
 function expectResolvedParent(
   span: CapturedSpan,
   spansById: ReadonlyMap<string, CapturedSpan>,
@@ -250,15 +260,8 @@ describe("diagnostics-otel gateway runtime", () => {
         },
         45_000,
         () => ({
-          requests: activeReceiver.capturedRequests,
-          spans: activeReceiver.capturedSpans.map((span) => ({
-            attributes: span.attributes,
-            name: span.name,
-            parentSpanId: span.parentSpanId,
-            spanId: span.spanId,
-            statusCode: span.statusCode,
-            traceId: span.traceId,
-          })),
+          requests: activeReceiver.capturedRequests.slice(-8),
+          traces: summarizeRuntimeEvidence(activeReceiver.capturedSpans),
         }),
       );
 
