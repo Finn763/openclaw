@@ -345,6 +345,7 @@ export interface SessionTranscriptDisplayCarry {
   related_event_seq: number | null;
   session_id: string;
   source_event_seq: number;
+  source_occurrence: number;
 }
 
 export interface SessionTranscriptDisplayRowSources {
@@ -354,6 +355,7 @@ export interface SessionTranscriptDisplayRowSources {
   semantics_version: number;
   session_id: string;
   source_event_seq: number;
+  source_occurrence: number;
 }
 
 export interface SessionTranscriptDisplayRows {
