@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 
-vi.mock("./src/browser.js", () => {
+vi.mock("./src/browser.runtime.js", () => {
   throw new Error("plugin startup must not load the Playwright renderer");
 });
 

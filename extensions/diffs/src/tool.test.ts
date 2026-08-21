@@ -4,14 +4,14 @@ import path from "node:path";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi, OpenClawPluginToolContext } from "../api.js";
-import type { DiffScreenshotter } from "./browser.js";
+import type { DiffScreenshotter } from "./browser.runtime.js";
 import { resolveDiffsPluginDefaults } from "./config.js";
 import { DiffArtifactStore } from "./store.js";
 import { createDiffStoreHarness } from "./test-helpers.js";
 import { createDiffsTool } from "./tool.js";
 import type { DiffRenderOptions } from "./types.js";
 
-vi.mock("./browser.js", () => {
+vi.mock("./browser.runtime.js", () => {
   throw new Error("viewer-only rendering must not load the Playwright renderer");
 });
 
