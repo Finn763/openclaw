@@ -1,12 +1,12 @@
 import type { ApplicationContext } from "../../app/context.ts";
-import { fetchCatalogIconBlobUrl } from "../plugins/icon-loader.ts";
+import { fetchCatalogIconBlobUrl } from "./icon-loader.ts";
 
 type IconRequest = {
   controller: AbortController;
   timeout: ReturnType<typeof setTimeout>;
 };
 
-export class ModelSetupIconLoader {
+export class CatalogIconLoader {
   private urls: Record<string, string> = {};
   private readonly misses = new Set<string>();
   private readonly requests = new Map<string, IconRequest>();

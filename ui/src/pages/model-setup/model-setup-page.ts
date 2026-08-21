@@ -18,8 +18,8 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
+import { CatalogIconLoader } from "../plugins/catalog-icon-loader.ts";
 import type { ModelSetupDetectionConnection } from "./detect-cache.ts";
-import { ModelSetupIconLoader } from "./model-setup-icon-loader.ts";
 import {
   findPreparedModelCandidate,
   type ModelSetupPrepareOption,
@@ -100,7 +100,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
   private pendingPrepareOption: ModelSetupPrepareOption | null = null;
   private wizardMutationGeneration = 0;
   private wizardMutationActive = false;
-  private readonly iconLoader = new ModelSetupIconLoader(
+  private readonly iconLoader = new CatalogIconLoader(
     () => this.context,
     (iconUrl) => this.currentIconUrls().has(iconUrl),
     (urls) => (this.iconUrls = urls),
