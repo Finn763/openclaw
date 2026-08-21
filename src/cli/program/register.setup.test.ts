@@ -157,7 +157,7 @@ describe("registerSetupCommand", () => {
     await runCli(["setup", ...args]);
 
     expect(runtime.error).toHaveBeenCalledWith(
-      `${flag} cannot be combined with onboarding options.`,
+      `${flag} cannot be combined with onboarding options. Rerun with either --message/--yes or onboarding options, not both.`,
     );
     expect(runtime.exit).toHaveBeenCalledWith(1);
     expect(readConfigFileSnapshotMock).not.toHaveBeenCalled();

@@ -261,7 +261,7 @@ export function registerSetupCommand(program: Command): void {
           .map((option) => option.long ?? option.short ?? option.flags)
           .toSorted();
         defaultRuntime.error(
-          `${systemAgentFlags.join(", ")} cannot be combined with onboarding options.`,
+          `${systemAgentFlags.join(", ")} cannot be combined with onboarding options. Rerun with either --message/--yes or onboarding options, not both.`,
         );
         defaultRuntime.exit(1);
         return;
