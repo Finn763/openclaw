@@ -143,6 +143,7 @@ function createPluginToolDelivery(params: {
           onPlatformSendDispatch: async () => {
             resolveAuthorization();
           },
+          forceCoreDelivery: true,
           dryRun: false,
         }),
       );

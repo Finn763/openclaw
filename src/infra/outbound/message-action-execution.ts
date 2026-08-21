@@ -131,7 +131,6 @@ async function callGatewayMessageAction<T>(params: {
   agentRuntimeIdentityToken?: string;
   abortSignal?: AbortSignal;
   onUnknownDeliveryOutcome?: () => void;
-  onPlatformSendDispatch?: () => Promise<void>;
 }): Promise<T> {
   const { callGatewayLeastPrivilege, isGatewayTransportError } =
     await loadMessageActionGatewayRuntime();
@@ -155,7 +154,6 @@ async function callGatewayMessageAction<T>(params: {
     agentRuntimeIdentityToken: params.agentRuntimeIdentityToken,
   };
   try {
-    await params.onPlatformSendDispatch?.();
     return await callGatewayLeastPrivilege<T>(call);
   } catch (error) {
     if (
@@ -189,7 +187,6 @@ async function callGatewayMessageAction<T>(params: {
   };
   // A caller-side timeout does not cancel Gateway work. Reattach once with the
   // unchanged idempotency key so the live Gateway can join the original work.
-  await params.onPlatformSendDispatch?.();
   return await callGatewayLeastPrivilege<T>(reconciliationCall);
 }
 
@@ -361,7 +358,6 @@ export async function executeGatewayAction(params: {
       onUnknownDeliveryOutcome: () => {
         hadUnknownDeliveryOutcome = true;
       },
-      onPlatformSendDispatch: params.input.onPlatformSendDispatch,
       actionParams: {
         channel: params.channel,
         action: params.action,

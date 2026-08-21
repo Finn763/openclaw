@@ -654,48 +654,6 @@ describe("runMessageAction plugin dispatch", () => {
       });
     });
 
-    it("revalidates authority before initial dispatch and timeout reattachment", async () => {
-      const gatewayPlugin = createGatewayActionPlugin({
-        pluginId: "gatewaychat",
-        label: "Gateway Chat",
-        blurb: "Gateway Chat dispatch authority test plugin.",
-        actions: ["send"],
-        messaging: { targetResolver: { looksLikeId: () => true } },
-        handleAction: vi.fn(async () => jsonResult({ ok: true, local: true })),
-      });
-      setTestPlugin(gatewayPlugin, "gatewaychat");
-      const timeout = Object.assign(new Error("gateway timeout after 30000ms"), {
-        name: "GatewayTransportError",
-        kind: "timeout",
-      });
-      let authorityActive = false;
-      const onPlatformSendDispatch = vi.fn(async () => {
-        if (!authorityActive) {
-          throw new Error("delivery authority revoked");
-        }
-      });
-      const actionInput = {
-        cfg: { channels: { gatewaychat: { enabled: true } } } as OpenClawConfig,
-        action: "send",
-        params: { channel: "gatewaychat", target: "user-123", message: "hello" },
-        gateway: { clientName: "cli", mode: "cli" },
-        onPlatformSendDispatch,
-        dryRun: false,
-      } satisfies Parameters<typeof runMessageAction>[0];
-
-      await expect(runMessageAction(actionInput)).rejects.toThrow("delivery authority revoked");
-      expect(mocks.callGatewayLeastPrivilege).not.toHaveBeenCalled();
-
-      authorityActive = true;
-      mocks.callGatewayLeastPrivilege.mockImplementationOnce(async () => {
-        authorityActive = false;
-        throw timeout;
-      });
-      await expect(runMessageAction(actionInput)).rejects.toThrow("delivery authority revoked");
-      expect(mocks.callGatewayLeastPrivilege).toHaveBeenCalledOnce();
-      expect(onPlatformSendDispatch).toHaveBeenCalledTimes(3);
-    });
-
     it("does not reconnect a timed-out gateway send after cancellation", async () => {
       const handleActionResult = vi.fn(async () => jsonResult({ ok: true, local: true }));
       const gatewayPlugin = createGatewayActionPlugin({

@@ -246,7 +246,6 @@ async function tryHandleWithPluginAction(params: {
     mediaAccess: params.ctx.mediaAccess,
     mediaReadFile: params.ctx.mediaReadFile,
   });
-  await params.ctx.onPlatformSendDispatch?.();
   const handled = await dispatchChannelMessageAction(
     createChannelActionContext({
       ctx: params.ctx,

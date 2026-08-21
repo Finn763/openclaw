@@ -26,6 +26,7 @@ import {
   getPreparedPluginRuntimeLoadContext,
   prepareOwnedPluginLoadContext,
 } from "./prepared-model-runtime.plugin-context.js";
+import { jsonResult } from "./tools/common.js";
 
 const hoisted = vi.hoisted(() => ({
   resolvePluginTools: vi.fn(),
@@ -169,13 +170,18 @@ describe("createOpenClawTools browser plugin integration", () => {
       mediaUrl,
     );
     const platformSendMedia = vi.fn(async () => ({ channel: "telegram", messageId: "sent-1" }));
+    const transportDispatchStarted = createDeferred();
+    const resumeTransportDispatch = createDeferred();
+    let deferTransportDispatch = false;
     const sendMedia = vi.fn(async (params: { onPlatformSendDispatch?: () => Promise<void> }) => {
+      if (deferTransportDispatch) {
+        transportDispatchStarted.resolve();
+        await resumeTransportDispatch.promise;
+      }
       await params.onPlatformSendDispatch?.();
       return await platformSendMedia();
     });
-    const preparationStarted = createDeferred();
-    const resumePreparation = createDeferred();
-    let deferPreparation = false;
+    const providerNativeSend = vi.fn(async () => jsonResult({ ok: true, native: true }));
     const telegramPlugin = createOutboundTestPlugin({
       id: "telegram",
       outbound: {
@@ -193,13 +199,7 @@ describe("createOpenClawTools browser plugin integration", () => {
     });
     telegramPlugin.actions = {
       describeMessageTool: () => null,
-      prepareSendPayload: async ({ payload }) => {
-        if (deferPreparation) {
-          preparationStarted.resolve();
-          await resumePreparation.promise;
-        }
-        return payload;
-      },
+      handleAction: providerNativeSend,
     };
     const activeRegistry = createTestRegistry([
       {
@@ -286,16 +286,18 @@ describe("createOpenClawTools browser plugin integration", () => {
           mediaLocalRoots: expect.arrayContaining([workspaceDir]),
         }),
       );
+      expect(providerNativeSend).not.toHaveBeenCalled();
 
-      deferPreparation = true;
+      deferTransportDispatch = true;
       const pending = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
         activeDelivery.send({ text: "closing", mediaUrl }),
       );
-      await preparationStarted.promise;
+      await transportDispatchStarted.promise;
       revokeMessageActionTurnCapability(turnCapability);
-      resumePreparation.resolve();
+      resumeTransportDispatch.resolve();
       await expect(pending).rejects.toThrow("plugin delivery capability is no longer active");
       expect(platformSendMedia).toHaveBeenCalledTimes(1);
+      expect(providerNativeSend).not.toHaveBeenCalled();
       await expect(activeDelivery.send({ text: "too late" })).rejects.toThrow(
         "plugin delivery capability is no longer active",
       );
