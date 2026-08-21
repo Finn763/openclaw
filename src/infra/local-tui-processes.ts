@@ -291,7 +291,7 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
     terminate?: typeof terminateLocalTuiProcesses;
     acquireLock?: typeof acquireFileLock;
   } = {},
-): Promise<FileLockHandle | undefined> {
+): Promise<(FileLockHandle & { stopped: number[] }) | undefined> {
   if (!overrides.list && (process.env.VITEST || process.env.NODE_ENV === "test")) {
     return undefined;
   }
@@ -303,7 +303,7 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
   );
   const processes = (overrides.list ?? listLocalTuiProcesses)();
   if (processes.length === 0) {
-    return updateLock;
+    return Object.assign(updateLock, { stopped: [] as number[] });
   }
   const stopped = await (overrides.terminate ?? terminateLocalTuiProcesses)({ processes });
   if (stopped.failed.length > 0) {
@@ -312,7 +312,7 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
       `Update refused: could not stop local TUI clients ${stopped.failed.join(", ")}. Close them and retry the update.`,
     );
   }
-  return updateLock;
+  return Object.assign(updateLock, { stopped: stopped.stopped });
 }
 
 /** Waits for an in-flight update before a TUI enters its loaded runtime. */

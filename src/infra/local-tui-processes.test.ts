@@ -232,8 +232,21 @@ describe("local TUI processes", () => {
     });
 
     expect(release).not.toHaveBeenCalled();
+    expect(lock?.stopped).toEqual([]);
     await lock?.release();
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("returns stopped clients to the update owner", async () => {
+    const release = vi.fn(async () => {});
+    const gate = await quiesceLocalTuiProcessesBeforeUpdate({
+      list: () => [{ pid: 101, command: "openclaw tui" }],
+      terminate: async () => ({ stopped: [101], failed: [] }),
+      acquireLock: vi.fn(async () => ({ lockPath: "test", release })),
+    });
+
+    expect(gate?.stopped).toEqual([101]);
+    await gate?.release();
   });
 
   it("waits for the update gate before TUI startup", async () => {

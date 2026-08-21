@@ -116,6 +116,19 @@ export async function updateGitCheckout(params: {
     allowGatewayServiceRepair = preparation.allowGatewayServiceRepair ?? allowGatewayServiceRepair;
     allowGatewayActivation = preparation.allowGatewayActivation ?? allowGatewayActivation;
     releaseTuiUpdateLock = preparation.releaseTuiUpdateLock;
+    if (preparation.stoppedTuiPids?.length) {
+      const name = `closed local TUI clients ${preparation.stoppedTuiPids.join(", ")}`;
+      const info = { name, command: "internal", index: stepIndex++, total: totalSteps };
+      opts.progress?.onStepStart?.(info);
+      opts.progress?.onStepComplete?.({ ...info, durationMs: 0, exitCode: 0 });
+      steps.push({
+        name,
+        command: "internal",
+        cwd: gitRoot,
+        durationMs: 0,
+        exitCode: 0,
+      });
+    }
     mutationPrepared = true;
   };
   const buildError = (reason: string, status: "error" | "skipped" = "error"): UpdateRunResult => ({

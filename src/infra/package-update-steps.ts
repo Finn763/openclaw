@@ -878,6 +878,7 @@ export async function runGlobalPackageUpdateSteps(params: {
   beforeMutation?: () => Promise<void>;
   postVerifyStep?: (packageRoot: string) => Promise<PackageUpdateStepResult | null>;
 }): Promise<PackageUpdateStepsResult> {
+  const steps: PackageUpdateStepResult[] = [];
   let stagedInstall: StagedNpmInstall | null = null;
   let packedInstallDir: string | null = null;
   let mutationPrepared = false;
@@ -888,6 +889,20 @@ export async function runGlobalPackageUpdateSteps(params: {
     }
     await params.beforeMutation?.();
     tuiUpdateLock = await quiesceLocalTuiProcessesBeforeUpdate();
+    if (tuiUpdateLock?.stopped.length) {
+      steps.push({
+        name: "close active TUI clients",
+        command: "internal",
+        cwd:
+          params.packageRoot ??
+          params.installTarget.packageRoot ??
+          params.installCwd ??
+          process.cwd(),
+        durationMs: 0,
+        exitCode: 0,
+        stdoutTail: `Closed local TUI clients ${tuiUpdateLock.stopped.join(", ")} before updating.`,
+      });
+    }
     mutationPrepared = true;
   };
 
@@ -946,7 +961,6 @@ export async function runGlobalPackageUpdateSteps(params: {
       return packageUpdateFailure(preparedInstall.failedStep, params.packageRoot ?? null);
     }
 
-    const steps: PackageUpdateStepResult[] = [];
     const installCommandTarget = stagedInstall?.installTarget ?? resolvedInstallTarget;
     const preparedSpec = await prepareNpmGitSourceInstallSpec({
       installTarget: installCommandTarget,

@@ -51,6 +51,7 @@ export async function prepareGitMutation(params: {
   allowGatewayServiceRepair?: boolean;
   allowGatewayActivation?: boolean;
   releaseTuiUpdateLock?: () => Promise<void>;
+  stoppedTuiPids?: number[];
 }> {
   const target = await readGitTargetSchemaVersions(params);
   const preparation = await params.beforeGitMutation?.(
@@ -64,6 +65,7 @@ export async function prepareGitMutation(params: {
   return {
     ...preparation,
     ...(tuiUpdateLock ? { releaseTuiUpdateLock: tuiUpdateLock.release } : {}),
+    ...(tuiUpdateLock?.stopped.length ? { stoppedTuiPids: tuiUpdateLock.stopped } : {}),
   };
 }
 
