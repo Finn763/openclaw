@@ -3859,7 +3859,9 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
       "${{ steps.validate.outputs.repo_e2e_shards_available }}",
     );
     expect(validateStep.run).toContain("required_repo_e2e_paths=(");
-    expect(validateStep.run).toContain("scripts/docker/shared-image-artifact.sh");
+    expect(validateStep.env.WORKFLOW_SHA).toBe("${{ steps.workflow.outputs.workflow_sha }}");
+    expect(validateStep.run).toContain('if [[ "$selected_sha" != "$WORKFLOW_SHA" ]]');
+    expect(validateStep.run).toContain("repoE2eRuntime:");
     expect(validateStep.run).toContain("OPENCLAW_E2E_USE_PREBUILT_DIST");
     expect(validateStep.run).toContain("OPENCLAW_UI_E2E_SKIP_REAL_GATEWAY");
     expect(validateStep.run).toContain(
@@ -3876,27 +3878,113 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
       OPENCLAW_BUILD_PRIVATE_QA: "1",
       OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
     });
+    expect(runtime).not.toHaveProperty("continue-on-error");
+    expect(runtime.outputs).toMatchObject({
+      archive_name: "${{ steps.pack.outputs.archive_name }}",
+      archive_sha256: "${{ steps.pack.outputs.archive_sha256 }}",
+      artifact_digest: "${{ steps.upload.outputs.artifact-digest }}",
+      artifact_id: "${{ steps.upload.outputs.artifact-id }}",
+      artifact_name: "${{ steps.pack.outputs.artifact_name }}",
+      artifact_run_attempt: "${{ steps.pack.outputs.run_attempt }}",
+      artifact_run_id: "${{ steps.pack.outputs.run_id }}",
+      manifest_sha256: "${{ steps.pack.outputs.manifest_sha256 }}",
+    });
     expect(
       runtime.steps.find((step: WorkflowStep) => step.name === "Build private QA runtime once")
         ?.run,
-    ).toBe("pnpm build qaRuntime");
+    ).toBe("pnpm build repoE2eRuntime");
+    const packRuntime = runtime.steps.find(
+      (step: WorkflowStep) => step.name === "Pack repo E2E runtime",
+    );
+    expect(packRuntime?.run).toContain('--arg buildCommand "pnpm build repoE2eRuntime"');
+    expect(packRuntime?.run).toContain("manifest.json");
+    expect(packRuntime?.run).toContain('archive_sha256=$(sha256sum "$archive_path"');
+    const uploadRuntime = runtime.steps.find(
+      (step: WorkflowStep) => step.name === "Upload repo E2E runtime",
+    );
+    expect(uploadRuntime).toMatchObject({
+      id: "upload",
+      uses: UPLOAD_ARTIFACT_V7,
+      with: {
+        archive: false,
+        "if-no-files-found": "error",
+        name: "${{ steps.pack.outputs.artifact_name }}",
+        path: "${{ steps.pack.outputs.archive_path }}",
+      },
+    });
     expect(
-      runtime.steps.find((step: WorkflowStep) => step.name === "Pack repo E2E runtime")?.run,
-    ).toContain("dist dist-runtime packages/*/dist");
-    expect(
-      runtime.steps.find((step: WorkflowStep) => step.name === "Upload repo E2E runtime")?.uses,
-    ).toBe(UPLOAD_ARTIFACT_V7);
+      runtime.steps.find(
+        (step: WorkflowStep) => step.name === "Verify uploaded repo E2E runtime digest",
+      )?.run,
+    ).toContain('[[ "$ACTUAL_DIGEST" == "$EXPECTED_DIGEST" ]]');
 
     const sandbox = jobs.prepare_repo_e2e_sandbox;
+    expect(sandbox).not.toHaveProperty("continue-on-error");
     expect(sandbox.outputs.archive_sha256).toBe("${{ steps.pack.outputs.archive_sha256 }}");
+    expect(sandbox.outputs).toMatchObject({
+      artifact_digest: "${{ steps.upload.outputs.artifact-digest }}",
+      artifact_id: "${{ steps.upload.outputs.artifact-id }}",
+      artifact_name: "${{ steps.pack.outputs.artifact_name }}",
+      artifact_run_attempt: "${{ steps.pack.outputs.run_attempt }}",
+      artifact_run_id: "${{ steps.pack.outputs.run_id }}",
+    });
+    expect(
+      sandbox.steps.find(
+        (step: WorkflowStep) => step.name === "Checkout trusted image artifact helper",
+      )?.with,
+    ).toMatchObject({
+      repository: "${{ needs.validate_selected_ref.outputs.workflow_repository }}",
+      ref: "${{ needs.validate_selected_ref.outputs.workflow_sha }}",
+      path: ".release-harness",
+    });
     expect(
       sandbox.steps.find((step: WorkflowStep) => step.name === "Build repo E2E sandbox image")?.run,
     ).toBe("scripts/sandbox-setup.sh");
     expect(
       sandbox.steps.find((step: WorkflowStep) => step.name === "Pack repo E2E sandbox image")?.run,
-    ).toContain("scripts/docker/shared-image-artifact.sh");
+    ).toContain(".release-harness/scripts/docker/shared-image-artifact.sh");
+    expect(
+      sandbox.steps.find((step: WorkflowStep) => step.name === "Upload repo E2E sandbox image")
+        ?.with,
+    ).toMatchObject({ "compression-level": 0 });
+
+    const expectRuntimeConsumer = (job: { steps: WorkflowStep[]; [key: string]: unknown }) => {
+      expect(job).not.toHaveProperty("continue-on-error");
+      expect(
+        job.steps.find((step: WorkflowStep) => step.name === "Checkout trusted artifact helper")
+          ?.with,
+      ).toMatchObject({
+        repository: "${{ needs.validate_selected_ref.outputs.workflow_repository }}",
+        ref: "${{ needs.validate_selected_ref.outputs.workflow_sha }}",
+        path: ".release-harness",
+      });
+      expect(
+        job.steps.find(
+          (step: WorkflowStep) => step.name === "Validate repo E2E runtime artifact binding",
+        )?.run,
+      ).toContain('verify-upload "Repo E2E runtime"');
+      expect(
+        job.steps.find((step: WorkflowStep) => step.name === "Download repo E2E runtime")?.with,
+      ).toMatchObject({
+        "artifact-ids": "${{ needs.prepare_repo_e2e_runtime.outputs.artifact_id }}",
+        "digest-mismatch": "error",
+        "github-token": "${{ github.token }}",
+        "run-id": "${{ needs.prepare_repo_e2e_runtime.outputs.artifact_run_id }}",
+        "skip-decompress": true,
+      });
+      const extractRuntime = job.steps.find(
+        (step: WorkflowStep) => step.name === "Bounded extract repo E2E runtime",
+      );
+      expect(extractRuntime?.run).toContain(
+        ".release-harness/scripts/release-telegram-candidate-archive.py extract-zstd",
+      );
+      expect(extractRuntime?.run).toContain("--allowed-root repo-e2e-runtime");
+      expect(extractRuntime?.run).toContain('.buildCommand == "pnpm build repoE2eRuntime"');
+      expect(extractRuntime?.run).not.toContain("tar --extract");
+    };
 
     const gateway = jobs.validate_repo_e2e_gateway;
+    expectRuntimeConsumer(gateway);
     expect(gateway.needs).toEqual([
       "validate_selected_ref",
       "prepare_repo_e2e_runtime",
@@ -3912,12 +4000,26 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
     });
     expect(
       gateway.steps.find((step: WorkflowStep) => step.name === "Load repo E2E sandbox image")?.run,
-    ).toContain("scripts/docker/shared-image-artifact.sh");
+    ).toContain(".release-harness/scripts/docker/shared-image-artifact.sh");
+    expect(
+      gateway.steps.find(
+        (step: WorkflowStep) => step.name === "Validate repo E2E sandbox artifact binding",
+      )?.run,
+    ).toContain('verify-upload "Repo E2E sandbox"');
+    expect(
+      gateway.steps.find((step: WorkflowStep) => step.name === "Download repo E2E sandbox image")
+        ?.with,
+    ).toMatchObject({
+      "artifact-ids": "${{ needs.prepare_repo_e2e_sandbox.outputs.artifact_id }}",
+      "github-token": "${{ github.token }}",
+      "run-id": "${{ needs.prepare_repo_e2e_sandbox.outputs.artifact_run_id }}",
+    });
     expect(
       gateway.steps.find((step: WorkflowStep) => step.name === "Run repo Gateway E2E shard")?.run,
     ).toContain('--shard "$SHARD_INDEX/4"');
 
     const agentPlugin = jobs.validate_repo_e2e_agent_plugin;
+    expectRuntimeConsumer(agentPlugin);
     expect(agentPlugin.needs).toEqual(["validate_selected_ref", "prepare_repo_e2e_runtime"]);
     expect(
       agentPlugin.steps.find((step: WorkflowStep) => step.name === "Run Agent Plugin Gateway E2E")
@@ -3925,6 +4027,7 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
     ).toBe("pnpm test:e2e:agent-plugin-gateway");
 
     const ui = jobs.validate_repo_e2e_ui;
+    expect(ui).not.toHaveProperty("continue-on-error");
     expect(ui.strategy).toMatchObject({
       "fail-fast": false,
       matrix: { shard: [1, 2, 3, 4] },
@@ -3933,16 +4036,25 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
     expect(
       ui.steps.find((step: WorkflowStep) => step.name === "Run Control UI E2E shard")?.run,
     ).toContain('--shard "$SHARD_INDEX/4"');
+    expect(
+      ui.steps.find((step: WorkflowStep) => step.name === "Cache Playwright Chromium")?.uses,
+    ).toBe("actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae");
 
     const realGateway = jobs.validate_repo_e2e_ui_real_gateway;
+    expectRuntimeConsumer(realGateway);
     const realGatewayRun = realGateway.steps.find(
       (step: WorkflowStep) => step.name === "Run Control UI real-Gateway E2E",
     )?.run;
     expect(realGatewayRun).toContain("mcp-app-conformance.e2e.test.ts");
     expect(realGatewayRun).toContain("control-ui-auth-transports.e2e.test.ts");
     expect(realGatewayRun).toContain("logs-lifecycle.e2e.test.ts");
+    expect(
+      realGateway.steps.find((step: WorkflowStep) => step.name === "Cache Playwright Chromium")
+        ?.uses,
+    ).toBe("actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae");
 
     const legacy = jobs.validate_repo_e2e_legacy;
+    expect(legacy).not.toHaveProperty("continue-on-error");
     expect(legacy.if).toContain("repo_e2e_shards_available != 'true'");
     expect(legacy["timeout-minutes"]).toBe(90);
     expect(
@@ -3965,6 +4077,7 @@ server.listen(0, "127.0.0.1", () => writeFileSync(readyPath, String(server.addre
     );
     expect(gate["runs-on"]).toBe("ubuntu-24.04");
     expect(gate["timeout-minutes"]).toBe(5);
+    expect(gate["continue-on-error"]).toBe("${{ inputs.advisory }}");
     const gateStep = gate.steps.find((step: WorkflowStep) => step.name === "Verify repo E2E lanes");
     expect(gateStep.env).toMatchObject({
       GATEWAY_RESULT: "${{ needs.validate_repo_e2e_gateway.result }}",

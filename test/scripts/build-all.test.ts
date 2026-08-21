@@ -452,6 +452,7 @@ describe("resolveBuildAllSteps", () => {
     for (const profile of [
       "gatewayWatch",
       "qaRuntime",
+      "repoE2eRuntime",
       "sourcePerformance",
       "cliStartup",
     ] as const) {
@@ -551,7 +552,7 @@ describe("resolveBuildAllSteps", () => {
       });
     }
 
-    for (const profile of ["gatewayWatch", "qaRuntime"]) {
+    for (const profile of ["gatewayWatch", "qaRuntime", "repoE2eRuntime"]) {
       const tsdown = resolveBuildAllSteps(profile).find((step) => step.label === "tsdown");
       if (!tsdown) {
         throw new Error(`Missing ${profile} tsdown step`);
@@ -584,6 +585,20 @@ describe("resolveBuildAllSteps", () => {
       "runtime-postbuild",
       "build-stamp",
       "runtime-postbuild-stamp",
+    ]);
+  });
+
+  it("uses a repo E2E runtime profile with private QA runtime and Control UI assets", () => {
+    expect(resolveBuildAllSteps("repoE2eRuntime").map((step) => step.label)).toEqual([
+      "plugins:assets:build",
+      "tsdown",
+      "external-plugins:local-dist",
+      "check-cli-bootstrap-imports",
+      "plugins:assets:copy",
+      "runtime-postbuild",
+      "build-stamp",
+      "runtime-postbuild-stamp",
+      "ui:build",
     ]);
   });
 
@@ -641,7 +656,7 @@ describe("resolveBuildAllSteps", () => {
   });
 
   it("keeps generated static plugin assets enabled for QA-backed profiles", () => {
-    for (const profile of ["qaRuntime", "sourcePerformance"] as const) {
+    for (const profile of ["qaRuntime", "repoE2eRuntime", "sourcePerformance"] as const) {
       const runtimePostbuild = resolveBuildAllSteps(profile).find(
         (step) => step.label === "runtime-postbuild",
       );
@@ -665,7 +680,13 @@ describe("resolveBuildAllSteps", () => {
   });
 
   it("copies generated plugin assets before runtime postbuild snapshots static outputs", () => {
-    for (const profile of ["full", "ciArtifacts", "qaRuntime", "sourcePerformance"]) {
+    for (const profile of [
+      "full",
+      "ciArtifacts",
+      "qaRuntime",
+      "repoE2eRuntime",
+      "sourcePerformance",
+    ]) {
       const labels = resolveBuildAllSteps(profile).map((step) => step.label);
       const lastTsdown = profile === "full" ? "tsdown-unified" : "tsdown";
       expect(labels.indexOf("plugins:assets:copy")).toBeGreaterThan(labels.indexOf(lastTsdown));
@@ -701,8 +722,8 @@ describe("resolveBuildAllSteps", () => {
     );
   });
 
-  it("includes ui:build in the full and ciArtifacts profiles after runtime postbuild", () => {
-    for (const profile of ["full", "ciArtifacts"]) {
+  it("includes ui:build in UI-bearing profiles after runtime postbuild", () => {
+    for (const profile of ["full", "ciArtifacts", "repoE2eRuntime"]) {
       const labels = resolveBuildAllSteps(profile).map((step) => step.label);
       const lastTsdown = profile === "full" ? "tsdown-unified" : "tsdown";
       expect(labels).toContain("ui:build");
@@ -712,7 +733,9 @@ describe("resolveBuildAllSteps", () => {
       expect(labels.indexOf("ui:build")).toBeGreaterThan(labels.indexOf("runtime-postbuild-stamp"));
       // ui:build must run before write-build-info so the build manifest can
       // see the final dist/control-ui assets.
-      expect(labels.indexOf("ui:build")).toBeLessThan(labels.indexOf("write-build-info"));
+      if (labels.includes("write-build-info")) {
+        expect(labels.indexOf("ui:build")).toBeLessThan(labels.indexOf("write-build-info"));
+      }
     }
   });
 
