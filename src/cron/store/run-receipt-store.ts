@@ -559,6 +559,61 @@ export function activateCronRunReceiptInDatabase(params: {
   return { ...params.handle, startedAtMs: params.startedAtMs };
 }
 
+/** Binds a task/public identity to the exact locally owned active receipt. */
+export function bindCronRunReceiptTaskIdentity(params: {
+  storePath: string;
+  jobId: string;
+  startedAtMs: number;
+  requestRunId?: string;
+}): string | undefined {
+  const storeKey = cronStoreKey(params.storePath);
+  const requestRunId = params.requestRunId?.trim() || undefined;
+  return withReceiptWrite("cron.run-receipt.bind-task", {}, (database) => {
+    const current = activeRow(database, storeKey, params.jobId);
+    if (!current) {
+      return undefined;
+    }
+    const ownerStartTime = getFileLockProcessStartTime(process.pid);
+    if (
+      current.started_at_ms !== params.startedAtMs ||
+      current.owner_pid !== process.pid ||
+      ownerStartTime === null ||
+      current.owner_start_time !== ownerStartTime ||
+      !locallyOwnedReceipts.has(current.receipt_id)
+    ) {
+      throw new CronRunReceiptRevisionError(
+        current.receipt_id,
+        "cron run task identity no longer belongs to the active receipt",
+      );
+    }
+    if (
+      requestRunId &&
+      current.request_run_id !== null &&
+      current.request_run_id !== requestRunId
+    ) {
+      throw new CronRunReceiptRevisionError(
+        current.receipt_id,
+        "cron run request identity changed after admission",
+      );
+    }
+    if (requestRunId && current.request_run_id === null) {
+      executeSqliteQuerySync(
+        database,
+        query(database)
+          .updateTable("cron_run_receipts")
+          .set({ request_run_id: requestRunId })
+          .where("receipt_id", "=", current.receipt_id)
+          .where("status", "=", "running")
+          .where("owner_pid", "=", current.owner_pid)
+          .where("owner_start_time", "=", current.owner_start_time)
+          .where("started_at_ms", "=", current.started_at_ms)
+          .where("request_run_id", "is", null),
+      );
+    }
+    return current.receipt_id;
+  });
+}
+
 export function assertCronRunReceiptCurrent(params: {
   handle: CronRunReceiptHandle;
   resolveAgentId: ResolveReceiptAgentId;

@@ -143,6 +143,7 @@ function repairInDatabase(params: {
       jobId: proposal.jobId,
       startedAt: proposal.runningAtMs,
       storeKey,
+      ...(proposal.receipt ? { receiptId: proposal.receipt.receiptId } : {}),
     });
     const finalized = task.finalized;
     const restored = finalized

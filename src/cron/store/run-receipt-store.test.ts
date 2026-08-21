@@ -9,12 +9,14 @@ import type { CronJob } from "../types.js";
 import { cronStoreKey } from "./key.js";
 import {
   assertCronRunReceiptCurrent,
+  bindCronRunReceiptTaskIdentity,
   claimCronRunReceiptInDatabase,
   CronRunReceiptConflictError,
   CronRunReceiptRevisionError,
   findActiveCronRunReceiptInDatabase,
   finishCronRunReceipt,
   prepareCronRunReceiptClaim,
+  releaseLocalCronRunReceiptOwnership,
 } from "./run-receipt-store.js";
 
 const { makeStorePath } = setupCronServiceSuite({ prefix: "cron-run-receipt-" });
@@ -55,7 +57,8 @@ function receipts(storePath: string, jobId: string) {
   return openOpenClawStateDatabase()
     .db.prepare(
       `SELECT receipt_id AS receiptId, status, agent_id AS agentId,
-              started_at_ms AS startedAtMs, error_text AS error
+              request_run_id AS requestRunId, started_at_ms AS startedAtMs,
+              error_text AS error
          FROM cron_run_receipts
         WHERE store_key = ? AND job_id = ?
         ORDER BY started_at_ms DESC, receipt_id DESC`,
@@ -64,6 +67,7 @@ function receipts(storePath: string, jobId: string) {
     receiptId: string;
     status: string;
     agentId: string;
+    requestRunId: string | null;
     startedAtMs: number;
     error: string | null;
   }>;
@@ -96,10 +100,31 @@ describe("cron run receipt store", () => {
     await saveCronStore(storePath, { version: 1, jobs: [job] });
 
     const first = claim(storePath, job, 100);
+    expect(
+      bindCronRunReceiptTaskIdentity({
+        storePath,
+        jobId: job.id,
+        startedAtMs: 100,
+        requestRunId: "manual-overlap-1",
+      }),
+    ).toBe(first.receiptId);
+    expect(() =>
+      bindCronRunReceiptTaskIdentity({
+        storePath,
+        jobId: job.id,
+        startedAtMs: 100,
+        requestRunId: "manual-overlap-2",
+      }),
+    ).toThrow(CronRunReceiptRevisionError);
 
     expect(() => claim(storePath, job, 101)).toThrow(CronRunReceiptConflictError);
     expect(receipts(storePath, job.id)).toMatchObject([
-      { receiptId: first.receiptId, status: "running", startedAtMs: 100 },
+      {
+        receiptId: first.receiptId,
+        requestRunId: "manual-overlap-1",
+        status: "running",
+        startedAtMs: 100,
+      },
     ]);
 
     finishCronRunReceipt({ handle: first, status: "ok", finishedAtMs: 110 });
@@ -108,6 +133,35 @@ describe("cron run receipt store", () => {
 
     expect(receipts(storePath, job.id).map((receipt) => receipt.status)).toEqual(["skipped", "ok"]);
   });
+
+  it.each(["process-start identity", "process-local ownership"])(
+    "rejects task binding without matching %s",
+    async (fence) => {
+      const { storePath } = await makeStorePath();
+      const job = makeJob(`task-bind-${fence}`);
+      await saveCronStore(storePath, { version: 1, jobs: [job] });
+      const receipt = claim(storePath, job, 150);
+      if (fence === "process-start identity") {
+        openOpenClawStateDatabase()
+          .db.prepare(
+            "UPDATE cron_run_receipts SET owner_start_time = owner_start_time + 1 WHERE receipt_id = ?",
+          )
+          .run(receipt.receiptId);
+      } else {
+        releaseLocalCronRunReceiptOwnership(receipt);
+      }
+
+      expect(() =>
+        bindCronRunReceiptTaskIdentity({
+          storePath,
+          jobId: job.id,
+          startedAtMs: 150,
+          requestRunId: "manual-fenced",
+        }),
+      ).toThrow(CronRunReceiptRevisionError);
+      releaseLocalCronRunReceiptOwnership(receipt);
+    },
+  );
 
   it("retires a provably dead process claim before admitting its successor", async () => {
     const { storePath } = await makeStorePath();

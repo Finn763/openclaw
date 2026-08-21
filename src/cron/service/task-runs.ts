@@ -20,6 +20,7 @@ import {
 import { createCronExecutionId } from "../run-id.js";
 import type { CronRunLogEntry } from "../run-log-types.js";
 import { cronStoreKey } from "../store/key.js";
+import { bindCronRunReceiptTaskIdentity } from "../store/run-receipt-store.js";
 import {
   cronRunLogEntryToTaskDetail,
   cronRunStatusToTaskStatus,
@@ -95,19 +96,52 @@ export function tryCreateCronTaskRun(params: {
   startedAt: number;
   publicRunId?: string;
 }): string | undefined {
-  const runId = createCronTaskRunId(params.job.id, params.startedAt, params.publicRunId);
-  return tryCreateCronTaskRunRecord({
+  let runId: string;
+  try {
+    runId = resolveCronTaskRunId({
+      state: params.state,
+      jobId: params.job.id,
+      startedAt: params.startedAt,
+      publicRunId: params.publicRunId,
+    });
+  } catch (error) {
+    params.state.deps.log.warn(
+      { jobId: params.job.id, error },
+      "cron: failed to bind task ledger record to its run receipt",
+    );
+    return undefined;
+  }
+  tryCreateCronTaskRunRecord({
     state: params.state,
     job: params.job,
     jobId: params.job.id,
     startedAt: params.startedAt,
     runId,
   });
+  return runId;
 }
 
-function createCronTaskRunId(jobId: string, startedAt: number, publicRunId?: string): string {
-  const discriminator = publicRunId?.trim() || randomUUID();
-  return `${createCronExecutionId(jobId, startedAt)}:${discriminator}`;
+function resolveCronTaskRunId(params: {
+  state: CronServiceState;
+  jobId: string;
+  startedAt: number;
+  publicRunId?: string;
+}): string {
+  const publicRunId = params.publicRunId?.trim() || undefined;
+  const receiptId = bindCronRunReceiptTaskIdentity({
+    storePath: params.state.deps.storePath,
+    jobId: params.jobId,
+    startedAtMs: params.startedAt,
+    requestRunId: publicRunId,
+  });
+  const executionRunId = createCronExecutionId(params.jobId, params.startedAt);
+  if (receiptId) {
+    const receiptRunId = `${executionRunId}:${receiptId}`;
+    return publicRunId && publicRunId !== receiptId
+      ? `${receiptRunId}:${publicRunId}`
+      : receiptRunId;
+  }
+  return `${executionRunId}:${publicRunId ?? randomUUID()}`;
 }
 
 function findLatestCronTaskRunForRecoveryFromRecords(
@@ -115,34 +149,51 @@ function findLatestCronTaskRunForRecoveryFromRecords(
   jobId: string,
   startedAt: number,
   storeKey: string,
+  receiptId?: string,
 ): TaskRecord | undefined {
   const executionRunId = createCronExecutionId(jobId, startedAt);
   const prefix = `${executionRunId}:`;
+  const receiptRunId = receiptId ? `${prefix}${receiptId}` : undefined;
   return records
     .filter((task) => {
       if (task.runtime !== "cron" || task.sourceId !== jobId) {
         return false;
       }
       const taskStoreKey = cronTaskRecordStoreKey(task);
+      if (receiptRunId) {
+        // Sequential receipts can share the timestamp and public id, so only
+        // the receipt-prefixed task identity can own receipt-based recovery.
+        return (
+          taskStoreKey === storeKey &&
+          (task.runId === receiptRunId || task.runId?.startsWith(`${receiptRunId}:`))
+        );
+      }
       if (taskStoreKey === undefined) {
         // Exact match covers detail-less pre-discriminator rows from older releases.
         return task.runId === executionRunId;
       }
-      return (
-        taskStoreKey === storeKey &&
-        (task.runId === executionRunId ||
-          task.runId?.startsWith(prefix) ||
-          // Released reservation-keyed rows still record the authoritative execution start.
-          task.startedAt === startedAt)
-      );
+      if (taskStoreKey !== storeKey) {
+        return false;
+      }
+      if (task.runId === executionRunId) {
+        return true;
+      }
+      if (task.runId?.startsWith(prefix)) {
+        return true;
+      }
+      // Released reservation-keyed rows still record the authoritative execution start.
+      return task.startedAt === startedAt;
     })
-    .toSorted(
-      (left, right) =>
-        Number(left.endedAt !== undefined) - Number(right.endedAt !== undefined) ||
+    .toSorted((left, right) => {
+      const finalizedOrder =
+        Number(right.endedAt !== undefined) - Number(left.endedAt !== undefined);
+      return (
+        (receiptRunId ? finalizedOrder : -finalizedOrder) ||
         resolveCronTaskRecordTimestamp(right) - resolveCronTaskRecordTimestamp(left) ||
         right.createdAt - left.createdAt ||
-        right.taskId.localeCompare(left.taskId),
-    )[0];
+        right.taskId.localeCompare(left.taskId)
+      );
+    })[0];
 }
 
 type FinalizedCronTaskRun = {
@@ -193,12 +244,14 @@ export function findCronTaskRunRecoveryInDatabase(params: {
   jobId: string;
   startedAt: number;
   storeKey: string;
+  receiptId?: string;
 }): { taskRunId?: string; finalized?: FinalizedCronTaskRun } {
   const task = findLatestCronTaskRunForRecoveryFromRecords(
     listTaskRecordsByRuntimeSourceIdInDatabase(params.database, "cron", params.jobId),
     params.jobId,
     params.startedAt,
     params.storeKey,
+    params.receiptId,
   );
   const finalized = finalizedCronTaskRun(task, params.jobId);
   return {
@@ -337,9 +390,14 @@ export function tryFinishCronTaskRun(
     result.errorClassification,
   );
   const startedAt = entry.runAtMs ?? entry.ts;
-  const candidateRunId =
-    result.taskRunId ?? createCronTaskRunId(entry.jobId, startedAt, entry.runId);
+  let candidateRunId = result.taskRunId;
   try {
+    candidateRunId ??= resolveCronTaskRunId({
+      state,
+      jobId: entry.jobId,
+      startedAt,
+      publicRunId: entry.runId,
+    });
     const existingCandidate = findTaskByRunId(candidateRunId);
     const taskRunId =
       existingCandidate?.runtime === "cron"
@@ -432,7 +490,7 @@ export function tryFinishCronTaskRun(
     }
   } catch (error) {
     state.deps.log.warn(
-      { runId: candidateRunId, jobStatus: entry.status, error },
+      { runId: candidateRunId ?? entry.runId, jobStatus: entry.status, error },
       "cron: failed to update task ledger record",
     );
   }
