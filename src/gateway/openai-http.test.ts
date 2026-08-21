@@ -2378,7 +2378,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
           }
         }
       }).rejects.toMatchObject({
-        message: "All model fallback candidates failed",
+        message: "Agent run failed",
         type: "api_error",
       });
 
@@ -2389,8 +2389,9 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       expect(deliveredContent).toEqual(["partial answer"]);
       expect(deliveredFinishReasons.every((reason) => reason === null)).toBe(true);
       expect(chunks.filter((chunk) => "error" in chunk)).toEqual([
-        { error: { message: "All model fallback candidates failed", type: "api_error" } },
+        { error: { message: "Agent run failed", type: "api_error" } },
       ]);
+      expect(await wireResponse.promise).not.toContain("All model fallback candidates failed");
       expect(data.at(-1)).toBe("[DONE]");
       expect(agentCommandMock).toHaveBeenCalledTimes(1);
       await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(idleRootCount));

@@ -4,7 +4,6 @@ import {
   mergeAgentRunTerminalOutcome,
   type AgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
-import { hasVisibleAgentPayload } from "../agents/embedded-agent-runner/message-visibility.js";
 import { isReplyPayloadStatusNotice, type ReplyPayload } from "../auto-reply/reply-payload.js";
 
 type LifecycleData = NonNullable<
@@ -29,14 +28,7 @@ function isTerminalPayload(payload: ReplyPayload): boolean {
   ) {
     return false;
   }
-  return hasVisibleAgentPayload(
-    { payloads: [payload] },
-    {
-      includeErrorPayloads: false,
-      includeReasoningPayloads: false,
-      includeSilentReplyPayloads: false,
-    },
-  );
+  return typeof payload.text === "string" && payload.text.trim().length > 0;
 }
 
 /** Return model-visible result text without leaking historical error payloads. */

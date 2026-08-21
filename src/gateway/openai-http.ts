@@ -1368,7 +1368,8 @@ export async function handleOpenAiHttpRequest(
         if (phase === "error" && terminalLifecyclePhase !== "error") {
           lifecycleErrorRecovered = false;
           terminalLifecycleError ??= {
-            message: normalizeOptionalString(evt.data?.error) ?? "Agent run failed",
+            // Provider diagnostics are operator logs, not part of the public OpenAI API contract.
+            message: "Agent run failed",
             type: "api_error",
           };
         }

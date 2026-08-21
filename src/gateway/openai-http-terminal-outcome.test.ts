@@ -17,14 +17,14 @@ describe("OpenAI HTTP terminal outcome", () => {
       reason: "completed",
     },
     {
-      name: "accepts a media-only fallback after a failed attempt",
+      name: "retains failure when only unrepresentable media follows",
       result: {
         payloads: [
           { text: "private provider failure", isError: true },
           { mediaUrl: "https://example.invalid/recovered.png" },
         ],
       },
-      reason: "completed",
+      reason: "failed",
     },
     {
       name: "retains failure when only transient notices follow",
