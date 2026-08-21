@@ -1163,6 +1163,7 @@ export function createSessionStatusTool(opts?: {
                 cfg,
                 provider: providerForCard,
                 model: defaultModelForCard,
+                agentId,
                 loadRuntimeCatalog: () =>
                   loadPreparedModelCatalog({
                     config: cfg,
