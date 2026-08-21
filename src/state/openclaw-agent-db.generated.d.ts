@@ -340,6 +340,7 @@ export interface SessionTranscriptDisplayCanvas {
 
 export interface SessionTranscriptDisplayCarry {
   carry_version: number;
+  delivery_event_seq: number | null;
   kind: string;
   position: number;
   related_event_seq: number | null;
