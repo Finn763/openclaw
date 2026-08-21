@@ -33,10 +33,20 @@ export type SubagentSurface = {
     lightContext?: boolean;
     deliver?: boolean;
   }) => Promise<{ runId: string }>;
-  waitForRun: (params: {
-    runId: string;
-    timeoutMs?: number;
-  }) => Promise<{ status: string; error?: string }>;
+  waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{
+    status: string;
+    error?: string;
+    /**
+     * Authoritative final assistant text captured by the run registry while the
+     * raw text was still available. Preferred over polling the session store,
+     * which lags a completed run (see readSettledNarrativeText) and can stay
+     * empty past the settle budget when a sibling phase's cleanup races it (#123360).
+     */
+    terminalReply?: {
+      disposition: "visible" | "silent" | "empty";
+      text?: string;
+    };
+  }>;
   getSessionMessages: (params: {
     sessionKey: string;
     limit?: number;
@@ -386,6 +396,25 @@ async function readSettledNarrativeText(params: {
     }
   }
   return null;
+}
+
+/**
+ * Extracts the diary text from the run result's terminal reply, when the run
+ * registry captured one. The terminal reply is the authoritative final
+ * assistant text built at completion time, so it is visible even while the
+ * session store lags behind the completed run. Reading it first removes the
+ * sibling-cleanup race (#123360): a first-finishing phase's cleanup can keep
+ * the store empty past the settle budget, discarding a phase that succeeded.
+ */
+function extractTerminalReplyNarrativeText(
+  result: Awaited<ReturnType<SubagentSurface["waitForRun"]>>,
+): string | null {
+  const reply = result.terminalReply;
+  if (reply?.disposition !== "visible") {
+    return null;
+  }
+  const text = typeof reply.text === "string" ? reply.text.trim() : "";
+  return text.length > 0 ? text : null;
 }
 
 // ── Date formatting ────────────────────────────────────────────────────
@@ -812,6 +841,7 @@ async function generateAndAppendDreamNarrative(
   await withNarrativeSessionLock(sessionKey, async () => {
     const attempts: Array<{ sessionKey: string; runId: string | null }> = [];
     let successfulSessionKey: string | null = null;
+    let terminalText: string | null = null;
     try {
       const attemptModels = params.model ? [params.model, undefined] : [undefined];
 
@@ -858,6 +888,7 @@ async function generateAndAppendDreamNarrative(
 
           if (result.status === "ok") {
             successfulSessionKey = attemptSessionKey;
+            terminalText = extractTerminalReplyNarrativeText(result);
             break;
           }
 
@@ -908,10 +939,15 @@ async function generateAndAppendDreamNarrative(
         return;
       }
 
-      const narrative = await readSettledNarrativeText({
-        subagent: params.subagent,
-        sessionKey: successfulSessionKey,
-      });
+      // Prefer the terminal reply the run registry captured at completion time.
+      // It is authoritative and immune to the sibling-cleanup race (#123360);
+      // only poll the store when the run result did not carry visible text.
+      const narrative =
+        terminalText ??
+        (await readSettledNarrativeText({
+          subagent: params.subagent,
+          sessionKey: successfulSessionKey,
+        }));
       if (!narrative) {
         params.logger.warn(
           `memory-core: narrative generation produced no text for ${params.data.phase} phase; writing fallback diary entry.`,

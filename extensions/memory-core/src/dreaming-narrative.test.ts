@@ -567,6 +567,86 @@ describe("runDreamNarrative", () => {
     }
   });
 
+  it("writes the terminal reply text without polling the session store", async () => {
+    const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+    const subagent = createMockSubagent("");
+    subagent.waitForRun.mockResolvedValue({
+      status: "ok",
+      terminalReply: {
+        disposition: "visible",
+        text: "The terminal reply carried the diary safely.",
+      },
+    });
+    // Simulate the sibling-cleanup race from #123360: the store never shows the
+    // completed run's text within the settle window.
+    subagent.getSessionMessages.mockResolvedValue({ messages: [] });
+    const logger = createMockLogger();
+
+    await runDreamNarrative({
+      agentId: "main",
+      subagent,
+      workspaceDir,
+      data: {
+        phase: "light",
+        snippets: ["The narrative raced a sibling phase's cleanup."],
+      },
+      nowMs: Date.parse("2026-04-05T03:00:00Z"),
+      timezone: "UTC",
+      logger,
+    });
+
+    expect(subagent.getSessionMessages).not.toHaveBeenCalled();
+    const content = await fs.readFile(path.join(workspaceDir, "DREAMS.md"), "utf-8");
+    expect(content).toContain("The terminal reply carried the diary safely.");
+    expect(content).not.toContain("A memory trace surfaced");
+    expectLogExcludes(logger.warn, "produced no text");
+  });
+
+  it("falls back to settled store reads when the terminal reply is empty", async () => {
+    vi.useFakeTimers();
+    try {
+      const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+      const subagent = createMockSubagent("");
+      subagent.waitForRun.mockResolvedValue({
+        status: "ok",
+        terminalReply: { disposition: "empty" },
+      });
+      subagent.getSessionMessages
+        .mockResolvedValueOnce({
+          messages: [{ role: "user", content: "prompt" }],
+        })
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "prompt" },
+            { role: "assistant", content: "The store settled the diary after all." },
+          ],
+        });
+      const logger = createMockLogger();
+
+      const operation = runDreamNarrative({
+        agentId: "main",
+        subagent,
+        workspaceDir,
+        data: {
+          phase: "rem",
+          snippets: ["The terminal reply was empty, so the store settled it."],
+        },
+        nowMs: Date.parse("2026-04-05T03:00:00Z"),
+        timezone: "UTC",
+        logger,
+      });
+      await flushNarrativeSettleTimers(operation);
+
+      expect(subagent.getSessionMessages).toHaveBeenCalledTimes(2);
+      const content = await fs.readFile(path.join(workspaceDir, "DREAMS.md"), "utf-8");
+      expect(content).toContain("The store settled the diary after all.");
+      expect(content).not.toContain("A memory trace surfaced");
+      expectLogExcludes(logger.warn, "produced no text");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("falls back after settled assistant text never appears", async () => {
     vi.useFakeTimers();
     try {
