@@ -544,6 +544,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
+      repo_e2e_shards_available: ${{ steps.validate.outputs.repo_e2e_shards_available }}
       selected_sha: ${{ steps.validate.outputs.selected_sha }}
       trusted_reason: ${{ steps.validate.outputs.trusted_reason }}
       workflow_repository: ${{ steps.workflow.outputs.workflow_repository }}
@@ -766,12 +767,45 @@ jobs:
               ;;
           esac
 
+          repo_e2e_shards_available=true
+          required_repo_e2e_paths=(
+            scripts/agent-plugin-gateway-e2e.ts
+            scripts/build-all.mts
+            scripts/docker/shared-image-artifact.sh
+            scripts/ensure-playwright-chromium.mts
+            test/vitest/vitest.e2e.config.ts
+            test/vitest/vitest.e2e.global-setup.ts
+            test/vitest/vitest.ui-e2e.config.ts
+            test/vitest/vitest.ui-e2e.global-setup.ts
+            test/vitest/vitest.ui-e2e.sequencer.ts
+          )
+          for required_path in "${required_repo_e2e_paths[@]}"; do
+            if ! git cat-file -e "${selected_sha}:${required_path}" 2>/dev/null; then
+              repo_e2e_shards_available=false
+              break
+            fi
+          done
+          if [[ "$repo_e2e_shards_available" == "true" ]] &&
+            ! git grep -Fq 'qaRuntime:' "$selected_sha" -- scripts/build-all.mts; then
+            repo_e2e_shards_available=false
+          fi
+          if [[ "$repo_e2e_shards_available" == "true" ]] &&
+            ! git grep -Fq 'OPENCLAW_E2E_USE_PREBUILT_DIST' "$selected_sha" -- test/vitest/vitest.e2e.global-setup.ts; then
+            repo_e2e_shards_available=false
+          fi
+          if [[ "$repo_e2e_shards_available" == "true" ]] &&
+            ! git grep -Fq 'OPENCLAW_UI_E2E_SKIP_REAL_GATEWAY' "$selected_sha" -- test/vitest/vitest.ui-e2e.config.ts; then
+            repo_e2e_shards_available=false
+          fi
+
+          echo "repo_e2e_shards_available=$repo_e2e_shards_available" >> "$GITHUB_OUTPUT"
           echo "selected_sha=$selected_sha" >> "$GITHUB_OUTPUT"
           echo "trusted_reason=$trusted_reason" >> "$GITHUB_OUTPUT"
           {
             echo "Validated ref: \`${INPUT_REF}\`"
             echo "Resolved SHA: \`$selected_sha\`"
             echo "Trust reason: \`$trusted_reason\`"
+            echo "Repo E2E mode: \`$([[ "$repo_e2e_shards_available" == "true" ]] && echo sharded || echo legacy)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   validate_live_suite_filter:
@@ -973,11 +1007,315 @@ jobs:
             sleep $((attempt * 15))
           done
 
-  validate_repo_e2e:
+  prepare_repo_e2e_runtime:
     needs: validate_selected_ref
-    if: inputs.include_repo_e2e && inputs.live_suite_filter == ''
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
     continue-on-error: ${{ inputs.advisory }}
     runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-32vcpu-ubuntu-2404' }}
+    timeout-minutes: 25
+    env:
+      OPENCLAW_BUILD_PRIVATE_QA: "1"
+      OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "true"
+          build-all-cache-scope: full
+
+      - name: Build private QA runtime once
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm build qaRuntime
+
+      - name: Pack repo E2E runtime
+        run: >-
+          tar --posix -cf repo-e2e-runtime.tar.zst
+          --use-compress-program zstdmt
+          dist dist-runtime packages/*/dist
+
+      - name: Upload repo E2E runtime
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repo-e2e-runtime-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: repo-e2e-runtime.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+
+  prepare_repo_e2e_sandbox:
+    needs: validate_selected_ref
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    timeout-minutes: 25
+    outputs:
+      archive_sha256: ${{ steps.pack.outputs.archive_sha256 }}
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build repo E2E sandbox image
+        run: scripts/sandbox-setup.sh
+
+      - name: Pack repo E2E sandbox image
+        id: pack
+        env:
+          TARGET_SHA: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          WORKFLOW_SHA: ${{ needs.validate_selected_ref.outputs.workflow_sha }}
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/repo-e2e-sandbox-artifact"
+          scripts/docker/shared-image-artifact.sh \
+            pack \
+            "$artifact_dir" \
+            repo-e2e-sandbox \
+            "$TARGET_SHA" \
+            "$WORKFLOW_SHA" \
+            openclaw-sandbox:bookworm-slim
+          archive_sha256="$(jq -er '.archive.sha256' "$artifact_dir/shared-image-artifact.json")"
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload repo E2E sandbox image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repo-e2e-sandbox-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/repo-e2e-sandbox-artifact
+          if-no-files-found: error
+          retention-days: 1
+
+  validate_repo_e2e_gateway:
+    needs: [validate_selected_ref, prepare_repo_e2e_runtime, prepare_repo_e2e_sandbox]
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      OPENCLAW_BUILD_PRIVATE_QA: "1"
+      OPENCLAW_E2E_USE_PREBUILT_DIST: "1"
+      OPENCLAW_E2E_WORKERS: "1"
+      OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "true"
+
+      - name: Download repo E2E runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repo-e2e-runtime-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/repo-e2e-runtime
+
+      - name: Extract repo E2E runtime
+        run: >-
+          tar --extract
+          --file .artifacts/repo-e2e-runtime/repo-e2e-runtime.tar.zst
+          --use-compress-program unzstd
+
+      - name: Download repo E2E sandbox image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repo-e2e-sandbox-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/repo-e2e-sandbox
+
+      - name: Load repo E2E sandbox image
+        env:
+          OPENCLAW_SHARED_IMAGE_ARCHIVE_SHA256: ${{ needs.prepare_repo_e2e_sandbox.outputs.archive_sha256 }}
+          OPENCLAW_SHARED_IMAGE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          OPENCLAW_SHARED_IMAGE_RUN_ID: ${{ github.run_id }}
+          TARGET_SHA: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          WORKFLOW_SHA: ${{ needs.validate_selected_ref.outputs.workflow_sha }}
+        run: >-
+          scripts/docker/shared-image-artifact.sh
+          load
+          .artifacts/repo-e2e-sandbox
+          repo-e2e-sandbox
+          "$TARGET_SHA"
+          "$WORKFLOW_SHA"
+          openclaw-sandbox:bookworm-slim
+
+      - name: Run repo Gateway E2E shard
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: >-
+          node scripts/run-vitest.mjs run
+          --config test/vitest/vitest.e2e.config.ts
+          --shard "$SHARD_INDEX/4"
+
+  validate_repo_e2e_agent_plugin:
+    needs: [validate_selected_ref, prepare_repo_e2e_runtime]
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    env:
+      OPENCLAW_BUILD_PRIVATE_QA: "1"
+      OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "false"
+
+      - name: Download repo E2E runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repo-e2e-runtime-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/repo-e2e-runtime
+
+      - name: Extract repo E2E runtime
+        run: >-
+          tar --extract
+          --file .artifacts/repo-e2e-runtime/repo-e2e-runtime.tar.zst
+          --use-compress-program unzstd
+
+      - name: Run Agent Plugin Gateway E2E
+        run: pnpm test:e2e:agent-plugin-gateway
+
+  validate_repo_e2e_ui:
+    needs: validate_selected_ref
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      OPENCLAW_UI_E2E_SKIP_REAL_GATEWAY: "1"
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "false"
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-1.62.1
+
+      - name: Install Playwright Chromium
+        run: node --import tsx scripts/ensure-playwright-chromium.mts
+
+      - name: Run Control UI E2E shard
+        env:
+          OPENCLAW_UI_E2E_DIAGNOSTIC_DIR: .artifacts/control-ui-e2e-timeouts/shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: >-
+          node scripts/run-vitest.mjs run
+          --config test/vitest/vitest.ui-e2e.config.ts
+          --configLoader runner
+          --shard "$SHARD_INDEX/4"
+
+      - name: Upload Control UI E2E timeout diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-control-ui-e2e-timeout-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/control-ui-e2e-timeouts/shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  validate_repo_e2e_ui_real_gateway:
+    needs: [validate_selected_ref, prepare_repo_e2e_runtime]
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available == 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 25
+    env:
+      OPENCLAW_BUILD_PRIVATE_QA: "1"
+      OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "false"
+
+      - name: Download repo E2E runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repo-e2e-runtime-${{ needs.validate_selected_ref.outputs.selected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/repo-e2e-runtime
+
+      - name: Extract repo E2E runtime
+        run: >-
+          tar --extract
+          --file .artifacts/repo-e2e-runtime/repo-e2e-runtime.tar.zst
+          --use-compress-program unzstd
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-1.62.1
+
+      - name: Install Playwright Chromium
+        run: node --import tsx scripts/ensure-playwright-chromium.mts
+
+      - name: Run Control UI real-Gateway E2E
+        run: >-
+          node scripts/run-vitest.mjs run
+          --config test/vitest/vitest.ui-e2e.config.ts
+          --configLoader runner
+          ui/src/e2e/mcp-app-conformance.e2e.test.ts
+          ui/src/e2e/control-ui-auth-transports.e2e.test.ts
+          ui/src/e2e/logs-lifecycle.e2e.test.ts
+
+  validate_repo_e2e_legacy:
+    needs: validate_selected_ref
+    if: inputs.include_repo_e2e && inputs.live_suite_filter == '' && needs.validate_selected_ref.outputs.repo_e2e_shards_available != 'true'
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ${{ inputs.use_github_hosted_runners && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 90
     env:
       OPENCLAW_BUILD_PRIVATE_QA: "1"
@@ -989,6 +1327,7 @@ jobs:
         with:
           ref: ${{ needs.validate_selected_ref.outputs.selected_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
@@ -997,7 +1336,7 @@ jobs:
           install-bun: "true"
           build-all-cache-scope: full
 
-      - name: Build dist for repo E2E
+      - name: Build dist for legacy repo E2E
         env:
           NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm build
@@ -1008,8 +1347,73 @@ jobs:
       - name: Build sandbox image
         run: scripts/sandbox-setup.sh
 
-      - name: Run repo E2E suite
+      - name: Run legacy repo E2E suite
         run: pnpm test:e2e
+
+  validate_repo_e2e:
+    needs:
+      - validate_selected_ref
+      - prepare_repo_e2e_runtime
+      - prepare_repo_e2e_sandbox
+      - validate_repo_e2e_gateway
+      - validate_repo_e2e_agent_plugin
+      - validate_repo_e2e_ui
+      - validate_repo_e2e_ui_real_gateway
+      - validate_repo_e2e_legacy
+    if: ${{ always() && inputs.include_repo_e2e && inputs.live_suite_filter == '' }}
+    continue-on-error: ${{ inputs.advisory }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify repo E2E lanes
+        env:
+          AGENT_PLUGIN_RESULT: ${{ needs.validate_repo_e2e_agent_plugin.result }}
+          GATEWAY_RESULT: ${{ needs.validate_repo_e2e_gateway.result }}
+          LEGACY_RESULT: ${{ needs.validate_repo_e2e_legacy.result }}
+          REPO_E2E_SHARDS_AVAILABLE: ${{ needs.validate_selected_ref.outputs.repo_e2e_shards_available }}
+          RUNTIME_RESULT: ${{ needs.prepare_repo_e2e_runtime.result }}
+          SANDBOX_RESULT: ${{ needs.prepare_repo_e2e_sandbox.result }}
+          UI_REAL_GATEWAY_RESULT: ${{ needs.validate_repo_e2e_ui_real_gateway.result }}
+          UI_RESULT: ${{ needs.validate_repo_e2e_ui.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_result() {
+            local label="$1"
+            local actual="$2"
+            local expected="$3"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "$label result was '$actual', expected '$expected'." >&2
+              return 1
+            fi
+          }
+
+          failures=0
+          if [[ "$REPO_E2E_SHARDS_AVAILABLE" == "true" ]]; then
+            for entry in \
+              "runtime:$RUNTIME_RESULT" \
+              "sandbox:$SANDBOX_RESULT" \
+              "gateway:$GATEWAY_RESULT" \
+              "agent-plugin:$AGENT_PLUGIN_RESULT" \
+              "ui:$UI_RESULT" \
+              "ui-real-gateway:$UI_REAL_GATEWAY_RESULT"; do
+              require_result "${entry%%:*}" "${entry#*:}" success || failures=1
+            done
+            require_result legacy "$LEGACY_RESULT" skipped || failures=1
+          else
+            require_result legacy "$LEGACY_RESULT" success || failures=1
+            for entry in \
+              "runtime:$RUNTIME_RESULT" \
+              "sandbox:$SANDBOX_RESULT" \
+              "gateway:$GATEWAY_RESULT" \
+              "agent-plugin:$AGENT_PLUGIN_RESULT" \
+              "ui:$UI_RESULT" \
+              "ui-real-gateway:$UI_REAL_GATEWAY_RESULT"; do
+              require_result "${entry%%:*}" "${entry#*:}" skipped || failures=1
+            done
+          fi
+          exit "$failures"
 
   validate_special_e2e:
     needs: validate_selected_ref
