@@ -6760,6 +6760,7 @@ private func overrideNotificationServingPreference(_ enabled: Bool) -> () -> Voi
     @Test @MainActor func `watch exec approval codec preserves gateway owner`() throws {
         let approval = OpenClawWatchExecApprovalItem(
             id: "approval-a",
+            instanceId: " instance-a ",
             gatewayStableID: "gateway-a",
             commandText: "echo safe",
             warningText: "Review shell expansion",
@@ -6768,16 +6769,19 @@ private func overrideNotificationServingPreference(_ enabled: Bool) -> () -> Voi
             OpenClawWatchExecApprovalPromptMessage(approval: approval))
         let encodedApproval = try #require(prompt["approval"] as? [String: Any])
         #expect(encodedApproval["gatewayStableID"] as? String == "gateway-a")
+        #expect(encodedApproval["instanceId"] as? String == " instance-a ")
         #expect(encodedApproval["warningText"] as? String == "Review shell expansion")
 
         let reply = try #require(WatchMessagingPayloadCodec.parseExecApprovalResolvePayload([
             "type": OpenClawWatchPayloadType.execApprovalResolve.rawValue,
             "replyId": "reply-a",
             "approvalId": "approval-a",
+            "approvalInstanceId": " instance-a ",
             "gatewayStableID": "gateway-a",
             "decision": OpenClawWatchExecApprovalDecision.allowOnce.rawValue,
         ], transport: "sendMessage"))
         #expect(reply.gatewayStableID == "gateway-a")
+        #expect(reply.approvalInstanceId == " instance-a ")
 
         let resolved = WatchMessagingPayloadCodec.encodeExecApprovalResolvedPayload(
             OpenClawWatchExecApprovalResolvedMessage(
