@@ -11,6 +11,10 @@ import { createDiffStoreHarness } from "./test-helpers.js";
 import { createDiffsTool } from "./tool.js";
 import type { DiffRenderOptions } from "./types.js";
 
+vi.mock("./browser.js", () => {
+  throw new Error("viewer-only rendering must not load the Playwright renderer");
+});
+
 const DEFAULT_DIFFS_TOOL_DEFAULTS = resolveDiffsPluginDefaults(undefined);
 
 describe("diffs tool", () => {
