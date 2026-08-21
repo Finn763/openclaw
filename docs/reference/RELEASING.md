@@ -561,24 +561,6 @@ gh workflow run openclaw-release-publish.yml \
 
 Include `plugin_sdk_api_acknowledgement` only when the npm preflight's Plugin SDK API report contains changes.
 
-If a beta package is already published but its container images are missing,
-do not rerun npm or plugin publication. Reuse the immutable beta tag plus its
-successful npm preflight and Full Release Validation evidence through the
-Docker-only recovery path. The workflow rechecks the exact npm version, the
-`beta` selector, and the published tarball digest before building containers:
-
-```bash
-gh workflow run openclaw-release-publish.yml \
-  --ref main \
-  -f tag=vYYYY.M.PATCH-beta.N \
-  -f preflight_run_id=<successful-openclaw-npm-preflight-run-id> \
-  -f full_release_validation_run_id=<successful-full-release-validation-run-id> \
-  -f full_release_validation_run_attempt=<successful-full-release-validation-run-attempt> \
-  -f npm_dist_tag=beta \
-  -f publish_openclaw_npm=false \
-  -f publish_docker_only=true
-```
-
 Stable publish to the default beta dist-tag:
 
 ```bash

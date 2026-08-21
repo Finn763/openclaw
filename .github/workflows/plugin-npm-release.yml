@@ -1361,7 +1361,7 @@ jobs:
             scripts/lib/tsx-cli-shim.mjs \
             .publication-target/scripts/lib/tsx-cli-shim.mjs
 
-      - name: Setup OIDC publication target
+      - name: Setup trusted OIDC packaging dependencies
         if: steps.publication_evidence.outputs.publish_route == 'npm-oidc'
         uses: ./.github/actions/setup-node-env
         with:

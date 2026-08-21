@@ -1524,7 +1524,7 @@ describe("package acceptance workflow", () => {
     expect(verifyStep.run).not.toContain("npm view openclaw@extended-stable version");
   });
 
-  it("accepts only exact protected SHA-pinned release publish tags", () => {
+  it("accepts only main-reachable protected SHA-pinned release publish tags", () => {
     const workflowSha = "a".repeat(40);
     const binDir = tempDirs.make("release-publish-gh-");
     const ghPath = `${binDir}/gh`;
