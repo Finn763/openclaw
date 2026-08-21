@@ -7107,8 +7107,14 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     const packageAcceptance = readWorkflow(PACKAGE_ACCEPTANCE_WORKFLOW);
     const qaLive = readWorkflow(QA_LIVE_TRANSPORTS_WORKFLOW);
     const profiles = ["beta", "stable", "full"] as const;
-    const releaseDecisionTimeout = fullRelease.jobs?.release_decision?.["timeout-minutes"];
-    const diagnosticDrainTimeout = fullRelease.jobs?.diagnostic_drain?.["timeout-minutes"];
+    const releaseDecisionTimeout = timeoutForProfile(
+      fullRelease.jobs?.release_decision?.["timeout-minutes"],
+      "beta",
+    );
+    const diagnosticDrainTimeout = timeoutForProfile(
+      fullRelease.jobs?.diagnostic_drain?.["timeout-minutes"],
+      "beta",
+    );
     expect(releaseDecisionTimeout).toBe(720);
     expect(diagnosticDrainTimeout).toBe(720);
     for (const dispatchJob of [

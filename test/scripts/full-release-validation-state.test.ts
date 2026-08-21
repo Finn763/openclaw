@@ -13,6 +13,7 @@ import {
   validateChildBinding,
   verifyReleaseStateArtifacts,
 } from "../../scripts/full-release-validation-state.mjs";
+import { waitForChildClose, waitForFile } from "../helpers/process-wait.js";
 
 const SCRIPT = resolve("scripts/full-release-validation-state.mjs");
 const SHA = "a".repeat(40);
@@ -346,13 +347,15 @@ describe("collector subprocess", () => {
   it("writes the execution plan immediately when SIGTERM interrupts a stalled reuse API", async () => {
     const root = mkdtempSync(join(tmpdir(), "frv-plan-signal-"));
     const gh = join(root, "gh");
+    const ghReady = join(root, "gh-ready");
     const output = join(root, "full-release-execution-plan.json");
-    writeFileSync(gh, "#!/bin/sh\nsleep 30\n");
+    writeFileSync(gh, '#!/bin/sh\nprintf ready > "$FRV_GH_READY"\nsleep 30\n');
     chmodSync(gh, 0o755);
     const childProcess = spawn(process.execPath, [SCRIPT, "plan"], {
       env: {
         ...process.env,
         EVIDENCE_CHANGED_PATHS: "[]",
+        FRV_GH_READY: ghReady,
         FULL_RELEASE_EXECUTION_PLAN_PATH: output,
         FULL_RELEASE_PLAN_INPUTS_JSON: JSON.stringify({
           children: { normalCi: { result: "skipped", runAttempt: "", runId: "" } },
@@ -383,13 +386,11 @@ describe("collector subprocess", () => {
       },
       stdio: "ignore",
     });
-    await new Promise((resolveReady) => setTimeout(resolveReady, 200));
+    await waitForFile(ghReady, 5_000);
+    const exitPromise = waitForChildClose(childProcess);
     const started = Date.now();
     childProcess.kill("SIGTERM");
-    await new Promise<void>((resolveExit, reject) => {
-      childProcess.once("exit", () => resolveExit());
-      childProcess.once("error", reject);
-    });
+    await exitPromise;
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({
       errors: [expect.objectContaining({ kind: "collector_cancelled" })],
@@ -459,6 +460,7 @@ describe("collector subprocess", () => {
   it("writes an immediate terminal handoff with active identity on SIGTERM", async () => {
     const root = mkdtempSync(join(tmpdir(), "frv-state-signal-"));
     const gh = join(root, "gh");
+    const ghReady = join(root, "gh-ready");
     const output = join(root, "drain.json");
     const executionPlanPath = join(root, "full-release-execution-plan.json");
     writeFileSync(
@@ -476,6 +478,7 @@ describe("collector subprocess", () => {
     writeFileSync(
       gh,
       `#!/bin/sh
+printf ready > "$FRV_GH_READY"
 if [ "$1" = "api" ] && echo "$2" | grep -q '/jobs'; then
   exit 0
 fi
@@ -487,6 +490,7 @@ printf '%s\\n' '{"id":101,"event":"workflow_dispatch","path":".github/workflows/
       env: {
         ...process.env,
         FAIL_FAST: "false",
+        FRV_GH_READY: ghReady,
         FULL_RELEASE_EXECUTION_PLAN_PATH: executionPlanPath,
         FULL_RELEASE_POLL_INTERVAL_MS: "60000",
         FULL_RELEASE_STATE_PATH: output,
@@ -502,12 +506,10 @@ printf '%s\\n' '{"id":101,"event":"workflow_dispatch","path":".github/workflows/
       },
       stdio: "ignore",
     });
-    await new Promise((resolveReady) => setTimeout(resolveReady, 200));
+    await waitForFile(ghReady, 5_000);
+    const exitPromise = waitForChildClose(childProcess);
     childProcess.kill("SIGTERM");
-    await new Promise<void>((resolveExit, reject) => {
-      childProcess.once("exit", () => resolveExit());
-      childProcess.once("error", reject);
-    });
+    await exitPromise;
     expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({
       activeRunIds: ["101"],
       cancellation: { requested: true },

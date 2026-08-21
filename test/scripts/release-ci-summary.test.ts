@@ -1101,16 +1101,24 @@ describe("release CI summary child correlation", () => {
       requestedRunId === String(fixture.childRun.id)
         ? [
             {
+              completed_at: "2026-07-10T01:10:00Z",
               conclusion: "failure",
+              id: 86293408711,
               name: "Run QA Lab parity lane (core)",
               run_attempt: 1,
+              started_at: "2026-07-10T01:00:00Z",
               status: "completed",
+              steps: [],
             },
             {
+              completed_at: "2026-07-10T01:10:00Z",
               conclusion: "success",
+              id: 86293408712,
               name: "Verify release checks",
               run_attempt: 1,
+              started_at: "2026-07-10T01:00:00Z",
               status: "completed",
+              steps: [],
             },
           ]
         : getParentJobs(requestedRunId);
