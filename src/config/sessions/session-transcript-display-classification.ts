@@ -268,15 +268,6 @@ export function isForwardedSessionsSend(message: Record<string, unknown>): boole
   );
 }
 
-export function isSessionsSendInterSessionUserMessage(message: Record<string, unknown>): boolean {
-  const provenance = normalizeInputProvenance(message.provenance);
-  return (
-    message.role === "user" &&
-    provenance?.kind === "inter_session" &&
-    provenance.sourceTool === "sessions_send"
-  );
-}
-
 export function isDisplayHiddenMessage(message: Record<string, unknown>): boolean {
   return (
     message.display === false ||

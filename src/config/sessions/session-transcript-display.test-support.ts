@@ -1,8 +1,5 @@
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
-import {
-  prepareSessionTranscriptDisplayProjection,
-  type PreparedSessionTranscriptDisplayProjection,
-} from "./session-transcript-display.js";
+import { prepareSessionTranscriptDisplayProjection } from "./session-transcript-display.js";
 import {
   buildSessionTranscriptProjection,
   type SessionTranscriptProjectionSourceRow,
@@ -12,6 +9,9 @@ type DatabaseScope = {
   agentId: string;
   env: NodeJS.ProcessEnv;
 };
+type PreparedSessionTranscriptDisplayProjection = ReturnType<
+  typeof prepareSessionTranscriptDisplayProjection
+>;
 
 export function projectionRow(
   seq: number,

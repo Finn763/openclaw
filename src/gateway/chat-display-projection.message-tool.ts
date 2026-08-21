@@ -2,12 +2,12 @@ import { safeParseJsonRecord } from "@openclaw/normalization-core";
 import { asPositiveSafeInteger } from "@openclaw/normalization-core/number-coercion";
 import { asOptionalRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { isSessionsSendInterSessionUserMessage } from "../sessions/input-provenance.js";
 import { isOpenClawDeliveryMirrorAssistantMessage } from "../shared/transcript-only-openclaw-assistant.js";
 import {
   extractAssistantTextForSilentCheck,
   hasAssistantDisplayableNonTextContent,
   isProjectedSessionsSendForwardedMessage,
-  isSessionsSendInterSessionUserMessage,
 } from "./chat-display-projection.helpers.js";
 import { displayTextForDuplicateCheck } from "./chat-display-projection.history.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";

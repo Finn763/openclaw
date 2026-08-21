@@ -16,12 +16,14 @@ import {
   SESSION_TRANSCRIPT_DISPLAY_STATE_TABLE,
 } from "../../state/openclaw-agent-display-row-schema.js";
 import { chunkItems } from "../../utils/chunk-items.js";
+import type {
+  PreparedSessionTranscriptDisplayCarry,
+  PreparedSessionTranscriptDisplayRow,
+  SessionTranscriptDisplayRowKind,
+} from "./session-transcript-display-reducer-contract.js";
 import {
   SESSION_TRANSCRIPT_DISPLAY_SEMANTICS_VERSION,
   parseDisplayRowKind,
-  type PreparedSessionTranscriptDisplayCarry,
-  type PreparedSessionTranscriptDisplayRow,
-  type SessionTranscriptDisplayRowKind,
 } from "./session-transcript-display-semantics.js";
 import {
   readSessionTranscriptDisplayState,

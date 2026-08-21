@@ -19,11 +19,10 @@ import {
   expectedMessageCarryCapPrefixes,
   expectedStreamCarryCapPrefixes,
   expectedTtsCarryCapPrefixes,
-} from "./session-transcript-display.expected-fixtures.js";
+} from "./session-transcript-display.expected-test-support.js";
 import {
   appendEligibleSessionTranscriptDisplayRowInTransaction,
   prepareSessionTranscriptDisplayProjection,
-  prepareSessionTranscriptDisplayRows,
 } from "./session-transcript-display.js";
 import {
   STATEFUL_DISPLAY_EXPECTED_PREFIXES,
@@ -209,7 +208,7 @@ describe("canonical session transcript projection", () => {
     );
     await waitForSessionTranscriptIndexReconcile({ agentId: scope.agentId, env });
 
-    const planned = prepareSessionTranscriptDisplayRows(readProjectionSourceRows()).map(
+    const planned = prepareSessionTranscriptDisplayProjection(readProjectionSourceRows()).rows.map(
       ({ displayOrdinal, kind, sourceEventSeq }) => ({
         display_ordinal: displayOrdinal,
         kind,

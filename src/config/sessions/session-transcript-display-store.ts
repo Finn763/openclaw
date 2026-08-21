@@ -15,6 +15,13 @@ import {
   SESSION_TRANSCRIPT_DISPLAY_ROW_SOURCES_TABLE,
   SESSION_TRANSCRIPT_DISPLAY_STATE_TABLE,
 } from "../../state/openclaw-agent-display-row-schema.js";
+import type {
+  DisplayReducerEffects,
+  DisplayReducerRow,
+  DisplayReducerState,
+  PreparedSessionTranscriptDisplayCanvas,
+  PreparedSessionTranscriptDisplayCarry,
+} from "./session-transcript-display-reducer-contract.js";
 import {
   SESSION_TRANSCRIPT_DISPLAY_ROW_VERSION,
   SESSION_TRANSCRIPT_DISPLAY_SEMANTICS_VERSION,
@@ -22,11 +29,6 @@ import {
   parseDisplayCarryKind,
   parseDisplayRowKind,
   reduceSessionTranscriptDisplaySource,
-  type DisplayReducerEffects,
-  type DisplayReducerRow,
-  type DisplayReducerState,
-  type PreparedSessionTranscriptDisplayCanvas,
-  type PreparedSessionTranscriptDisplayCarry,
 } from "./session-transcript-display-semantics.js";
 
 type SessionTranscriptDisplayState = {
@@ -548,30 +550,28 @@ export function appendEligibleSessionTranscriptDisplayRowInTransaction(
     });
   }
   const carry = readDisplayReducerCarry(db, params.sessionId);
-  const eventSeqs = new Set<number>([
-    params.seq,
-    ...carry.flatMap((entry) => [
-      entry.sourceEventSeq,
-      ...(entry.deliveryEventSeq === undefined ? [] : [entry.deliveryEventSeq]),
-      ...(entry.relatedEventSeq === undefined ? [] : [entry.relatedEventSeq]),
-    ]),
-  ]);
-  const sourceEvents = new Map(
-    executeSqliteQuerySync(
+  const sourceEvents = new Map<number, unknown>([[params.seq, params.event]]);
+  const readEvent = (sourceEventSeq: number): unknown => {
+    if (sourceEvents.has(sourceEventSeq)) {
+      return sourceEvents.get(sourceEventSeq);
+    }
+    const row = executeSqliteQueryTakeFirstSync(
       db,
       getDisplayKysely(db)
         .selectFrom("transcript_events")
-        .select(["event_json", "seq"])
+        .select("event_json")
         .where("session_id", "=", params.sessionId)
-        .where("seq", "in", [...eventSeqs]),
-    ).rows.map((row) => [row.seq, JSON.parse(row.event_json) as unknown]),
-  );
-  sourceEvents.set(params.seq, params.event);
+        .where("seq", "=", sourceEventSeq),
+    );
+    const event = row ? (JSON.parse(row.event_json) as unknown) : undefined;
+    sourceEvents.set(sourceEventSeq, event);
+    return event;
+  };
   const effects = createDatabaseDisplayEffects(db, params.sessionId, rowCount);
   const reducerState: DisplayReducerState = {
     carry,
     effects,
-    readEvent: (sourceEventSeq) => sourceEvents.get(sourceEventSeq),
+    readEvent,
   };
   reduceSessionTranscriptDisplaySource(reducerState, {
     event: params.event,

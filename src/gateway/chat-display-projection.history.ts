@@ -8,6 +8,7 @@ import { isHeartbeatOkResponse, isHeartbeatUserMessage } from "../auto-reply/hea
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import {
   INTER_SESSION_PROMPT_PREFIX_BASE,
+  isSessionsSendInterSessionUserMessage,
   normalizeInputProvenance,
   stripInterSessionPromptPrefixForDisplay,
 } from "../sessions/input-provenance.js";
@@ -21,7 +22,6 @@ import {
   hasTranscriptMediaFacts,
   isEmptyTextOnlyContent,
   isProjectedSessionsSendForwardedMessage,
-  isSessionsSendInterSessionUserMessage,
   type RoleContentMessage,
 } from "./chat-display-projection.helpers.js";
 

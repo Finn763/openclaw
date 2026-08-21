@@ -5,6 +5,7 @@ import {
   isHeartbeatUserMessage,
 } from "../../auto-reply/heartbeat-filter.js";
 import { HEARTBEAT_PROMPT } from "../../auto-reply/heartbeat.js";
+import { isSessionsSendInterSessionUserMessage } from "../../sessions/input-provenance.js";
 import { isOpenClawDeliveryMirrorAssistantMessage } from "../../shared/transcript-only-openclaw-assistant.js";
 import {
   isDisplayHiddenMessage,
@@ -12,7 +13,6 @@ import {
   isHiddenUserMessage,
   isPureStreamError,
   isRenderableAssistant,
-  isSessionsSendInterSessionUserMessage,
   isSuppressedControlReply,
   isTtsSupplement,
   normalizeHistoryType,
@@ -22,13 +22,22 @@ import {
   readMessageToolResult,
   readTtsMarker,
   ttsMarkerMatches,
-  type PreparedSessionTranscriptDisplayCanvas,
 } from "./session-transcript-display-classification.js";
 import {
   flushSessionTranscriptMessageToolMirrors,
   handleSessionTranscriptDeliveryMirror,
   handleSessionTranscriptMessageToolResult,
 } from "./session-transcript-display-message-tool.js";
+import type {
+  DisplayReducerEffects,
+  DisplayReducerRow,
+  DisplayReducerState,
+  PreparedSessionTranscriptDisplayCanvas,
+  PreparedSessionTranscriptDisplayCarry,
+  PreparedSessionTranscriptDisplayRow,
+  SessionTranscriptDisplayCarryKind,
+  SessionTranscriptDisplayRowKind,
+} from "./session-transcript-display-reducer-contract.js";
 import {
   isCanonicalSessionTranscriptEntry,
   parseSessionTranscriptTreeEntry,
@@ -37,7 +46,7 @@ import { selectVisibleTranscriptEventEntries } from "./transcript-visible-events
 
 export const SESSION_TRANSCRIPT_DISPLAY_ROW_VERSION = 1;
 export const SESSION_TRANSCRIPT_DISPLAY_SEMANTICS_VERSION = 1;
-export const DISPLAY_CARRY_LIMITS = {
+const DISPLAY_CARRY_LIMITS = {
   canvas_pending: 16,
   heartbeat_boundary: 1,
   message_tool: 16,
@@ -45,50 +54,7 @@ export const DISPLAY_CARRY_LIMITS = {
   tts_candidate: 64,
 } as const;
 
-export type SessionTranscriptDisplayRowKind =
-  | "assistant"
-  | "compaction"
-  | "opaque"
-  | "reset"
-  | "user";
-export type SessionTranscriptDisplayRelation =
-  | "message_tool_mirror"
-  | "message_tool_result"
-  | "tts_supplement"
-  | "turn_boundary";
-export type SessionTranscriptDisplayCarryKind = keyof typeof DISPLAY_CARRY_LIMITS;
-export type PreparedSessionTranscriptDisplaySource = {
-  position: number;
-  relation: SessionTranscriptDisplayRelation;
-  sourceEventSeq: number;
-  sourceOccurrence: number;
-};
-export { type PreparedSessionTranscriptDisplayCanvas } from "./session-transcript-display-classification.js";
-export type PreparedSessionTranscriptDisplayCarry = {
-  deliveryEventSeq?: number;
-  kind: SessionTranscriptDisplayCarryKind;
-  position: number;
-  relatedEventSeq?: number;
-  sourceEventSeq: number;
-  sourceOccurrence: number;
-};
-export type SessionTranscriptDisplaySourceReference = {
-  sourceEventSeq: number;
-  sourceOccurrence: number;
-};
-type PlannedSessionTranscriptDisplayRow = {
-  canvases: PreparedSessionTranscriptDisplayCanvas[];
-  kind: SessionTranscriptDisplayRowKind;
-  semanticSources: PreparedSessionTranscriptDisplaySource[];
-  sourceEventSeq: number;
-};
-export type PreparedSessionTranscriptDisplayRow = PlannedSessionTranscriptDisplayRow & {
-  displayOrdinal: number;
-  revision: number;
-  rowId: string;
-  rowVersion: number;
-};
-export type PreparedSessionTranscriptDisplayProjection = {
+type PreparedSessionTranscriptDisplayProjection = {
   carry: PreparedSessionTranscriptDisplayCarry[];
   rows: PreparedSessionTranscriptDisplayRow[];
 };
@@ -151,39 +117,6 @@ export function isSessionTranscriptDisplayBoundary(event: unknown): boolean {
   const type = record.type;
   return type === "compaction" || type === "reset";
 }
-
-export type DisplayReducerRow = PlannedSessionTranscriptDisplayRow & {
-  displayOrdinal: number;
-  revision: number;
-  rowId: string;
-};
-
-export type DisplayReducerEffects = {
-  addCanvases: (
-    row: DisplayReducerRow,
-    sourceEventSeq: number,
-    canvases: Array<Omit<PreparedSessionTranscriptDisplayCanvas, "position">>,
-  ) => void;
-  addRelation: (
-    row: DisplayReducerRow,
-    relation: SessionTranscriptDisplayRelation,
-    sources: readonly SessionTranscriptDisplaySourceReference[],
-  ) => void;
-  appendRow: (kind: SessionTranscriptDisplayRowKind, sourceEventSeq: number) => DisplayReducerRow;
-  beginSource: () => void;
-  findRow: (sourceEventSeq: number) => DisplayReducerRow | undefined;
-  removeCanvases: (sourceEventSeq: number) => void;
-  replaceStreamRows: (
-    pendingSourceEventSeqs: readonly number[],
-    sourceEventSeq: number,
-  ) => DisplayReducerRow;
-};
-
-export type DisplayReducerState = {
-  carry: PreparedSessionTranscriptDisplayCarry[];
-  effects: DisplayReducerEffects;
-  readEvent: (sourceEventSeq: number) => unknown;
-};
 
 function carryEntries(
   state: DisplayReducerState,
@@ -638,10 +571,4 @@ export function prepareSessionTranscriptDisplayProjection(
       Object.assign(row, { rowVersion: SESSION_TRANSCRIPT_DISPLAY_ROW_VERSION }),
     ),
   };
-}
-
-export function prepareSessionTranscriptDisplayRows(
-  rows: readonly { event: unknown; seq: number }[],
-): PreparedSessionTranscriptDisplayRow[] {
-  return prepareSessionTranscriptDisplayProjection(rows).rows;
 }

@@ -10,7 +10,7 @@ import type {
   DisplayReducerRow,
   DisplayReducerState,
   PreparedSessionTranscriptDisplayCarry,
-} from "./session-transcript-display-semantics.js";
+} from "./session-transcript-display-reducer-contract.js";
 
 function messageToolCarry(state: DisplayReducerState): PreparedSessionTranscriptDisplayCarry[] {
   return state.carry.filter((entry) => entry.kind === "message_tool");
