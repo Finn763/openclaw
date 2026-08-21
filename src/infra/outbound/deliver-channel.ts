@@ -26,6 +26,7 @@ import type {
   DurableFinalDeliveryRequirement,
   DurableFinalDeliveryRequirements,
   OutboundDurableDeliverySupport,
+  PlatformSendRoute,
 } from "./deliver-contracts.js";
 import type { OutboundDeliveryResult } from "./deliver-types.js";
 import {
@@ -255,6 +256,16 @@ function createPluginHandler(
   const baseCtx = createChannelOutboundContextBase(params);
   const sendText = outbound?.sendText;
   const sendMedia = outbound?.sendMedia;
+  // Adapters may ignore the context callback; the core handoff must still fence
+  // closed turn authority before transport code can run.
+  const dispatchToAdapter = async <T>(
+    route: PlatformSendRoute,
+    send: () => Promise<T>,
+  ): Promise<T> => {
+    await params.onPlatformSendStart?.(route);
+    await params.onDirectAdapterHandoff?.();
+    return await send();
+  };
   // A prepared transport id identifies one atomic platform message. Splitting it
   // would either reuse the id or leave later chunks outside reply correlation.
   const chunker = baseCtx.preparedMessageId ? null : (outbound?.chunker ?? null);
@@ -416,18 +427,15 @@ function createPluginHandler(
               const sent = await runChannelMessageSendWithLifecycle({
                 lifecycle: messageLifecycle,
                 ctx: messagePayloadCtx,
-                send: async () => {
-                  await params.onPlatformSendStart?.(messagePayloadCtx);
-                  return await messagePayload(messagePayloadCtx);
-                },
+                send: () =>
+                  dispatchToAdapter(messagePayloadCtx, () => messagePayload(messagePayloadCtx)),
               });
               return attachOutboundDeliveryCommitHook(
                 normalizeChannelMessageSendResult(params.channel, sent.result),
                 sent.afterCommit,
               );
             }
-            await params.onPlatformSendStart?.(payloadCtx);
-            return outbound!.sendPayload!(payloadCtx);
+            return dispatchToAdapter(payloadCtx, () => outbound!.sendPayload!(payloadCtx));
           }
         : undefined,
     sendFormattedText: outbound?.sendFormattedText
@@ -437,8 +445,9 @@ function createPluginHandler(
             text,
           };
           assertUnknownSendReconciliationKind("text");
-          await params.onPlatformSendStart?.(formattedCtx);
-          return await outbound.sendFormattedText!(formattedCtx);
+          return await dispatchToAdapter(formattedCtx, () =>
+            outbound.sendFormattedText!(formattedCtx),
+          );
         }
       : undefined,
     sendFormattedMedia: outbound?.sendFormattedMedia
@@ -449,8 +458,9 @@ function createPluginHandler(
             mediaUrl,
           };
           assertUnknownSendReconciliationKind("media");
-          await params.onPlatformSendStart?.(formattedCtx);
-          return await outbound.sendFormattedMedia!(formattedCtx);
+          return await dispatchToAdapter(formattedCtx, () =>
+            outbound.sendFormattedMedia!(formattedCtx),
+          );
         }
       : undefined,
     sendText: async (text, overrides) => {
@@ -465,18 +475,14 @@ function createPluginHandler(
         const sent = await runChannelMessageSendWithLifecycle({
           lifecycle: messageLifecycle,
           ctx: messageTextCtx,
-          send: async () => {
-            await params.onPlatformSendStart?.(messageTextCtx);
-            return await messageText(messageTextCtx);
-          },
+          send: () => dispatchToAdapter(messageTextCtx, () => messageText(messageTextCtx)),
         });
         return attachOutboundDeliveryCommitHook(
           normalizeChannelMessageSendResult(params.channel, sent.result),
           sent.afterCommit,
         );
       }
-      await params.onPlatformSendStart?.(textCtx);
-      return sendText!(textCtx);
+      return dispatchToAdapter(textCtx, () => sendText!(textCtx));
     },
     buildTargetRef,
     sendMedia: async (caption, mediaUrl, overrides) => {
@@ -492,10 +498,7 @@ function createPluginHandler(
         const sent = await runChannelMessageSendWithLifecycle({
           lifecycle: messageLifecycle,
           ctx: messageMediaCtx,
-          send: async () => {
-            await params.onPlatformSendStart?.(messageMediaCtx);
-            return await messageMedia(messageMediaCtx);
-          },
+          send: () => dispatchToAdapter(messageMediaCtx, () => messageMedia(messageMediaCtx)),
         });
         return attachOutboundDeliveryCommitHook(
           normalizeChannelMessageSendResult(params.channel, sent.result),
@@ -503,11 +506,9 @@ function createPluginHandler(
         );
       }
       if (sendMedia) {
-        await params.onPlatformSendStart?.(mediaCtx);
-        return sendMedia(mediaCtx);
+        return dispatchToAdapter(mediaCtx, () => sendMedia(mediaCtx));
       }
-      await params.onPlatformSendStart?.(mediaCtx);
-      return sendText!(mediaCtx);
+      return dispatchToAdapter(mediaCtx, () => sendText!(mediaCtx));
     },
   };
 }
