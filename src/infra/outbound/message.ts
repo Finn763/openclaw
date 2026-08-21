@@ -124,6 +124,8 @@ type MessageSendParams = {
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   /** @internal Revalidates caller authority immediately before recipient-visible I/O. */
   onPlatformSendDispatch?: () => Promise<void>;
+  /** @internal Keep ephemeral-authority sends out of replayable recovery. */
+  skipQueue?: boolean;
   mirror?: OutboundMirror;
   /** @internal Reports the effective payload only after an identified direct send. */
   onDeliveredPayload?: (payload: NormalizedOutboundPayload) => void;
@@ -453,6 +455,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       ...(params.onPlatformSendDispatch
         ? { onPlatformSendDispatch: params.onPlatformSendDispatch }
         : {}),
+      skipQueue: params.skipQueue,
       ...(params.onDeliveredPayload ? { onDeliveredPayload: params.onDeliveredPayload } : {}),
       mirror: params.mirror
         ? {

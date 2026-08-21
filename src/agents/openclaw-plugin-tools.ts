@@ -152,6 +152,7 @@ function createPluginToolDelivery(params: {
             resolveAuthorization();
           },
           forceCoreDelivery: true,
+          skipQueue: true,
           dryRun: false,
         }),
       );

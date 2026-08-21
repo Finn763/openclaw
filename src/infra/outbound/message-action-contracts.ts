@@ -96,6 +96,8 @@ export type MessageActionInput = {
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   /** @internal Revalidates caller authority immediately before recipient-visible I/O. */
   onPlatformSendDispatch?: () => Promise<void>;
+  /** @internal Keep ephemeral-authority sends out of replayable recovery. */
+  skipQueue?: boolean;
   /** @internal Runs when broadcast converts a typed target denial into result text. */
   onActionDenied?: (
     error: MessageActionDeniedError,

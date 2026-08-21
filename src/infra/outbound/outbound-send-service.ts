@@ -100,6 +100,8 @@ type OutboundSendContext = {
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   /** Revalidates caller authority immediately before recipient-visible I/O. */
   onPlatformSendDispatch?: () => Promise<void>;
+  /** Keep ephemeral-authority sends out of replayable recovery. */
+  skipQueue?: boolean;
   /** Runs once a plugin action accepted the send, before transcript mirroring. */
   onPluginSendAccepted?: () => Promise<void>;
 };
@@ -198,6 +200,7 @@ async function sendCoreMessage(params: {
     onDeliveryIntent: params.ctx.onDeliveryIntent,
     onDeliveryResult: params.ctx.onDeliveryResult,
     onPlatformSendDispatch: params.ctx.onPlatformSendDispatch,
+    skipQueue: params.ctx.skipQueue,
     onDeliveredPayload: (payload) => deliveredPayloads.push(payload),
   });
   const deliveredText =
