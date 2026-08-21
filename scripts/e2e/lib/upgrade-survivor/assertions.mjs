@@ -899,8 +899,8 @@ function readMigratedSessionStore(stateDir, targetStorePath) {
           .all()
           .map((row) => row.name),
       );
-      // SQLite is authoritative once it owns a supported session table. A stale
-      // sessions.json must not hide missing, malformed, or unreadable database state.
+      // SQLite-specific session tables are authoritative. cache_entries was a
+      // generic per-agent table in older releases, so it needs session evidence.
       const source = tables.has("session_nodes")
         ? "session_nodes"
         : tables.has("session_entries")
@@ -927,16 +927,18 @@ function readMigratedSessionStore(stateDir, targetStorePath) {
               : db
                   .prepare("SELECT key, value_json FROM cache_entries WHERE scope = ?")
                   .all("session_entries");
-        const store = {};
-        for (const row of rows) {
-          if (typeof row?.key !== "string" || typeof row?.value_json !== "string") {
-            continue;
+        if (source !== "cache_entries" || rows.length > 0 || !fs.existsSync(targetStorePath)) {
+          const store = {};
+          for (const row of rows) {
+            if (typeof row?.key !== "string" || typeof row?.value_json !== "string") {
+              continue;
+            }
+            const entry = JSON.parse(row.value_json);
+            store[row.key] =
+              typeof row.session_id === "string" ? { ...entry, sessionId: row.session_id } : entry;
           }
-          const entry = JSON.parse(row.value_json);
-          store[row.key] =
-            typeof row.session_id === "string" ? { ...entry, sessionId: row.session_id } : entry;
+          return { source, store };
         }
-        return { source, store };
       }
     } finally {
       db?.close();

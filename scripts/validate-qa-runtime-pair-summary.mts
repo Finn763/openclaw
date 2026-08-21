@@ -175,7 +175,11 @@ export function validateQaRuntimePairSummary(
   if (!isRecord(summary) || !isRecord(summary.run) || !Array.isArray(summary.scenarios)) {
     throw new Error("runtime-pair summary is missing run or scenario evidence");
   }
-  if (summary.run.status !== "completed") {
+  const completedLegacyRun =
+    summary.run.status === undefined &&
+    typeof summary.run.finishedAt === "string" &&
+    Number.isFinite(Date.parse(summary.run.finishedAt));
+  if (summary.run.status !== "completed" && !completedLegacyRun) {
     throw new Error("runtime-pair summary is not completed");
   }
   if (!requireCanonicalRuntimePair(summary.run.runtimePair)) {
