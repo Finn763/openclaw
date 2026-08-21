@@ -17905,6 +17905,7 @@ public struct TerminalExitEvent: Codable, Sendable {
 
 public struct ExecApprovalPresentation: Codable, Sendable {
     public let kind: String
+    public let instanceid: String?
     public let commandtext: String
     public let commandpreview: AnyCodable?
     public let warningtext: AnyCodable?
@@ -17915,6 +17916,7 @@ public struct ExecApprovalPresentation: Codable, Sendable {
 
     public init(
         kind: String,
+        instanceid: String? = nil,
         commandtext: String,
         commandpreview: AnyCodable? = nil,
         warningtext: AnyCodable? = nil,
@@ -17924,6 +17926,7 @@ public struct ExecApprovalPresentation: Codable, Sendable {
         alloweddecisions: [ApprovalDecision])
     {
         self.kind = kind
+        self.instanceid = instanceid
         self.commandtext = commandtext
         self.commandpreview = commandpreview
         self.warningtext = warningtext
@@ -17935,6 +17938,7 @@ public struct ExecApprovalPresentation: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case kind
+        case instanceid = "instanceId"
         case commandtext = "commandText"
         case commandpreview = "commandPreview"
         case warningtext = "warningText"
@@ -17947,6 +17951,7 @@ public struct ExecApprovalPresentation: Codable, Sendable {
 
 public struct PluginApprovalPresentation: Codable, Sendable {
     public let kind: String
+    public let instanceid: String?
     public let title: String
     public let description: String
     public let detail: String?
@@ -17958,6 +17963,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
 
     public init(
         kind: String,
+        instanceid: String? = nil,
         title: String,
         description: String,
         detail: String? = nil,
@@ -17968,6 +17974,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         alloweddecisions: [ApprovalDecision])
     {
         self.kind = kind
+        self.instanceid = instanceid
         self.title = title
         self.description = description
         self.detail = detail
@@ -17980,6 +17987,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case kind
+        case instanceid = "instanceId"
         case title
         case description
         case detail
@@ -17993,6 +18001,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
 
 public struct SystemAgentApprovalPresentation: Codable, Sendable {
     public let kind: String
+    public let instanceid: String?
     public let title: String
     public let description: String
     public let proposalhash: String
@@ -18001,6 +18010,7 @@ public struct SystemAgentApprovalPresentation: Codable, Sendable {
 
     public init(
         kind: String,
+        instanceid: String? = nil,
         title: String,
         description: String,
         proposalhash: String,
@@ -18008,6 +18018,7 @@ public struct SystemAgentApprovalPresentation: Codable, Sendable {
         alloweddecisions: [AnyCodable])
     {
         self.kind = kind
+        self.instanceid = instanceid
         self.title = title
         self.description = description
         self.proposalhash = proposalhash
@@ -18017,6 +18028,7 @@ public struct SystemAgentApprovalPresentation: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case kind
+        case instanceid = "instanceId"
         case title
         case description
         case proposalhash = "proposalHash"
