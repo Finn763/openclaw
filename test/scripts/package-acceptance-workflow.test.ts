@@ -4991,6 +4991,7 @@ describe("package artifact reuse", () => {
     expect(mainResolverScript).toContain("repos/openclaw/openclaw-windows-node/git/ref/heads/main");
     expect(mainResolverScript).toContain("Windows-node main must resolve to an immutable commit.");
     expect(workflow).toContain('release_sha="$(resolve_tag_sha "$tag")"');
+    expect(workflow).toContain('$RELEASE_RERUN_GROUP_INPUT" == "windows-node"');
     expect(workflow).toContain('echo "${channel}_release_sha=${release_sha}" >> "$GITHUB_OUTPUT"');
     expect(workflow).not.toContain(
       'echo "${channel}_release_sha=$(resolve_tag_sha "$tag")" >> "$GITHUB_OUTPUT"',
