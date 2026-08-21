@@ -176,6 +176,8 @@ export async function refreshChatModelAuthStatus(host: ChatPageHost, opts?: { re
   const client = host.client;
   const agentId = resolveChatModelMetadataAgentId(host);
   if (!agentId) {
+    host.modelAuthStatusResult = null;
+    host.modelAuthStatusError = null;
     return;
   }
   const connectionEpoch = host.connectionEpoch;

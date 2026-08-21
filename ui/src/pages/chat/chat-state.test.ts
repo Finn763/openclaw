@@ -2483,6 +2483,34 @@ describe("refreshChatMetadata", () => {
 });
 
 describe("refreshChatModelAuthStatus", () => {
+  it("clears auth status when the routed session has no selectable agent owner", async () => {
+    const request = vi.fn();
+    const state = {
+      client: { request },
+      connected: true,
+      connectionEpoch: 1,
+      sessionKey: "agent:openclaw:dashboard:current",
+      agentsList: {
+        defaultId: "main",
+        mainKey: "main",
+        scope: "agent",
+        agents: [
+          { id: "main", kind: "agent" },
+          { id: "openclaw", kind: "system" },
+        ],
+      },
+      assistantAgentId: "main",
+      modelAuthStatusResult: { ts: 1, providers: [] },
+      modelAuthStatusError: "previous agent auth failed",
+    } as unknown as ChatPageHost;
+
+    await refreshChatModelAuthStatus(state);
+
+    expect(state.modelAuthStatusResult).toBeNull();
+    expect(state.modelAuthStatusError).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("scopes auth status to the selected session agent", async () => {
     const request = vi.fn(async () => ({ ts: 1, providers: [] }));
     const state = {
