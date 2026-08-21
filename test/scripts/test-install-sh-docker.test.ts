@@ -2134,72 +2134,80 @@ chmod +x "$BUN_INSTALL/bin/openclaw"
 
   it("runs installer packaging from the trusted workflow revision against a nested candidate", () => {
     const workflow = parse(readFileSync(INSTALL_SMOKE_WORKFLOW_PATH, "utf8"));
-    const producer = workflow.jobs.installer_smoke_image;
-    const producerSteps = producer.steps as Array<{
-      name?: string;
-      uses?: string;
-      with?: Record<string, unknown>;
-      env?: Record<string, unknown>;
-      run?: string;
-    }>;
-    const consumer = workflow.jobs.installer_smoke_group;
-    const steps = consumer.steps as Array<{
-      name?: string;
-      uses?: string;
-      with?: Record<string, unknown>;
-      env?: Record<string, unknown>;
-      run?: string;
-    }>;
-    const step = (name: string) => {
-      const found = steps.find((entry) => entry.name === name);
+    const cases = [
+      {
+        buildName: "Build installer smoke image",
+        consumerName: "installer_smoke_update",
+        dockerfile: "./scripts/docker/install-sh-smoke/Dockerfile",
+        group: "update",
+        producerName: "installer_smoke_update_image",
+        setupName: "Setup Node environment for installer update smoke",
+        testName: "Run installer update docker tests",
+      },
+      {
+        buildName: "Build installer non-root image",
+        consumerName: "installer_smoke_nonroot",
+        dockerfile: "./scripts/docker/install-sh-nonroot/Dockerfile",
+        group: "nonroot",
+        producerName: "installer_smoke_nonroot_image",
+        setupName: "Setup Node environment for installer non-root smoke",
+        testName: "Run installer non-root docker tests",
+      },
+    ] as const;
+    const workflowStep = (
+      workflowJob: { steps?: Array<Record<string, unknown>> },
+      name: string,
+    ) => {
+      const found = workflowJob.steps?.find((entry) => entry.name === name);
       expect(found, name).toBeDefined();
       return found!;
     };
 
-    expect(step("Checkout trusted installer harness").with).toMatchObject({
-      repository: "${{ needs.preflight.outputs.workflow_repository }}",
-      ref: "${{ needs.preflight.outputs.workflow_sha }}",
-      "persist-credentials": false,
-    });
-    expect(step("Checkout candidate CLI").with).toMatchObject({
-      ref: "${{ needs.preflight.outputs.target_sha }}",
-      path: "candidate",
-      "persist-credentials": false,
-    });
-    expect(step("Setup Node environment for installer smoke").uses).toBe(
-      "./.github/actions/setup-node-env",
-    );
-    expect(step("Setup Node environment for installer smoke").with).toMatchObject({
-      "install-deps": "${{ matrix.group == 'update' && 'true' || 'false' }}",
-    });
-    expect(step("Run installer docker tests").env).toMatchObject({
+    for (const testCase of cases) {
+      const producer = workflow.jobs[testCase.producerName];
+      const consumer = workflow.jobs[testCase.consumerName];
+      expect(workflowStep(producer, "Checkout trusted installer harness").with).toMatchObject({
+        repository: "${{ needs.preflight.outputs.workflow_repository }}",
+        ref: "${{ needs.preflight.outputs.workflow_sha }}",
+        "persist-credentials": false,
+      });
+      const buildStep = workflowStep(producer, testCase.buildName);
+      expect(buildStep.run).toContain(`-f ${testCase.dockerfile}`);
+      expect(buildStep.run).not.toContain("candidate/scripts/docker");
+
+      expect(workflowStep(consumer, "Checkout trusted installer harness").with).toMatchObject({
+        repository: "${{ needs.preflight.outputs.workflow_repository }}",
+        ref: "${{ needs.preflight.outputs.workflow_sha }}",
+        "persist-credentials": false,
+      });
+      expect(workflowStep(consumer, "Checkout candidate CLI").with).toMatchObject({
+        ref: "${{ needs.preflight.outputs.target_sha }}",
+        path: "candidate",
+        "persist-credentials": false,
+      });
+      const setup = workflowStep(consumer, testCase.setupName);
+      expect(setup.uses).toBe("./.github/actions/setup-node-env");
+      expect(setup.with).toMatchObject({
+        "install-deps": testCase.group === "update" ? "true" : "false",
+        "save-actions-cache": "false",
+        "use-actions-cache": testCase.group === "update" ? "true" : "false",
+      });
+      const run = workflowStep(consumer, testCase.testName);
+      expect(run.env).toMatchObject({
+        OPENCLAW_INSTALL_SMOKE_GROUP: testCase.group,
+        OPENCLAW_INSTALL_SMOKE_SOURCE_DIR: "${{ github.workspace }}/candidate",
+      });
+      expect(run.run).toBe("bash scripts/test-install-sh-docker.sh");
+    }
+
+    expect(
+      workflowStep(workflow.jobs.installer_smoke_update, "Run installer update docker tests").env,
+    ).toMatchObject({
       OPENCLAW_INSTALL_SMOKE_ALLOW_UNRELEASED_CHANGELOG: "${{ inputs.allow_unreleased_changelog }}",
-      OPENCLAW_INSTALL_SMOKE_GROUP: "${{ matrix.group }}",
-      OPENCLAW_INSTALL_SMOKE_SOURCE_DIR: "${{ github.workspace }}/candidate",
     });
-    expect(step("Run installer docker tests").run).toBe("bash scripts/test-install-sh-docker.sh");
-    const buildStep = producerSteps.find((entry) => entry.name === "Build installer smoke image");
-    expect(buildStep).toBeDefined();
-    expect(buildStep?.run).toContain('-f "$DOCKERFILE"');
-    expect(buildStep?.run).not.toContain("candidate/scripts/docker");
-    expect(producer.strategy).toMatchObject({
-      "fail-fast": false,
-      matrix: {
-        include: [
-          { dockerfile: "./scripts/docker/install-sh-smoke/Dockerfile", group: "update" },
-          { dockerfile: "./scripts/docker/install-sh-nonroot/Dockerfile", group: "nonroot" },
-        ],
-      },
-    });
-    expect(consumer.strategy).toMatchObject({
-      "fail-fast": false,
-      matrix: {
-        include: [{ group: "update" }, { group: "nonroot" }],
-      },
-    });
-    expect(step("Run Rocky Linux installer smoke").run).toContain(
-      "$PWD/candidate/scripts/install.sh",
-    );
+    expect(
+      workflowStep(workflow.jobs.installer_smoke_update, "Run Rocky Linux installer smoke").run,
+    ).toContain("$PWD/candidate/scripts/install.sh");
   });
 
   it("kills Bun global install smoke commands that ignore TERM after timeout", () => {
