@@ -186,12 +186,15 @@ export async function prepareWorkspaceBuildGroup(
         options.preferBuiltPluginArtifacts === true,
       );
   const runtimePluginMs = reusablePluginGeneration ? 0 : performance.now() - runtimePluginStartedAt;
+  const preferBuiltPluginArtifacts =
+    reusablePluginGeneration?.preferBuiltPluginArtifacts ??
+    options.preferBuiltPluginArtifacts === true;
   prepareOwnedPluginLoadContext(
     input,
     env,
     runtimePluginRegistry,
     pluginMetadataSnapshot,
-    options.preferBuiltPluginArtifacts,
+    preferBuiltPluginArtifacts,
   );
   const prepare = async () => {
     const matchesStaticModelId = createStaticModelIdMatcher({
@@ -400,6 +403,7 @@ export async function prepareWorkspaceBuildGroup(
       pluginMetadataSnapshot,
       preparedStaticProviderCatalog,
       providerStaticModels,
+      preferBuiltPluginArtifacts,
       reusablePluginGeneration,
       runtimePluginRegistry,
     });
