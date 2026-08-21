@@ -427,7 +427,7 @@ export function createExecApprovalHandlers(
       if (!decisionPromise) {
         return;
       }
-      const requestEvent: ExecApprovalRequest = buildRequestedApprovalEvent(record, "exec");
+      const requestEvent = buildRequestedApprovalEvent(record, "exec");
       const forwardRequest = opts?.forwarder?.handleRequested.bind(opts.forwarder);
       const iosPushRequest = opts?.iosPushDelivery?.handleRequested?.bind(opts.iosPushDelivery);
       await handlePendingApprovalRequest({
@@ -487,12 +487,13 @@ export function createExecApprovalHandlers(
       if (!resolveParams) {
         return;
       }
-      const { inputId, decision, reviewer } = resolveParams;
+      const { inputId, instanceId, decision, reviewer } = resolveParams;
       let autoReviewResolution = false;
       await handleApprovalResolve({
         approvalKind: "exec",
         manager,
         inputId,
+        instanceId,
         decision,
         respond,
         context,

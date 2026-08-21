@@ -312,6 +312,7 @@ export const ExecApprovalRequestParamsSchema = closedObject({
 /** Reviewer decision payload for one pending exec approval. */
 export const ExecApprovalResolveParamsSchema = closedObject({
   id: NonEmptyString,
+  instanceId: Type.Optional(NonEmptyString),
   decision: NonEmptyString,
   reviewer: Type.Optional(ApprovalChannelReviewerSchema),
 });
