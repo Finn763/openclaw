@@ -119,7 +119,7 @@ export function listLocalTuiProcesses(
       [
         "-NoProfile",
         "-Command",
-        "Get-CimInstance Win32_Process | Select-Object ProcessId,CreationDate,CommandLine | ConvertTo-Json -Compress",
+        "$currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-CimInstance Win32_Process | ForEach-Object { $ownerSid=(Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue).Sid; [pscustomobject]@{ProcessId=$_.ProcessId;CommandLine=$_.CommandLine;OwnerSid=$ownerSid;CurrentSid=$currentSid} } | ConvertTo-Json -Compress",
       ],
       { encoding: "utf8", killSignal: "SIGKILL", timeout: LOCAL_TUI_PROCESS_PROBE_TIMEOUT_MS },
     );
@@ -134,6 +134,8 @@ export function listLocalTuiProcesses(
         }
         const pidValue = Reflect.get(entry, "ProcessId");
         const commandValue = Reflect.get(entry, "CommandLine");
+        const ownerSidValue = Reflect.get(entry, "OwnerSid");
+        const currentSidValue = Reflect.get(entry, "CurrentSid");
         const pid = typeof pidValue === "number" ? pidValue : undefined;
         const command = typeof commandValue === "string" ? commandValue.trim() : undefined;
         const startTime = pid
@@ -141,6 +143,8 @@ export function listLocalTuiProcesses(
           : null;
         return pid &&
           pid !== (params.currentPid ?? process.pid) &&
+          typeof ownerSidValue === "string" &&
+          ownerSidValue === currentSidValue &&
           command &&
           isLocalTuiCommand(command, "win32")
           ? [{ pid, command, ...(startTime === null ? {} : { startTime: String(startTime) }) }]
@@ -309,6 +313,15 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
 export async function waitForLocalTuiUpdate(
   acquireLock: typeof acquireFileLock = acquireFileLock,
 ): Promise<void> {
-  const lock = await acquireLock(LOCAL_TUI_UPDATE_LOCK_PATH, LOCAL_TUI_UPDATE_LOCK_OPTIONS);
-  await lock.release();
+  for (;;) {
+    try {
+      const lock = await acquireLock(LOCAL_TUI_UPDATE_LOCK_PATH, LOCAL_TUI_UPDATE_LOCK_OPTIONS);
+      await lock.release();
+      return;
+    } catch (error) {
+      if (extractErrorCode(error) !== "file_lock_timeout") {
+        throw error;
+      }
+    }
+  }
 }

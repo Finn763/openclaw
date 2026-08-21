@@ -93,14 +93,28 @@ describe("local TUI processes", () => {
     const spawnSync = vi.fn().mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
-        { ProcessId: 101, CommandLine: "C:\\openclaw.exe tui" },
-        { ProcessId: 102, CommandLine: "C:\\openclaw.exe gateway" },
-        { ProcessId: 103, CommandLine: '"C:\\Program Files\\OpenClaw\\openclaw.exe" chat' },
+        { ProcessId: 101, CommandLine: "C:\\openclaw.exe tui", OwnerSid: "S-1", CurrentSid: "S-1" },
+        {
+          ProcessId: 102,
+          CommandLine: "C:\\openclaw.exe gateway",
+          OwnerSid: "S-1",
+          CurrentSid: "S-1",
+        },
+        {
+          ProcessId: 103,
+          CommandLine: '"C:\\Program Files\\OpenClaw\\openclaw.exe" chat',
+          OwnerSid: "S-1",
+          CurrentSid: "S-1",
+        },
         {
           ProcessId: 104,
           CommandLine:
             '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\OpenClaw\\openclaw.mjs" terminal',
+          OwnerSid: "S-1",
+          CurrentSid: "S-1",
         },
+        { ProcessId: 105, CommandLine: "C:\\openclaw.exe tui", OwnerSid: "S-2", CurrentSid: "S-1" },
+        { ProcessId: 106, CommandLine: "C:\\openclaw.exe tui", OwnerSid: null, CurrentSid: "S-1" },
       ]),
     });
 
@@ -225,6 +239,20 @@ describe("local TUI processes", () => {
   it("waits for the update gate before TUI startup", async () => {
     const release = vi.fn(async () => {});
     await waitForLocalTuiUpdate(vi.fn(async () => ({ lockPath: "test", release })));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("keeps waiting after the bounded lock attempt while an update is still running", async () => {
+    const release = vi.fn(async () => {});
+    const timeout = Object.assign(new Error("busy"), { code: "file_lock_timeout" });
+    const acquireLock = vi
+      .fn()
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce({ lockPath: "test", release });
+
+    await waitForLocalTuiUpdate(acquireLock);
+
+    expect(acquireLock).toHaveBeenCalledTimes(2);
     expect(release).toHaveBeenCalledOnce();
   });
 });
