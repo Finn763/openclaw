@@ -160,8 +160,28 @@ If core npm published but the parent failed afterward, repeat the same
 `OpenClaw Release Publish` command with
 `-f openclaw_npm_resume_run_id=<successful-core-publish-run-id>`. The parent
 must prove the live registry tarball is the preflight artifact before it resumes
-release evidence, Docker, and the shared finalizer. Never bypass those stages
-with a separate Docker-only closeout.
+release evidence, Docker, and the shared finalizer.
+
+If npm publication and its selector are already complete but only Docker
+publication needs recovery, use the narrower Docker-only path from current
+`main`:
+
+```bash
+gh workflow run openclaw-release-publish.yml \
+  --ref main \
+  -f tag=vYYYY.M.P \
+  -f preflight_run_id=<npm-preflight-run-id> \
+  -f full_release_validation_run_id=<full-validation-run-id> \
+  -f full_release_validation_run_attempt=<full-validation-run-attempt> \
+  -f npm_dist_tag=extended-stable \
+  -f publish_openclaw_npm=false \
+  -f publish_docker_only=true
+```
+
+This path rechecks the exact npm version, `extended-stable` selector, preflight
+tarball digest, and validation evidence before invoking `Docker Release`. It
+does not run the shared GitHub Release finalizer; use the core-resume path when
+the draft release also needs evidence attachment or publication.
 
 If only the root selector fails, use the generated
 `npm dist-tag add openclaw@YYYY.M.P extended-stable` repair command printed in
