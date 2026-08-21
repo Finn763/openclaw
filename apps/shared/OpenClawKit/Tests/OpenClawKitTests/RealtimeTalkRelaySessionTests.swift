@@ -982,7 +982,7 @@ extension RealtimeTalkRelaySessionTests {
                 request: { method, params, _ in
                     await requests.record(method: method, params: params)
                     await barrier.suspend()
-                    return Data("{\"status\":\"\(status)\"}".utf8)
+                    return Data("{\"ok\":true,\"status\":\"\(status)\"}".utf8)
                 }),
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
             audioCapture: TestRealtimeTalkAudioCapture(),
@@ -1288,7 +1288,7 @@ extension RealtimeTalkRelaySessionTests {
                     await requests.record(method: method, params: params)
                     if method == "talk.session.cancelOutput" {
                         await barrier.suspend()
-                        return Data("{\"status\":\"applied\",\"turnId\":\"turn-1\"}".utf8)
+                        return Data("{\"ok\":true,\"status\":\"applied\",\"turnId\":\"turn-1\"}".utf8)
                     }
                     return Data("{\"ok\":true}".utf8)
                 }),

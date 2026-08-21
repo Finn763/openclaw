@@ -851,6 +851,21 @@ class TalkModeManagerTest {
     }
 
   @Test
+  fun outputCancellationResultRetainsOnlyAcceptedClearFences() {
+    assertFalse(shouldRetireRealtimeOutputCancellation("""{"ok":true}"""))
+    assertFalse(shouldRetireRealtimeOutputCancellation("""{"ok":true,"status":"applied"}"""))
+    assertTrue(shouldRetireRealtimeOutputCancellation("""{"ok":true,"status":"stale"}"""))
+    assertTrue(shouldRetireRealtimeOutputCancellation("""{"ok":true,"status":"idle"}"""))
+  }
+
+  @Test
+  fun malformedOutputCancellationResultFailsClosed() {
+    for (response in listOf("""{"status":"stale"}""", """{"ok":true,"status":"unknown"}""", """{"ok":true,"extra":1}""")) {
+      assertTrue(runCatching { shouldRetireRealtimeOutputCancellation(response) }.isFailure)
+    }
+  }
+
+  @Test
   fun stalePushToTalkCompletionCannotResumeNewerPause() =
     runTest {
       val manager = createManager()

@@ -1195,12 +1195,20 @@ extension RealtimeTalkRelaySession {
             ]
             do {
                 let response = try await transport.request("talk.session.cancelOutput", payload, 8000)
-                let status = try? JSONDecoder().decode([String: String].self, from: response)["status"]
+                let result = try JSONDecoder().decode(TalkSessionCancelOutputResult.self, from: response)
+                guard result.ok else { throw URLError(.badServerResponse) }
                 guard let self, self.isCurrentOutputCancellation(cancellationGeneration) else { return }
-                if status == "stale" || status == "idle" || !self.awaitingOutputClear {
+                switch result.status?.stringValue {
+                case "stale", "idle":
                     self.retireOutputCancellation()
-                } else {
-                    self.outputCancellationTask = nil
+                case nil, "applied":
+                    if self.awaitingOutputClear {
+                        self.outputCancellationTask = nil
+                    } else {
+                        self.retireOutputCancellation()
+                    }
+                default:
+                    throw URLError(.badServerResponse)
                 }
             } catch {
                 guard let self, self.isCurrentOutputCancellation(cancellationGeneration) else { return }

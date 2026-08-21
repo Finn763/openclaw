@@ -432,7 +432,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
         reason: normalizeOptionalString(params.reason) ?? "output-cancelled",
         turnId: normalizeOptionalString(params.turnId),
       });
-      respondOk(respond, result);
+      respondOk(respond, { ok: true, ...result });
     } catch (err) {
       respondUnavailable(respond, err);
     }

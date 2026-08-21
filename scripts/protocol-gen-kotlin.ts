@@ -87,6 +87,7 @@ const schemaNames = new Map<string, string>([
   ["SessionGitHubPublicationPublished", "SessionGitHubPublicationPublished"],
   ["SessionGitHubPublicationFailed", "SessionGitHubPublicationFailed"],
   ["SessionGitHubPublicationResult", "SessionGitHubPublicationResult"],
+  ["TalkSessionCancelOutputResult", "TalkSessionCancelOutputResult"],
 ]);
 
 const androidEnums: EnumSpec[] = [

@@ -3,6 +3,7 @@ package ai.openclaw.app.voice
 import ai.openclaw.app.gateway.ChatSendAck
 import ai.openclaw.app.gateway.GatewayRequestRejected
 import ai.openclaw.app.gateway.GatewaySession
+import ai.openclaw.app.gateway.TalkSessionCancelOutputResult
 import ai.openclaw.app.gateway.chatSendAckHistorySinceSeconds
 import ai.openclaw.app.gateway.parseChatSendAck
 import ai.openclaw.app.i18n.NativeText
@@ -60,6 +61,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -2934,9 +2936,8 @@ class TalkModeManager internal constructor(
             put("reason", JsonPrimitive(reason))
             if (turnId != null) put("turnId", JsonPrimitive(turnId))
           }
-        val result =
-          json.parseToJsonElement(requestGateway("talk.session.cancelOutput", params.toString(), timeoutMs = 5_000)).asObjectOrNull()
-        if (result?.get("status").asStringOrNull() != "applied") clear.complete(Unit)
+        val response = requestGateway("talk.session.cancelOutput", params.toString(), timeoutMs = 5_000)
+        if (shouldRetireRealtimeOutputCancellation(response)) clear.complete(Unit)
         // The response confirms provider cancellation; clear confirms that the
         // old playback boundary reached Android before capture can resume.
         withTimeout(2_000) { clear.await() }
@@ -3334,6 +3335,16 @@ class TalkModeManager internal constructor(
 }
 
 private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
+
+internal fun shouldRetireRealtimeOutputCancellation(response: String): Boolean {
+  val result = Json.decodeFromString<TalkSessionCancelOutputResult>(response)
+  check(result.ok) { "talk.session.cancelOutput was not accepted" }
+  return when (result.status) {
+    null, "applied" -> false
+    "stale", "idle" -> true
+    else -> error("unknown talk.session.cancelOutput status")
+  }
+}
 
 private fun JsonElement?.asStringOrNull(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
