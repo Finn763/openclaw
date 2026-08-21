@@ -184,24 +184,55 @@ private final class TestRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
 private actor RealtimeRelayStartupBarrier {
     private var entered = false
     private var released = false
-    private var enteredWaiter: CheckedContinuation<Void, Never>?
+    private var enteredWaiter: (id: UUID, continuation: CheckedContinuation<Void, any Error>)?
     private var releaseWaiter: CheckedContinuation<Void, Never>?
 
     func suspend() async {
         self.entered = true
-        self.enteredWaiter?.resume()
-        self.enteredWaiter = nil
+        if let waiter = self.enteredWaiter {
+            self.enteredWaiter = nil
+            waiter.continuation.resume()
+        }
         guard !self.released else { return }
         await withCheckedContinuation { continuation in
             if self.released { continuation.resume() } else { self.releaseWaiter = continuation }
         }
     }
 
-    func waitUntilEntered() async {
-        guard !self.entered else { return }
-        await withCheckedContinuation { continuation in
-            if self.entered { continuation.resume() } else { self.enteredWaiter = continuation }
+    func waitUntilEntered() async throws {
+        do {
+            try await AsyncTimeout.withTimeout(
+                seconds: 30,
+                onTimeout: { RealtimeRelayTestTimeout(operation: "request barrier entry") },
+                operation: { try await self.waitUntilEnteredWithoutDeadline() })
+        } catch {
+            self.release()
+            throw error
         }
+    }
+
+    private func waitUntilEnteredWithoutDeadline() async throws {
+        guard !self.entered else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if self.entered {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    self.enteredWaiter = (id, continuation)
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelEnteredWaiter(id) }
+        }
+    }
+
+    private func cancelEnteredWaiter(_ id: UUID) {
+        guard let waiter = self.enteredWaiter, waiter.id == id else { return }
+        self.enteredWaiter = nil
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     func release() {
@@ -210,6 +241,22 @@ private actor RealtimeRelayStartupBarrier {
         self.releaseWaiter?.resume()
         self.releaseWaiter = nil
     }
+}
+
+private func waitForRealtimeRelayEvent<Event: Sendable>(
+    _ stream: AsyncStream<Event>,
+    operation: String) async throws -> Event
+{
+    try await AsyncTimeout.withTimeout(
+        seconds: 30,
+        onTimeout: { RealtimeRelayTestTimeout(operation: operation) },
+        operation: {
+            var iterator = stream.makeAsyncIterator()
+            guard let event = await iterator.next() else {
+                throw RealtimeRelayTestTimeout(operation: "\(operation) before stream ended")
+            }
+            return event
+        })
 }
 
 private struct RealtimeRelayStartupRequest: Sendable {
@@ -550,6 +597,7 @@ extension RealtimeTalkRelaySessionTests {
                 if replacementIsCompleting, !$0 { replacementFinished.continuation.yield() }
             })
         defer {
+            replacementFinished.continuation.finish()
             session.stop()
             player.shutdown()
         }
@@ -570,10 +618,11 @@ extension RealtimeTalkRelaySessionTests {
         #expect(session._test_isOutputPlaying())
         #expect(speakingStates == [true, false, true])
 
-        var replacementFinishIterator = replacementFinished.stream.makeAsyncIterator()
         replacementIsCompleting = true
         player.complete(1)
-        _ = await replacementFinishIterator.next()
+        _ = try await waitForRealtimeRelayEvent(
+            replacementFinished.stream,
+            operation: "replacement playback to finish")
 
         #expect(!session._test_isOutputPlaying())
         #expect(speakingStates == [true, false, true, false])
@@ -779,7 +828,7 @@ extension RealtimeTalkRelaySessionTests {
 
             #expect(session.cancelOutput())
             #expect(try await speakingChanged.next("cancellation fence") == false)
-            await barrier.waitUntilEntered()
+            try await barrier.waitUntilEntered()
             #expect(await requests.snapshot().map(\.method) == ["talk.session.cancelOutput"])
             #expect(session._test_enqueueMicrophoneFrame(Data([0x01])) == nil)
             await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
@@ -1006,7 +1055,7 @@ extension RealtimeTalkRelaySessionTests {
         #expect(!speakingStates.dropFirst().contains(true))
     }
 
-    @Test func `superseded cancellation failure leaves the active fence intact`() async {
+    @Test func `superseded cancellation failure leaves the active fence intact`() async throws {
         let barrier = RealtimeRelayStartupBarrier()
         let requests = RealtimeRelayStartupRequestLog()
         var issues: [RealtimeTalkRelayIssue] = []
@@ -1033,7 +1082,7 @@ extension RealtimeTalkRelaySessionTests {
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
 
         #expect(session.cancelOutput())
-        await barrier.waitUntilEntered()
+        try await barrier.waitUntilEntered()
         await session._test_handleGatewayEvent(EventFrame(
             type: "event",
             event: "talk.event",
@@ -1078,7 +1127,7 @@ extension RealtimeTalkRelaySessionTests {
         session._test_prepareAudioSender(relaySessionId: "relay-1")
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(session.cancelOutput())
-        await barrier.waitUntilEntered()
+        try await barrier.waitUntilEntered()
         await session._test_handleGatewayEvent(EventFrame(
             type: "event",
             event: "talk.event",
@@ -1101,7 +1150,7 @@ extension RealtimeTalkRelaySessionTests {
         ])
     }
 
-    @Test func `close retires in flight cancellation failure`() async {
+    @Test func `close retires in flight cancellation failure`() async throws {
         let barrier = RealtimeRelayStartupBarrier()
         var issues: [RealtimeTalkRelayIssue] = []
         let session = RealtimeTalkRelaySession(
@@ -1124,11 +1173,25 @@ extension RealtimeTalkRelaySessionTests {
 
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
         #expect(session.cancelOutput())
-        await barrier.waitUntilEntered()
-        let cancellationTask = session._test_outputCancellationTask()
-        session.stop()
-        await barrier.release()
-        await cancellationTask?.value
+        do {
+            try await barrier.waitUntilEntered()
+            let cancellationTask = try #require(session._test_outputCancellationTask())
+            do {
+                try Task.checkCancellation()
+                session.stop()
+                await barrier.release()
+                await cancellationTask.value
+            } catch {
+                session.stop()
+                await barrier.release()
+                await cancellationTask.value
+                throw error
+            }
+        } catch {
+            session.stop()
+            await barrier.release()
+            throw error
+        }
 
         #expect(issues.isEmpty)
     }
@@ -1287,8 +1350,8 @@ extension RealtimeTalkRelaySessionTests {
         let events = RealtimeRelayEventSource()
         let requests = RealtimeRelayStartupRequestLog()
         let audioCapture = TestRealtimeTalkAudioCapture()
-        let issueNotification = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        defer { issueNotification.continuation.finish() }
+        let issueNotification = AsyncStream.makeStream(
+            of: RealtimeTalkRelayIssue.self, bufferingPolicy: .bufferingNewest(1))
         let result = TalkSessionCreateResult(
             sessionid: "talk-session",
             mode: AnyCodable("realtime"),
@@ -1311,28 +1374,44 @@ extension RealtimeTalkRelaySessionTests {
             audioCapture: audioCapture,
             pcmPlayer: UnusedPCMStreamingAudioPlayer(),
             onStatus: { _ in },
-            onIssue: { _ in issueNotification.continuation.yield() },
+            onIssue: { issueNotification.continuation.yield($0) },
             onSpeakingChanged: { _ in })
-        let start = Task { @MainActor in
+        let start = Task { @MainActor in try await session.start() }
+        do {
+            try await barrier.waitUntilEntered()
+            await events.finish()
+            let issue = try await waitForRealtimeRelayEvent(
+                issueNotification.stream,
+                operation: "relay startup issue")
+            await barrier.release()
+
+            var caughtStartupError: NSError?
             do {
-                try await session.start()
-                return nil as String?
+                try await start.value
+                Issue.record("Expected relay startup to fail")
             } catch {
-                return error.localizedDescription
+                caughtStartupError = error as NSError
             }
+            let startupError = try #require(caughtStartupError)
+            #expect(startupError.domain == "RealtimeTalkRelay")
+            #expect(startupError.code == 6)
+            #expect(issue.code == "realtime_unavailable")
+            #expect(issue.phase == "connect")
+            #expect(issue.transport == "gateway-relay")
+            #expect(!issue.message.isEmpty)
+            #expect(audioCapture.startCount == 0)
+            let recorded = await requests.snapshot()
+            #expect(recorded.map(\.method) == ["talk.session.create", "talk.session.close"])
+            #expect(recorded.last?.params?["sessionId"]?.stringValue == "relay-1")
+            issueNotification.continuation.finish()
+        } catch {
+            await barrier.release()
+            session.stop()
+            start.cancel()
+            _ = try? await start.value
+            issueNotification.continuation.finish()
+            throw error
         }
-        await barrier.waitUntilEntered()
-
-        var issueIterator = issueNotification.stream.makeAsyncIterator()
-        await events.finish()
-        _ = await issueIterator.next()
-        await barrier.release()
-
-        #expect(await start.value == "Realtime connection ended before it became ready.")
-        #expect(audioCapture.startCount == 0)
-        let recorded = await requests.snapshot()
-        #expect(recorded.map(\.method) == ["talk.session.create", "talk.session.close"])
-        #expect(recorded.last?.params?["sessionId"]?.stringValue == "relay-1")
     }
 
     @Test func `microphone failure terminates relay and reports typed issue`() async throws {
@@ -1492,7 +1571,7 @@ extension RealtimeTalkRelaySessionTests {
             onStatus: { statuses.append($0) },
             onSpeakingChanged: { speakingStates.append($0) })
         let start = Task { @MainActor in try await session.start() }
-        await barrier.waitUntilEntered()
+        try await barrier.waitUntilEntered()
 
         session.stop()
         await barrier.release()
@@ -1533,7 +1612,7 @@ extension RealtimeTalkRelaySessionTests {
             onStatus: { statuses.append($0) },
             onSpeakingChanged: { speakingStates.append($0) })
         let start = Task { @MainActor in try await session.start() }
-        await barrier.waitUntilEntered()
+        try await barrier.waitUntilEntered()
 
         session.stop()
         await barrier.release()
@@ -1546,7 +1625,7 @@ extension RealtimeTalkRelaySessionTests {
         #expect(!speakingStates.contains(true))
     }
 
-    @Test func `stop during buffered tool call prevents late relay side effects`() async {
+    @Test func `stop during buffered tool call prevents late relay side effects`() async throws {
         let barrier = RealtimeRelayStartupBarrier()
         let requests = RealtimeRelayStartupRequestLog()
         var statuses: [String] = []
@@ -1582,7 +1661,7 @@ extension RealtimeTalkRelaySessionTests {
                 seq: nil,
                 stateversion: nil))
         }
-        await barrier.waitUntilEntered()
+        try await barrier.waitUntilEntered()
 
         session.stop()
         await barrier.release()
