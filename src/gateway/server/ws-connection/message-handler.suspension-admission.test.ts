@@ -57,9 +57,7 @@ function createLogger() {
   };
 }
 
-function attachHarness(
-  params: { deferSocketSend?: boolean; startupPending?: boolean } = {},
-) {
+function attachHarness(params: { deferSocketSend?: boolean; startupPending?: boolean } = {}) {
   let onMessage: ((data: WebSocket.RawData) => void) | undefined;
   let finishSocketSend: (() => void) | undefined;
   let client: unknown = null;
