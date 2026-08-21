@@ -109,19 +109,27 @@ suite.define(() => {
         .toBe("2px");
       const restingTextBounds = await actionOnlyText.boundingBox();
 
+      // The reservation is whatever the action buttons actually occupy, so it
+      // tracks their box rather than a number copied from the stylesheet.
+      const reservesRoomForActions = async () => {
+        const [padding, aside] = await Promise.all([
+          actionOnlyText.evaluate((element) =>
+            Number.parseFloat(getComputedStyle(element).paddingRight),
+          ),
+          actionOnlyRow.locator(".sidebar-recent-session__aside").boundingBox(),
+        ]);
+        return aside != null && padding >= aside.width;
+      };
+
       await actionOnlyRow.hover();
       await expect.poll(() => actionOpacity(actionOnlyPin)).toBe("1");
-      await expect
-        .poll(() => actionOnlyText.evaluate((element) => getComputedStyle(element).paddingRight))
-        .toBe("52px");
+      await expect.poll(reservesRoomForActions).toBe(true);
       const hoveredTextBounds = await actionOnlyText.boundingBox();
 
       await page.mouse.move(0, 0);
       await actionOnlyPin.focus();
       await expect.poll(() => actionOpacity(actionOnlyPin)).toBe("1");
-      await expect
-        .poll(() => actionOnlyText.evaluate((element) => getComputedStyle(element).paddingRight))
-        .toBe("52px");
+      await expect.poll(reservesRoomForActions).toBe(true);
       const focusedTextBounds = await actionOnlyText.boundingBox();
       if (!restingTextBounds || !hoveredTextBounds || !focusedTextBounds) {
         throw new Error("Expected visible action-only text geometry");
@@ -589,8 +597,16 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect
-        .poll(() => rowTitle.evaluate((element) => getComputedStyle(element).paddingRight))
-        .toBe("52px");
+        .poll(async () => {
+          const [padding, aside] = await Promise.all([
+            rowTitle.evaluate((element) =>
+              Number.parseFloat(getComputedStyle(element).paddingRight),
+            ),
+            row.locator(".sidebar-recent-session__aside").boundingBox(),
+          ]);
+          return aside != null && padding >= aside.width;
+        })
+        .toBe(true);
 
       const [textBounds, nameBounds, pinBounds, menuBounds] = await Promise.all([
         row.locator(".sidebar-recent-session__text").boundingBox(),
@@ -621,8 +637,16 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
       await expect
-        .poll(() => rowTitle.evaluate((element) => getComputedStyle(element).paddingRight))
-        .toBe("52px");
+        .poll(async () => {
+          const [padding, aside] = await Promise.all([
+            rowTitle.evaluate((element) =>
+              Number.parseFloat(getComputedStyle(element).paddingRight),
+            ),
+            row.locator(".sidebar-recent-session__aside").boundingBox(),
+          ]);
+          return aside != null && padding >= aside.width;
+        })
+        .toBe(true);
 
       const [focusedTextBounds, focusedNameBounds, focusedPinBounds, focusedMenuBounds] =
         await Promise.all([

@@ -2389,10 +2389,11 @@ body.update-dialog-open .sidebar-update-card__status {
   right: calc(var(--sidebar-child-session-toggle-width) + 4px);
 }
 
-/* A 24px control centred on the 18px title line hangs into the row below, and
-   its hover fill would clip the top of the badges that now stay lit there. Two
-   line rows shrink the box to the line it sits on; the 14px glyph is unchanged
-   and coarse pointers keep the full 24px target. */
+/* A control taller than the 18px title line hangs into the row below, and its
+   hover fill would clip the top of the badges that now stay lit there. Two-line
+   rows shrink the box to the line it sits on; the glyph is unchanged. Touch has
+   no hover fill to clip, so it keeps the square box (see the coarse-pointer
+   block below). */
 .sidebar-recent-session:not(.sidebar-recent-session--child):not(
     .sidebar-recent-session--single-line
   )
@@ -2404,14 +2405,14 @@ body.update-dialog-open .sidebar-update-card__status {
    badges, state and time visible, which is the point of moving the buttons up. */
 .sidebar-recent-session:not(.sidebar-recent-session--child):is(:hover, :focus-within)
   .sidebar-recent-session__title-row {
-  padding-right: 52px;
+  padding-right: var(--session-row-actions-reserve, 52px);
 }
 
 /* Single-line rows put the endcap beside the title, so the reservation has to
    cover the whole line there rather than the title alone. */
 .sidebar-recent-session--single-line:not(.sidebar-recent-session--child):is(:hover, :focus-within)
   .sidebar-recent-session__text {
-  padding-right: 52px;
+  padding-right: var(--session-row-actions-reserve, 52px);
 }
 
 .sidebar-recent-session--single-line:not(.sidebar-recent-session--child):is(:hover, :focus-within)
@@ -2421,13 +2422,22 @@ body.update-dialog-open .sidebar-update-card__status {
 
 /* Touch keeps the actions permanently visible beside the persistent endcap. */
 @media (hover: none), (pointer: coarse) {
+  /* No hover fill here, so nothing clips the badges and the buttons keep their
+     square box rather than the two-line row's title-line clamp. */
+  .sidebar-recent-session:not(.sidebar-recent-session--child):not(
+      .sidebar-recent-session--single-line
+    )
+    .session-action {
+    height: var(--session-row-action-size, 24px);
+  }
+
   .sidebar-recent-session:not(.sidebar-recent-session--child) .sidebar-recent-session__title-row {
-    padding-right: 52px;
+    padding-right: var(--session-row-actions-reserve, 52px);
   }
 
   .sidebar-recent-session--single-line:not(.sidebar-recent-session--child)
     .sidebar-recent-session__text {
-    padding-right: 52px;
+    padding-right: var(--session-row-actions-reserve, 52px);
   }
 
   .sidebar-recent-session--single-line:not(.sidebar-recent-session--child)

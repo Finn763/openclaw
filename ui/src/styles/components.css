@@ -5679,17 +5679,25 @@ td.data-table-key-col {
   --session-row-ring-size: calc(var(--session-row-glyph-size) - 3px);
 
   /* One grid for everything in the trailing column. The action buttons set it:
-     they need a 24px target plus a hair of separation so adjacent hover fills
-     stay distinct, and the endcap's bare glyphs then borrow the same pitch and
-     the same inset. Left to their own values the buttons stepped 25px while the
-     badges stepped 20px and sat 5px further right, so no glyph ever landed
-     under the one above it. */
-  --session-row-action-size: 24px;
+     their box plus a hair of separation, so adjacent hover fills stay distinct
+     and adjacent hit areas never touch, and the endcap's bare glyphs then
+     borrow the same pitch and the same inset. Left to their own values the
+     buttons stepped 25px while the badges stepped 20px and sat 5px further
+     right, so no glyph ever landed under the one above it. The box is the
+     smallest that still reads as a button around a 14px glyph; anything wider
+     spaced the whole column out for the sake of empty hover fill. */
+  --session-row-action-size: 20px;
   --session-row-action-gap: 1px;
   --session-row-glyph-pitch: calc(var(--session-row-action-size) + var(--session-row-action-gap));
   --session-row-glyph-gap: calc(var(--session-row-glyph-pitch) - var(--session-row-glyph-size));
   --session-row-glyph-inset: calc(
     (var(--session-row-action-size) - var(--session-row-glyph-size)) / 2
+  );
+
+  /* What the title gives up so the actions have somewhere to land: both boxes,
+     the gap between them, and a hair of clearance from the ellipsis. */
+  --session-row-actions-reserve: calc(
+    var(--session-row-action-size) * 2 + var(--session-row-action-gap) + 3px
   );
 
   position: relative;
