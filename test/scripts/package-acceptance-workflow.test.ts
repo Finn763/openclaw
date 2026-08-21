@@ -6199,8 +6199,10 @@ describe("package artifact reuse", () => {
       "skipping the lane",
       "does not duplicate that",
       "canonical Package Acceptance Telegram E2E",
-      "| `npm-telegram`      | Published-package Telegram E2E; requires `release_package_spec` or `npm_telegram_package_spec`. |",
     ]);
+    expect(fullReleaseDocs).toMatch(
+      /\| `npm-telegram`\s+\| Published-package Telegram E2E; requires `release_package_spec` or `npm_telegram_package_spec`\.\s+\|/u,
+    );
   });
 
   it("lets npm Telegram consume current-run or release-run package artifacts", () => {
