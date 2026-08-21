@@ -2156,11 +2156,11 @@ body.update-dialog-open .sidebar-update-card__status {
 }
 
 .sidebar-child-session-toggle__icon svg {
-  width: 11px;
-  height: 11px;
+  width: var(--session-row-glyph-size, 11px);
+  height: var(--session-row-glyph-size, 11px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8px;
+  stroke-width: var(--session-row-glyph-stroke, 1.8px);
 }
 
 .sidebar-child-session-toggle__count {
@@ -2181,11 +2181,11 @@ body.update-dialog-open .sidebar-update-card__status {
 }
 
 .sidebar-board-glyph svg {
-  width: 13px;
-  height: 13px;
+  width: var(--session-row-glyph-size, 13px);
+  height: var(--session-row-glyph-size, 13px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.7px;
+  stroke-width: var(--session-row-glyph-stroke, 1.7px);
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -4360,8 +4360,8 @@ html:not(.openclaw-native-macos):not(.openclaw-native-nav):not(.openclaw-native-
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--session-row-glyph-size, 16px);
+  height: var(--session-row-glyph-size, 16px);
   flex: none;
 }
 
@@ -4379,11 +4379,11 @@ html:not(.openclaw-native-macos):not(.openclaw-native-nav):not(.openclaw-native-
 }
 
 .sidebar-session-attention__icon svg {
-  width: 15px;
-  height: 15px;
+  width: var(--session-row-glyph-size, 15px);
+  height: var(--session-row-glyph-size, 15px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8px;
+  stroke-width: var(--session-row-glyph-stroke, 1.8px);
   stroke-linecap: round;
   stroke-linejoin: round;
 }

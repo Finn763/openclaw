@@ -5666,6 +5666,12 @@ td.data-table-key-col {
    aside stacks transient state, relative time, and management actions in one
    grid cell, so hovering swaps state for actions without any layout shift. */
 .session-row-host {
+  /* One size and one stroke for every glyph the row draws. Seven different
+     values used to land on the same line, which read as broken alignment.
+     Surfaces outside a row keep their own sizes through the fallbacks. */
+  --session-row-glyph-size: 14px;
+  --session-row-glyph-stroke: 1.6px;
+
   position: relative;
 }
 
@@ -5757,11 +5763,11 @@ td.data-table-key-col {
 }
 
 .sidebar-session-fork-indicator svg {
-  width: 14px;
-  height: 14px;
+  width: var(--session-row-glyph-size, 14px);
+  height: var(--session-row-glyph-size, 14px);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6px;
+  stroke-width: var(--session-row-glyph-stroke, 1.6px);
 }
 
 /* Attribute badges (attached automation, approval, cloud placement):
@@ -5829,11 +5835,11 @@ td.data-table-key-col {
 }
 
 .session-row-badge svg {
-  width: 12px;
-  height: 12px;
+  width: var(--session-row-glyph-size, 12px);
+  height: var(--session-row-glyph-size, 12px);
   stroke: currentColor;
   fill: none;
-  stroke-width: 1.6px;
+  stroke-width: var(--session-row-glyph-stroke, 1.6px);
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -5864,11 +5870,11 @@ td.data-table-key-col {
 }
 
 .session-action svg {
-  width: 14px;
-  height: 14px;
+  width: var(--session-row-glyph-size, 14px);
+  height: var(--session-row-glyph-size, 14px);
   stroke: currentColor;
   fill: none;
-  stroke-width: 1.6px;
+  stroke-width: var(--session-row-glyph-stroke, 1.6px);
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -5923,8 +5929,8 @@ td.data-table-key-col {
 .session-run-spinner {
   box-sizing: border-box;
   display: inline-block;
-  width: 12px;
-  height: 12px;
+  width: var(--session-row-glyph-size, 12px);
+  height: var(--session-row-glyph-size, 12px);
   flex: 0 0 auto;
   border: 1.5px solid color-mix(in srgb, var(--run) 28%, transparent);
   border-top-color: var(--run);

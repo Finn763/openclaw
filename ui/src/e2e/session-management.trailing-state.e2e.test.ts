@@ -298,6 +298,63 @@ suite.define(() => {
     }
   });
 
+  it("draws every row glyph at one size", async () => {
+    const context = await suite.browser.newContext({
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      methodResponses: {
+        "sessions.list": sessionsListResponse([
+          sessionRow("agent:main:main", "Main", Date.now()),
+          sessionRow("agent:main:mixed", "Mixed glyphs", Date.now() - 1, {
+            forkSource: { sessionKey: "agent:main:main", sessionId: "source-session" },
+            hasActiveRun: true,
+            hasAutomation: true,
+            incognito: true,
+            status: "running",
+            unread: true,
+          }),
+        ]),
+      },
+      sessionKey: "agent:main:main",
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const row = page.locator('[data-session-key="agent:main:mixed"]');
+      await row.waitFor({ state: "visible", timeout: 10_000 });
+      await row.hover();
+      await expect
+        .poll(() =>
+          row.locator("[data-session-menu]").evaluate((el) => getComputedStyle(el).opacity),
+        )
+        .toBe("1");
+
+      // Badges, fork provenance, the run spinner and the action icons all drew
+      // themselves at different sizes on the same line, which reads as broken
+      // alignment. The unread dot is a dot, not a glyph, and keeps its own size.
+      const sizes = await row.evaluate((element) => {
+        const seen = new Set<string>();
+        for (const glyph of element.querySelectorAll("svg, .session-run-spinner")) {
+          const rect = glyph.getBoundingClientRect();
+          if (rect.width === 0) {
+            continue;
+          }
+          const style = getComputedStyle(glyph);
+          seen.add(`${Number.parseFloat(style.width)}x${Number.parseFloat(style.height)}`);
+        }
+        return [...seen];
+      });
+
+      expect(sizes.length, JSON.stringify(sizes)).toBe(1);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("keeps semantic state beside always-visible touch actions", async () => {
     const context = await suite.browser.newContext({
       hasTouch: true,

@@ -437,7 +437,12 @@ suite.define(() => {
       // beneath it. Only rows that actually have a subtitle keep the two-line shape.
       expect(plain.singleLine).toBe(true);
       expect(plain.height).toBeLessThan(layout.busyHeight);
-      expect(layout.badges.top).toBeGreaterThanOrEqual(layout.name.bottom - 1);
+      // Badges belong to the second line. Comparing centres keeps this true
+      // whatever size the row's glyphs are; the old top-edge slack was
+      // calibrated to one particular glyph size.
+      expect((layout.badges.top + layout.badges.bottom) / 2).toBeGreaterThan(
+        (layout.name.top + layout.name.bottom) / 2,
+      );
       expect(layout.name.right).toBeGreaterThan(layout.badges.left);
       expect((layout.badges.top + layout.badges.bottom) / 2).toBeCloseTo(
         (layout.subtitle.top + layout.subtitle.bottom) / 2,
