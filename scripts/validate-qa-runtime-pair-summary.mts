@@ -168,6 +168,21 @@ function requireCanonicalRuntimePair(runtimePair: unknown) {
   );
 }
 
+function matchesFrozenRuntimePairManifest(
+  options: { targetSha?: string; lane?: string },
+  scenarioIds: unknown[],
+  skippedScenarioIds: unknown[],
+) {
+  const manifest = FROZEN_RUNTIME_PAIR_MANIFESTS.get(`${options.targetSha}:${options.lane}`);
+  return (
+    manifest !== undefined &&
+    manifest.scenarioIds.length === scenarioIds.length &&
+    manifest.scenarioIds.every((scenarioId, index) => scenarioId === scenarioIds[index]) &&
+    manifest.gapScenarioIds.length === skippedScenarioIds.length &&
+    manifest.gapScenarioIds.every((scenarioId, index) => scenarioId === skippedScenarioIds[index])
+  );
+}
+
 export function validateQaRuntimePairSummary(
   summary: unknown,
   options: { requireExplicitGap?: boolean; targetSha?: string; lane?: string } = {},
@@ -175,11 +190,7 @@ export function validateQaRuntimePairSummary(
   if (!isRecord(summary) || !isRecord(summary.run) || !Array.isArray(summary.scenarios)) {
     throw new Error("runtime-pair summary is missing run or scenario evidence");
   }
-  const completedLegacyRun =
-    summary.run.status === undefined &&
-    typeof summary.run.finishedAt === "string" &&
-    Number.isFinite(Date.parse(summary.run.finishedAt));
-  if (summary.run.status !== "completed" && !completedLegacyRun) {
+  if (summary.run.status !== "completed" && summary.run.status !== undefined) {
     throw new Error("runtime-pair summary is not completed");
   }
   if (!requireCanonicalRuntimePair(summary.run.runtimePair)) {
@@ -218,6 +229,13 @@ export function validateQaRuntimePairSummary(
     }
   }
 
+  if (
+    run.status === undefined &&
+    !matchesFrozenRuntimePairManifest(options, scenarioIds, skippedScenarioIds)
+  ) {
+    throw new Error("runtime-pair summary is not completed");
+  }
+
   const expectedCounts = {
     total: summary.scenarios.length,
     passed,
@@ -239,14 +257,7 @@ export function validateQaRuntimePairSummary(
     throw new Error("nonzero candidate suite exit requires an explicit Codex-native harness gap");
   }
   if (options.requireExplicitGap === true) {
-    const manifest = FROZEN_RUNTIME_PAIR_MANIFESTS.get(`${options.targetSha}:${options.lane}`);
-    if (
-      !manifest ||
-      manifest.scenarioIds.length !== scenarioIds.length ||
-      manifest.scenarioIds.some((scenarioId, index) => scenarioId !== scenarioIds[index]) ||
-      manifest.gapScenarioIds.length !== skippedScenarioIds.length ||
-      manifest.gapScenarioIds.some((scenarioId, index) => scenarioId !== skippedScenarioIds[index])
-    ) {
+    if (!matchesFrozenRuntimePairManifest(options, scenarioIds, skippedScenarioIds)) {
       throw new Error("nonzero candidate exit is not covered by a trusted frozen-lane manifest");
     }
   }

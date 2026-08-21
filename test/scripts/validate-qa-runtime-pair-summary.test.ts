@@ -135,16 +135,20 @@ describe("frozen QA runtime-pair summary validation", () => {
     );
   });
 
-  it("accepts a completed legacy summary that used its finish timestamp", () => {
-    const fixture = summary([scenario({ name: "legacy terminal", status: "pass" })]);
+  it("accepts a statusless summary only for an exact frozen terminal manifest", () => {
+    const fixture = frozenCoreSummary();
     Reflect.deleteProperty(fixture.run, "status");
-    Object.assign(fixture.run, { finishedAt: "2026-08-21T03:34:17.434Z" });
 
-    expect(validateQaRuntimePairSummary(fixture)).toEqual({
-      total: 1,
-      passed: 1,
+    expect(
+      validateQaRuntimePairSummary(fixture, {
+        targetSha: "311047822ecdde24e824d839ab105ef08f17be00",
+        lane: "core",
+      }),
+    ).toEqual({
+      total: 27,
+      passed: 19,
       failed: 0,
-      skipped: 0,
+      skipped: 8,
     });
   });
 
@@ -155,6 +159,18 @@ describe("frozen QA runtime-pair summary validation", () => {
     expect(() => validateQaRuntimePairSummary(fixture)).toThrow(
       "runtime-pair summary is not completed",
     );
+  });
+
+  it("rejects a partial statusless artifact for a frozen candidate", () => {
+    const fixture = summary([scenario({ name: frozenCoreScenarioIds[0], status: "pass" })]);
+    Reflect.deleteProperty(fixture.run, "status");
+
+    expect(() =>
+      validateQaRuntimePairSummary(fixture, {
+        targetSha: "311047822ecdde24e824d839ab105ef08f17be00",
+        lane: "core",
+      }),
+    ).toThrow("runtime-pair summary is not completed");
   });
 
   it("accepts only passing scenarios and explicit one-sided Codex-native gaps", () => {
