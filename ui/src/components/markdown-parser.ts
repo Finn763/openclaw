@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import markdownItCjkFriendly from "markdown-it-cjk-friendly";
 import markdownItTaskLists from "markdown-it-task-lists";
 import type Token from "markdown-it/lib/token.mjs";
 import { t } from "../i18n/index.ts";
@@ -147,6 +148,7 @@ export function createMarkdownParser(): MarkdownIt {
     breaks: true,
     linkify: true,
   });
+  markdownParser.use(markdownItCjkFriendly);
   const defaultCodeInlineRenderer = markdownParser.renderer.rules.code_inline!;
 
   // Enable GFM strikethrough (~~text~~) to match original marked.js behavior.
