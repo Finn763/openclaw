@@ -23,6 +23,9 @@ describe("local TUI processes", () => {
         " 501 110 Thu Aug 20 19:00:00 2026 openclaw --profile work tui --local",
         " 501 111 Thu Aug 20 19:00:00 2026 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs --no-color terminal",
         " 501 112 Thu Aug 20 19:00:00 2026 openclaw --profile=work chat",
+        " 501 114 Thu Aug 20 19:00:00 2026 openclaw",
+        " 501 115 Thu Aug 20 19:00:00 2026 openclaw --profile work",
+        " 501 116 Thu Aug 20 19:00:00 2026 /usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs --no-color",
         " 502 113 Thu Aug 20 19:00:00 2026 openclaw tui",
         " 501 999 Thu Aug 20 19:00:00 2026 openclaw tui",
       ].join("\n"),
@@ -65,6 +68,17 @@ describe("local TUI processes", () => {
       {
         pid: 112,
         command: "openclaw --profile=work chat",
+        startTime: "Thu Aug 20 19:00:00 2026",
+      },
+      { pid: 114, command: "openclaw", startTime: "Thu Aug 20 19:00:00 2026" },
+      {
+        pid: 115,
+        command: "openclaw --profile work",
+        startTime: "Thu Aug 20 19:00:00 2026",
+      },
+      {
+        pid: 116,
+        command: "/usr/bin/node /usr/lib/node_modules/openclaw/openclaw.mjs --no-color",
         startTime: "Thu Aug 20 19:00:00 2026",
       },
     ]);

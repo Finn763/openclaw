@@ -49,6 +49,10 @@ function normalizeExecutableName(value: string | undefined): string {
   );
 }
 
+function isLocalTuiSubcommand(command: string | null | undefined): boolean {
+  return command === undefined || (command !== null && LOCAL_TUI_SUBCOMMANDS.has(command));
+}
+
 function isLocalTuiCommand(command: string, platform: NodeJS.Platform): boolean {
   const argv =
     platform === "win32" ? parseCmdScriptCommandLine(command) : tokenizeCommandLine(command);
@@ -57,22 +61,21 @@ function isLocalTuiCommand(command: string, platform: NodeJS.Platform): boolean 
     return true;
   }
   if (executable === "openclaw") {
-    return LOCAL_TUI_SUBCOMMANDS.has(resolveOpenClawCommand(argv.slice(1)) ?? "");
+    return isLocalTuiSubcommand(resolveOpenClawCommand(argv.slice(1)));
   }
   return (
     executable === "node" &&
     normalizeExecutableName(argv[1]) === "openclaw.mjs" &&
-    LOCAL_TUI_SUBCOMMANDS.has(resolveOpenClawCommand(argv.slice(2)) ?? "")
+    isLocalTuiSubcommand(resolveOpenClawCommand(argv.slice(2)))
   );
 }
 
-function resolveOpenClawCommand(args: readonly string[]): string | undefined {
-  return (
-    getCommandPositionalsWithRootOptions(["node", "openclaw", ...args], {
-      commandPath: [],
-      maxPositionals: 1,
-    })?.[0] ?? undefined
-  );
+function resolveOpenClawCommand(args: readonly string[]): string | null | undefined {
+  const positionals = getCommandPositionalsWithRootOptions(["node", "openclaw", ...args], {
+    commandPath: [],
+    maxPositionals: 1,
+  });
+  return positionals === null ? null : positionals[0];
 }
 
 function parseLocalTuiProcessLine(line: string, currentUid: number, currentPid = process.pid) {
