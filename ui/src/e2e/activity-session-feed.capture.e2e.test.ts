@@ -19,14 +19,27 @@ suite.define(() => {
   it("captures online, global activity, and person-filtered activity surfaces", async () => {
     await suite.withPage(
       {
+        colorScheme: "light",
         locale: "en-US",
         serviceWorkers: "block",
         viewport: { height: 900, width: 1280 },
       },
       async ({ page }) => {
-        const now = Date.now();
+        const current = new Date();
+        // Keep the automation fixtures on one local calendar day in every timezone.
+        const now = new Date(
+          current.getFullYear(),
+          current.getMonth(),
+          current.getDate() - 1,
+          12,
+        ).getTime();
         const releaseKey = "agent:main:release-readiness";
         const designKey = "agent:main:design-review";
+        const gatewayHandoffKey = "agent:main:gateway-handoff";
+        const nightlyMaintenanceKey = "agent:main:nightly-maintenance";
+        const incidentNotesKey = "agent:main:incident-notes";
+        const automationKeys = [designKey, gatewayHandoffKey, nightlyMaintenanceKey];
+        const nonAutomationKeys = [releaseKey, incidentNotesKey];
         await installMockGateway(page, {
           hasMultipleSessionSharingIdentities: true,
           presenceUsers: [
@@ -50,6 +63,18 @@ suite.define(() => {
               deviceFamily: "Mac",
               lastInputSeconds: 640,
               watchedSessions: [],
+            },
+            {
+              id: "profile-carol",
+              name: "Carol Singh",
+              lastInputSeconds: 14,
+              watchedSessions: [releaseKey],
+            },
+            {
+              id: "profile-dan",
+              name: "Dan Wu",
+              lastInputSeconds: 70,
+              watchedSessions: [designKey],
             },
           ],
           methodResponses: {
@@ -100,7 +125,7 @@ suite.define(() => {
                   updatedAt: now - 42 * 60_000,
                 },
                 {
-                  key: "agent:main:gateway-handoff",
+                  key: gatewayHandoffKey,
                   kind: "direct",
                   displayName: "Gateway handoff",
                   agentId: "main",
@@ -112,7 +137,7 @@ suite.define(() => {
                   updatedAt: now - 2 * 60 * 60_000,
                 },
                 {
-                  key: "agent:main:nightly-maintenance",
+                  key: nightlyMaintenanceKey,
                   kind: "direct",
                   displayName: "Nightly mock maintenance",
                   agentId: "main",
@@ -124,7 +149,7 @@ suite.define(() => {
                   updatedAt: now - 3 * 60 * 60_000,
                 },
                 {
-                  key: "agent:main:incident-notes",
+                  key: incidentNotesKey,
                   kind: "direct",
                   displayName: "Incident follow-up",
                   agentId: "main",
@@ -143,14 +168,57 @@ suite.define(() => {
 
         const response = await page.goto(controlUiSessionUrl(suite.server.baseUrl, releaseKey));
         expect(response?.status()).toBe(200);
-        await expect.poll(() => page.locator(".sidebar-online__person").count()).toBe(2);
-        await expect
-          .poll(() => page.locator('[data-online-user-id="profile-bob"]').getAttribute("class"))
-          .toContain("sidebar-online__person--away");
+        const onlineToggle = page.getByRole("button", { name: "Online", exact: true });
+        await expect.poll(() => onlineToggle.getAttribute("aria-expanded")).toBe("true");
+        await expect.poll(() => page.locator(".sidebar-online__person").count()).toBe(4);
         await mkdir(outputDir, { recursive: true });
         await page.locator(".sidebar").screenshot({
           animations: "disabled",
-          path: path.join(outputDir, "01-sidebar-online.png"),
+          path: path.join(outputDir, "01-sidebar-online-default-open-light.png"),
+        });
+
+        await onlineToggle.focus();
+        await page.keyboard.press("Enter");
+        await expect.poll(() => onlineToggle.getAttribute("aria-expanded")).toBe("false");
+        await expect.poll(() => page.locator(".sidebar-online__person").count()).toBe(0);
+        await expect
+          .poll(() =>
+            page.locator(".sidebar-online .viewer-facepile").getAttribute("data-viewer-count"),
+          )
+          .toBe("4");
+        await expect
+          .poll(() => page.locator(".sidebar-online .viewer-avatar--overflow").textContent())
+          .toContain("+2");
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.locator(".sidebar").screenshot({
+          animations: "disabled",
+          path: path.join(outputDir, "02-sidebar-online-user-collapsed-light.png"),
+        });
+
+        expect(
+          await page.evaluate(() => {
+            const value = localStorage.getItem("openclaw:sidebar:sessions:collapsed-sections");
+            return value ? JSON.parse(value) : [];
+          }),
+        ).toEqual(expect.arrayContaining(["work", "online"]));
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+        await page.reload();
+        await expect.poll(() => onlineToggle.getAttribute("aria-expanded")).toBe("false");
+        await page.emulateMedia({ colorScheme: "dark" });
+        await expect.poll(() => page.locator("html").getAttribute("data-theme-mode")).toBe("dark");
+        await page.locator(".sidebar").screenshot({
+          animations: "disabled",
+          path: path.join(outputDir, "03-sidebar-online-persisted-collapsed-dark.png"),
+        });
+        await onlineToggle.focus();
+        await page.keyboard.press("Space");
+        await expect.poll(() => onlineToggle.getAttribute("aria-expanded")).toBe("true");
+        await expect.poll(() => page.locator(".sidebar-online__person").count()).toBe(4);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.locator(".sidebar").screenshot({
+          animations: "disabled",
+          path: path.join(outputDir, "04-sidebar-online-user-expanded-dark.png"),
         });
 
         await page.evaluate(() => {
@@ -160,10 +228,12 @@ suite.define(() => {
           app.runtime?.context.navigate("activity");
         });
         await waitForControlUiRoute(page, { pathname: "/activity", routeId: "activity" });
-        await page.locator(".activity-feed__people-trigger").click();
+        const activityPage = page.locator("openclaw-activity-page");
+        await expect.poll(() => activityPage.count()).toBe(1);
+        await activityPage.locator(".activity-feed__people-trigger").click();
         await expect
           .poll(() =>
-            page
+            activityPage
               .locator(
                 '.activity-feed__people-row[data-activity-person]:not([data-activity-person=""])',
               )
@@ -171,16 +241,33 @@ suite.define(() => {
           )
           .toBe(3);
         await page.keyboard.press("Escape");
-        const automationGroup = page.locator("[data-activity-automation-group]");
+        const activityFeed = activityPage.locator(".activity-feed");
+        const activitySession = (key: string) =>
+          activityFeed.locator(`[data-activity-session="${key}"]`);
+        const automationGroup = activityFeed.locator("[data-activity-automation-group]");
         await expect.poll(() => automationGroup.count()).toBe(1);
         await expect.poll(() => automationGroup.getAttribute("aria-expanded")).toBe("false");
-        await expect.poll(() => page.locator("[data-activity-session]").count()).toBe(2);
+        for (const key of nonAutomationKeys) {
+          await expect.poll(() => activitySession(key).count()).toBe(1);
+        }
+        for (const key of automationKeys) {
+          await expect.poll(() => activitySession(key).count()).toBe(0);
+        }
         await automationGroup.click();
-        await expect.poll(() => page.locator("[data-activity-session]").count()).toBe(5);
+        await expect.poll(() => automationGroup.getAttribute("aria-expanded")).toBe("true");
+        for (const key of automationKeys) {
+          await expect.poll(() => activitySession(key).count()).toBe(1);
+        }
         await automationGroup.click();
-        await expect.poll(() => page.locator("[data-activity-session]").count()).toBe(2);
+        await expect.poll(() => automationGroup.getAttribute("aria-expanded")).toBe("false");
+        for (const key of automationKeys) {
+          await expect.poll(() => activitySession(key).count()).toBe(0);
+        }
+        for (const key of nonAutomationKeys) {
+          await expect.poll(() => activitySession(key).count()).toBe(1);
+        }
 
-        const liveRow = page.locator(`[data-activity-session="${releaseKey}"]`);
+        const liveRow = activitySession(releaseKey);
         await expect.poll(() => liveRow.locator(".activity-feed__run-dot").count()).toBe(1);
         await expect
           .poll(() => liveRow.locator(".activity-feed__session-headline").textContent())
@@ -199,7 +286,7 @@ suite.define(() => {
         );
         await page.screenshot({
           animations: "disabled",
-          path: path.join(outputDir, "02-global-activity.png"),
+          path: path.join(outputDir, "05-global-activity.png"),
         });
 
         await page.locator('[data-online-user-id="profile-alice"]').click();
@@ -207,14 +294,16 @@ suite.define(() => {
           .poll(() => new URL(page.url()).searchParams.get("person"))
           .toBe("profile-alice");
         await expect
-          .poll(() => page.locator('[data-activity-identity="profile-alice"]').isVisible())
+          .poll(() => activityPage.locator('[data-activity-identity="profile-alice"]').isVisible())
           .toBe(true);
         await expect
-          .poll(() => page.locator(".activity-feed__viewing-list .activity-feed__session").count())
+          .poll(() =>
+            activityPage.locator(".activity-feed__viewing-list .activity-feed__session").count(),
+          )
           .toBe(2);
         await page.screenshot({
           animations: "disabled",
-          path: path.join(outputDir, "03-person-activity.png"),
+          path: path.join(outputDir, "06-person-activity.png"),
         });
       },
     );

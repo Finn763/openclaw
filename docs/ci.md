@@ -392,14 +392,22 @@ For pinned commit proof on a fast-moving branch, use the helper instead of
 `gh workflow run ... --ref main -f ref=<sha>`:
 
 ```bash
-pnpm ci:full-release --sha <full-sha>
+TOOLING_SHA="<recorded-full-main-ancestor-sha>"
+VALIDATION_SHA="<full-release-candidate-sha>"
+pnpm ci:full-release \
+  --sha "$VALIDATION_SHA" \
+  --target-ref release/YYYY.M.PATCH \
+  --workflow-sha "$TOOLING_SHA"
 ```
 
 GitHub workflow dispatch refs must be branches or tags, not raw commit SHAs. The
 helper pushes a temporary `release-ci/<sha>-...` branch at a trusted Tooling
 SHA, passes the requested Validation SHA through `ref` and `expected_sha`, reuses
 strict exact-target evidence when available, and verifies every child workflow
-`headSha` matches the Tooling SHA.
+`headSha` matches the Tooling SHA. Record that Tooling SHA once and never refresh
+it from moving `main`. Regular release branches accept only their final package
+version or a matching beta prerelease; Tideclaw alpha validation uses its exact
+alpha tag and matching alpha branch.
 
 `release_profile` controls live/provider breadth passed into release checks. The
 manual release workflows default to `stable`; use `full` only when you
@@ -466,9 +474,10 @@ Use `Package Acceptance` when the question is "does this installable OpenClaw pa
 
 1. `resolve_package` checks out `workflow_ref`, resolves one package candidate, writes `.artifacts/docker-e2e-package/openclaw-current.tgz`, writes `.artifacts/docker-e2e-package/package-candidate.json`, uploads both as the `package-under-test` artifact, and prints the source, workflow ref, package ref, version, SHA-256, and profile in the GitHub step summary.
 2. `package_integrity` downloads the `package-under-test` artifact and enforces the public package tarball contract with `scripts/check-openclaw-package-tarball.mjs`.
-3. `docker_acceptance` calls `openclaw-live-and-e2e-checks-reusable.yml` with the resolved package source SHA (falling back to `workflow_ref`) and `package_artifact_name=package-under-test`. The reusable workflow downloads that artifact, validates the tarball inventory, prepares package-digest Docker images when needed, and runs the selected Docker lanes against that package instead of packing the workflow checkout. When a profile selects multiple targeted `docker_lanes`, the reusable workflow prepares the package and shared images once, then fans those lanes out as parallel targeted Docker jobs with unique artifacts.
-4. `package_telegram` optionally calls `NPM Telegram Beta E2E`. It runs when `telegram_mode` is not `none` and installs the same `package-under-test` artifact when Package Acceptance resolved one; standalone Telegram dispatch can still install a published npm spec.
-5. `summary` fails the workflow if package resolution, integrity, Docker acceptance, or the optional Telegram lane failed. The `advisory` input downgrades acceptance failures to warnings for advisory callers.
+3. `npm_12_install_sh` installs that exact artifact through the public Linux installer under npm 12 in an isolated home/prefix, then verifies the CLI version and lifecycle-completion guard.
+4. `docker_acceptance` calls `openclaw-live-and-e2e-checks-reusable.yml` with the resolved package source SHA (falling back to `workflow_ref`) and `package_artifact_name=package-under-test`. The reusable workflow downloads that artifact, validates the tarball inventory, prepares package-digest Docker images when needed, and runs the selected Docker lanes against that package instead of packing the workflow checkout. When a profile selects multiple targeted `docker_lanes`, the reusable workflow prepares the package and shared images once, then fans those lanes out as parallel targeted Docker jobs with unique artifacts.
+5. `package_telegram` optionally calls `NPM Telegram Beta E2E`. It runs when `telegram_mode` is not `none` and installs the same `package-under-test` artifact when Package Acceptance resolved one; standalone Telegram dispatch can still install a published npm spec.
+6. `summary` fails the workflow if package resolution, integrity, npm 12 installer acceptance, Docker acceptance, or the optional Telegram lane failed. The `advisory` input downgrades acceptance failures to warnings for advisory callers.
 
 ### Candidate sources
 

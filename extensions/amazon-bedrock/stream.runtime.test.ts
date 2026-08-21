@@ -119,17 +119,12 @@ describe("Bedrock stream client lifecycle", () => {
       yield { messageStop: { stopReason: BedrockStopReason.END_TURN } };
     }
     const send = vi.spyOn(BedrockRuntimeClient.prototype, "send").mockResolvedValue({
-      $metadata: { httpStatusCode: 200, requestId: "bedrock-request-1" },
+      $metadata: { httpStatusCode: 200 },
       stream: successfulStream(),
     } as never);
     const destroy = vi.spyOn(BedrockRuntimeClient.prototype, "destroy");
-    const onProviderAccepted = vi.fn();
-    const onResponse = vi.fn();
 
-    const resultPromise = streamBedrockForTest(bedrockModel({}), context, {
-      onProviderAccepted,
-      onResponse,
-    }).result();
+    const resultPromise = streamBedrockForTest(bedrockModel({}), context).result();
     await streamBlocked;
     expect(destroy).not.toHaveBeenCalled();
 
@@ -137,18 +132,6 @@ describe("Bedrock stream client lifecycle", () => {
     const result = await resultPromise;
 
     expect(result.stopReason).toBe("stop");
-    expect(onProviderAccepted).toHaveBeenCalledWith(
-      {
-        kind: "http_response",
-        status: 200,
-        headers: { "x-amzn-requestid": "bedrock-request-1" },
-      },
-      expect.objectContaining({ provider: "amazon-bedrock" }),
-    );
-    expect(onResponse).toHaveBeenCalledWith(
-      { status: 200, headers: { "x-amzn-requestid": "bedrock-request-1" } },
-      expect.objectContaining({ provider: "amazon-bedrock" }),
-    );
     expectDestroyedClient(send, destroy);
   });
 
@@ -409,6 +392,123 @@ describe("Bedrock profile endpoint resolution", () => {
 });
 
 describe("Bedrock stop reasons", () => {
+  it("rejects malformed terminal tool JSON before completing any sibling call", async () => {
+    vi.spyOn(BedrockRuntimeClient.prototype, "send").mockResolvedValue({
+      $metadata: { httpStatusCode: 200 },
+      stream: streamEvents([
+        { messageStart: { role: ConversationRole.ASSISTANT } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 0,
+            start: { toolUse: { toolUseId: "call_valid", name: "read" } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { toolUse: { input: '{"path":"README.md"}' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 1,
+            start: { toolUse: { toolUseId: "call_invalid", name: "read" } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 1,
+            delta: { toolUse: { input: '{"path":"SECRET.md"' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+        { messageStop: { stopReason: BedrockStopReason.TOOL_USE } },
+      ]),
+    } as never);
+    const stream = streamBedrockForTest(bedrockModel({}), {
+      messages: [{ role: "user", content: "read", timestamp: 0 }],
+    } as never);
+    const eventTypes: string[] = [];
+    for await (const event of stream) {
+      eventTypes.push(event.type);
+    }
+    const result = await stream.result();
+
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toBe("Provider completed tool call with malformed JSON arguments");
+    expect(result.errorMessage).not.toContain("SECRET.md");
+    expect(eventTypes).not.toContain("toolcall_end");
+    expect(eventTypes).not.toContain("done");
+  });
+
+  it("rejects an active tool call that never receives contentBlockStop", async () => {
+    vi.spyOn(BedrockRuntimeClient.prototype, "send").mockResolvedValue({
+      $metadata: { httpStatusCode: 200 },
+      stream: streamEvents([
+        { messageStart: { role: ConversationRole.ASSISTANT } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 0,
+            start: { toolUse: { toolUseId: "call_unsealed", name: "read" } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { toolUse: { input: '{"path":"README.md"' } },
+          },
+        },
+        { messageStop: { stopReason: BedrockStopReason.TOOL_USE } },
+      ]),
+    } as never);
+    const stream = streamBedrockForTest(bedrockModel({}), {
+      messages: [{ role: "user", content: "read", timestamp: 0 }],
+    } as never);
+    const eventTypes: string[] = [];
+    for await (const event of stream) {
+      eventTypes.push(event.type);
+    }
+    const result = await stream.result();
+
+    expect(result.stopReason).toBe("error");
+    expect(eventTypes.at(-1)).toBe("error");
+    expect(eventTypes).not.toContain("toolcall_end");
+    expect(eventTypes).not.toContain("done");
+    expect(result.content.some((block) => block.type === "toolCall")).toBe(false);
+  });
+
+  it("uses a complete tool input seeded at block start", async () => {
+    vi.spyOn(BedrockRuntimeClient.prototype, "send").mockResolvedValue({
+      $metadata: { httpStatusCode: 200 },
+      stream: streamEvents([
+        { messageStart: { role: ConversationRole.ASSISTANT } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 0,
+            start: {
+              toolUse: {
+                toolUseId: "call_seeded",
+                name: "read",
+                input: { path: "README.md" },
+              },
+            },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { messageStop: { stopReason: BedrockStopReason.TOOL_USE } },
+      ]),
+    } as never);
+
+    const result = await streamBedrockForTest(bedrockModel({}), {
+      messages: [{ role: "user", content: "read", timestamp: 0 }],
+    } as never).result();
+
+    expect(result.content).toContainEqual(
+      expect.objectContaining({ type: "toolCall", arguments: { path: "README.md" } }),
+    );
+  });
+
   it.each([
     {
       name: "text",
@@ -417,6 +517,7 @@ describe("Bedrock stop reasons", () => {
         { contentBlockStop: { contentBlockIndex: 0 } },
       ],
       contentType: "text",
+      retainsPartial: true,
     },
     {
       name: "tool call",
@@ -436,10 +537,11 @@ describe("Bedrock stop reasons", () => {
         { contentBlockStop: { contentBlockIndex: 0 } },
       ],
       contentType: "toolCall",
+      retainsPartial: false,
     },
   ])(
     "reports truncated $name streams without a terminal messageStop",
-    async ({ events, contentType }) => {
+    async ({ events, contentType, retainsPartial }) => {
       vi.spyOn(BedrockRuntimeClient.prototype, "send").mockResolvedValue({
         $metadata: { httpStatusCode: 200 },
         stream: streamEvents([{ messageStart: { role: ConversationRole.ASSISTANT } }, ...events]),
@@ -458,9 +560,13 @@ describe("Bedrock stop reasons", () => {
       expect(eventTypes).not.toContain("done");
       expect(result.stopReason).toBe("error");
       expect(result.errorMessage).toBe("Bedrock stream ended before messageStop");
-      expect(result.content).toEqual([expect.objectContaining({ type: contentType })]);
-      expect(result.content[0]).not.toHaveProperty("index");
-      expect(result.content[0]).not.toHaveProperty("partialJson");
+      expect(result.content).toEqual(
+        retainsPartial ? [expect.objectContaining({ type: contentType })] : [],
+      );
+      if (retainsPartial) {
+        expect(result.content[0]).not.toHaveProperty("index");
+        expect(result.content[0]).not.toHaveProperty("partialJson");
+      }
     },
   );
 

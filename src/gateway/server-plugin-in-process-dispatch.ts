@@ -14,6 +14,7 @@ import type { AgentRunRequest } from "./server-methods/agent-request-types.js";
 import type { TrustedSessionCreation } from "./server-methods/session-creation-provenance.js";
 import type {
   GatewayAgentRunTaskOwner,
+  GatewayContextResolver,
   GatewayRequestContext,
   GatewayRequestOptions,
   TrustedAgentToolCaller,
@@ -46,6 +47,7 @@ type DispatchGatewayMethodInProcessOptions = {
   pluginRuntimeOwnerId?: string;
   pluginSubagentRequester?: PluginSubagentRequesterContext;
   runtimePluginToolGrant?: RuntimePluginToolGrant;
+  pluginSubagentToolsAllow?: string[];
   delegatedToolPolicyHandoff?: SubagentCompletionToolHandoffRegistration;
   sessionCreation?: TrustedSessionCreation;
   requireScopedClient?: boolean;
@@ -54,8 +56,6 @@ type DispatchGatewayMethodInProcessOptions = {
   signal?: AbortSignal;
   resolveGatewayContext?: GatewayContextResolver;
 };
-
-export type GatewayContextResolver = () => GatewayRequestContext | undefined;
 
 type ResolvedInProcessGatewayDispatch = {
   client: NonNullable<GatewayRequestOptions["client"]>;
@@ -69,7 +69,8 @@ function resolveInProcessGatewayDispatch(
   options?: DispatchGatewayMethodInProcessOptions,
 ): ResolvedInProcessGatewayDispatch {
   const scope = getPluginRuntimeGatewayRequestScope();
-  const context = scope?.context ?? options?.resolveGatewayContext?.();
+  const context =
+    options?.resolveGatewayContext?.() ?? scope?.resolveGatewayContext?.() ?? scope?.context;
   const isWebchatConnect = scope?.isWebchatConnect ?? (() => false);
   if (!context) {
     throw new Error(
@@ -103,6 +104,9 @@ function resolveInProcessGatewayDispatch(
     ...(options?.runtimePluginToolGrant
       ? { runtimePluginToolGrant: options.runtimePluginToolGrant }
       : {}),
+    ...(options?.pluginSubagentToolsAllow
+      ? { pluginSubagentToolsAllow: options.pluginSubagentToolsAllow }
+      : {}),
     delegatedToolPolicyHandoffId,
     ...(options?.sessionCreation ? { sessionCreation: options.sessionCreation } : {}),
     scopes: options?.syntheticScopes,
@@ -120,6 +124,7 @@ function resolveInProcessGatewayDispatch(
       options?.agentRunTracking ||
       options?.pluginSubagentRequester ||
       options?.runtimePluginToolGrant ||
+      options?.pluginSubagentToolsAllow ||
       options?.delegatedToolPolicyHandoff ||
       scope?.client?.internal?.delegatedToolPolicyHandoffId
       ? {
@@ -129,6 +134,7 @@ function resolveInProcessGatewayDispatch(
             ? { pluginSubagentRequester: options.pluginSubagentRequester }
             : {}),
           runtimePluginToolGrant: options?.runtimePluginToolGrant,
+          pluginSubagentToolsAllow: options?.pluginSubagentToolsAllow,
           delegatedToolPolicyHandoffId,
         }
       : undefined,
@@ -189,7 +195,8 @@ export async function dispatchGatewayMethodInProcessRaw(
 export function getInProcessGatewayRequestContext(
   resolveGatewayContext?: GatewayContextResolver,
 ): GatewayRequestContext | undefined {
-  return getPluginRuntimeGatewayRequestScope()?.context ?? resolveGatewayContext?.();
+  const scope = getPluginRuntimeGatewayRequestScope();
+  return resolveGatewayContext?.() ?? scope?.resolveGatewayContext?.() ?? scope?.context;
 }
 
 export async function dispatchGatewayMethodInProcess<T>(

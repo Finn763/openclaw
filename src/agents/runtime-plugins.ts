@@ -12,10 +12,11 @@ import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeRegistryScope,
 } from "../plugins/runtime/gateway-request-scope.js";
+import { adoptRuntimeWidgetPresenterRegistrations } from "../plugins/widget-presenters.js";
 import { resolveUserPath } from "../utils.js";
-import { collectConfiguredAgentHarnessRuntimes } from "./harness-runtimes.js";
 import {
   resolveAgentRuntimePluginLoadPlan,
+  resolveAgentRuntimePluginSelections,
   type AgentHarnessPluginSelection,
 } from "./harness/runtime-plugin-load-plan.js";
 
@@ -77,14 +78,7 @@ function resolveAgentRuntimePluginRegistryLoad(params: AgentRuntimePluginRegistr
     config: params.config,
     workspaceDir: workspaceDir ?? process.cwd(),
     ...(startupPluginIds === undefined ? {} : { basePluginIds: startupPluginIds }),
-    selections: [
-      ...collectConfiguredAgentHarnessRuntimes(params.config ?? {}).map((runtime) => ({
-        runtime,
-        provider: "",
-        modelId: "",
-      })),
-      ...(params.selections ?? []),
-    ],
+    selections: resolveAgentRuntimePluginSelections(params.config, params.selections ?? []),
     metadataSnapshot,
   };
   const plan = resolveAgentRuntimePluginLoadPlan(planParams);
@@ -111,12 +105,16 @@ export function loadAgentRuntimePluginRegistryHandle(
 ): PluginRegistry {
   const load = resolveAgentRuntimePluginRegistryLoad(params);
   // Discovery-only load: full mode can replace process-global sandbox backends.
-  // Copy runtime context engines from the composition-root registry instead.
+  // Adopt full-only runtime capabilities from the matching composition-root owners.
   const pluginRegistry = loadPluginRegistryHandle({ ...load.loadOptions, activate: false });
   const activeRegistry = getActivePluginRegistry();
-  return activeRegistry
-    ? adoptRuntimeContextEngineRegistrations(pluginRegistry, activeRegistry)
-    : pluginRegistry;
+  if (!activeRegistry) {
+    return pluginRegistry;
+  }
+  return adoptRuntimeWidgetPresenterRegistrations(
+    adoptRuntimeContextEngineRegistrations(pluginRegistry, activeRegistry),
+    activeRegistry,
+  );
 }
 
 /** Binds a scoped plugin generation when a direct host has no Gateway owner. */
