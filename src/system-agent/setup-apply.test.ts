@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveAgentEntry } from "../agents/agent-scope-config.js";
 import * as configModule from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -125,6 +128,7 @@ const runtime: RuntimeEnv = {
   error: vi.fn(),
   exit: vi.fn(),
 };
+const testTempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function snapshot(
   hash: string | null,
@@ -437,6 +441,126 @@ describe("applySystemAgentSetup transaction boundaries", () => {
         workspace: "/tmp/requested-workspace",
       },
       entries: { main: { default: true } },
+    });
+  });
+
+  it.each([
+    { label: "missing", agents: {} },
+    { label: "entries", agents: { entries: {} } },
+    { label: "list", agents: { list: [] } },
+  ])(
+    "preserves a configured workspace with existing state and an authored $label roster",
+    async ({ agents }) => {
+      const stateDir = testTempDirs.make("openclaw-setup-state-");
+      await fs.mkdir(path.join(stateDir, "agents", "main", "sessions"), { recursive: true });
+      await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+        const sourceConfig: OpenClawConfig = {
+          agents: {
+            ...agents,
+            defaults: {
+              model: { primary: "openai/gpt-5.5" },
+              workspace: "/tmp/current-workspace",
+            },
+          },
+        };
+        const runtimeConfig: OpenClawConfig = {
+          agents: {
+            ...sourceConfig.agents,
+            list: undefined,
+            entries: { main: { default: true, agentDir: "/agents/main" } },
+          },
+        };
+        const initial = snapshot("probe", sourceConfig, runtimeConfig);
+        setSetupCommitState(structuredClone(runtimeConfig), initial);
+        const assertCommitPreconditions = vi.fn();
+
+        await applySystemAgentSetup(
+          baseParams({
+            workspace: "/tmp/requested-workspace",
+            assertCommitPreconditions,
+          }),
+        );
+
+        expect(assertCommitPreconditions).toHaveBeenCalledOnce();
+        expect(mocks.ensureOnboardingAgent).toHaveBeenCalledWith(
+          expect.objectContaining({ workspace: "/tmp/current-workspace" }),
+        );
+        expect(mocks.state.persistedConfig?.agents).toMatchObject({
+          defaults: { workspace: "/tmp/current-workspace" },
+          entries: { main: { default: true, workspace: "/tmp/current-workspace" } },
+        });
+        expect(mocks.ensureWorkspace).toHaveBeenCalledWith(
+          "/tmp/current-workspace",
+          runtime,
+          expect.objectContaining({ agentId: "main" }),
+        );
+      });
+    },
+  );
+
+  it("moves a configured workspace with existing state after explicit approval", async () => {
+    const stateDir = testTempDirs.make("openclaw-setup-state-");
+    await fs.mkdir(path.join(stateDir, "agents", "main", "sessions"), { recursive: true });
+    await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+      const sourceConfig: OpenClawConfig = {
+        agents: { defaults: { workspace: "/tmp/current-workspace" }, entries: {} },
+      };
+      const runtimeConfig: OpenClawConfig = {
+        agents: {
+          ...sourceConfig.agents,
+          entries: { main: { default: true, agentDir: "/agents/main" } },
+        },
+      };
+      const initial = snapshot("probe", sourceConfig, runtimeConfig);
+      setSetupCommitState(structuredClone(runtimeConfig), initial);
+
+      await applySystemAgentSetup(
+        baseParams({
+          workspace: "/tmp/requested-workspace",
+          allowWorkspaceChange: true,
+        }),
+      );
+
+      expect(mocks.ensureOnboardingAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ workspace: "/tmp/requested-workspace" }),
+      );
+      expect(mocks.state.persistedConfig?.agents).toMatchObject({
+        defaults: { workspace: "/tmp/requested-workspace" },
+        entries: { main: { default: true, workspace: "/tmp/requested-workspace" } },
+      });
+      expect(mocks.ensureWorkspace).toHaveBeenCalledWith(
+        "/tmp/requested-workspace",
+        runtime,
+        expect.objectContaining({ agentId: "main" }),
+      );
+    });
+  });
+
+  it("uses the requested workspace when configured state is fresh", async () => {
+    const stateDir = testTempDirs.make("openclaw-setup-state-");
+    await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+      const sourceConfig: OpenClawConfig = {
+        agents: { defaults: { workspace: "/tmp/current-workspace" }, entries: {} },
+      };
+      const runtimeConfig: OpenClawConfig = {
+        agents: {
+          ...sourceConfig.agents,
+          entries: { main: { default: true, agentDir: "/agents/main" } },
+        },
+      };
+      const initial = snapshot("probe", sourceConfig, runtimeConfig);
+      setSetupCommitState(structuredClone(runtimeConfig), initial);
+
+      await applySystemAgentSetup(baseParams({ workspace: "/tmp/requested-workspace" }));
+
+      expect(mocks.ensureOnboardingAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ workspace: "/tmp/requested-workspace" }),
+      );
+      expect(mocks.ensureWorkspace).toHaveBeenCalledWith(
+        "/tmp/requested-workspace",
+        runtime,
+        expect.objectContaining({ agentId: "main" }),
+      );
     });
   });
 
@@ -970,6 +1094,7 @@ describe("applySystemAgentSetup transaction boundaries", () => {
       baseParams({
         expectedConfigHash: "probe",
         workspace: "/tmp/finalized-ops",
+        allowWorkspaceChange: true,
         finalizeConfig,
         assertCommitPreconditions,
       }),
