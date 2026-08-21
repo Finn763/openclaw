@@ -1,0 +1,12 @@
+{
+  "schema": "openclaw.repo-e2e-capabilities/v1",
+  "schemaVersion": 1,
+  "repoE2eShards": {
+    "agentPluginGateway": true,
+    "gatewayShards": 4,
+    "realGatewayUi": true,
+    "runtimeBuildProfile": "repoE2eRuntime",
+    "sandboxArtifact": true,
+    "uiShards": 4
+  }
+}

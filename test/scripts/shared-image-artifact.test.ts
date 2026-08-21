@@ -309,6 +309,25 @@ describe("shared Docker image artifacts", () => {
       );
 
       writeFileSync(fixture.ghLog, "");
+      const rawArchiveName = `repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}.tar.zst`;
+      const rawArchive = verifyUploadedArtifact(fixture, {
+        artifactName: rawArchiveName,
+        env: { FAKE_ARTIFACT_NAME: rawArchiveName },
+      });
+      expect(rawArchive.status, `${rawArchive.stdout}\n${rawArchive.stderr}`).toBe(0);
+
+      writeFileSync(fixture.ghLog, "");
+      const unsupportedSuffix = verifyUploadedArtifact(fixture, {
+        artifactName: `${ARTIFACT_NAME}.zip`,
+        env: { FAKE_ARTIFACT_NAME: `${ARTIFACT_NAME}.zip` },
+      });
+      expect(unsupportedSuffix.status).not.toBe(0);
+      expect(unsupportedSuffix.stderr).toContain(
+        "artifact name does not bind the producer run attempt",
+      );
+      expect(readFileSync(fixture.ghLog, "utf8")).toBe("");
+
+      writeFileSync(fixture.ghLog, "");
       const digestMismatch = verifyUploadedArtifact(fixture, {
         artifactDigest: "e".repeat(64),
       });

@@ -146,7 +146,8 @@ verify_uploaded_artifact() {
   if [[ -z "${artifact_name// }" || "$artifact_name" == *$'\n'* || "$artifact_name" == *$'\r'* ]]; then
     fail "$artifact_label artifact name is missing or invalid."
   fi
-  if [[ "$artifact_name" != *"-${artifact_run_id}-${artifact_run_attempt}" ]]; then
+  local producer_suffix="-${artifact_run_id}-${artifact_run_attempt}"
+  if [[ "$artifact_name" != *"$producer_suffix" && "$artifact_name" != *"${producer_suffix}.tar.zst" ]]; then
     fail "$artifact_label artifact name does not bind the producer run attempt."
   fi
   if [[ ! "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then

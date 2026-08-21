@@ -544,7 +544,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
-      repo_e2e_shards_available: ${{ steps.validate.outputs.repo_e2e_shards_available }}
+      repo_e2e_shards_available: ${{ steps.repo_e2e.outputs.repo_e2e_shards_available }}
       selected_sha: ${{ steps.validate.outputs.selected_sha }}
       trusted_reason: ${{ steps.validate.outputs.trusted_reason }}
       workflow_repository: ${{ steps.workflow.outputs.workflow_repository }}
@@ -587,6 +587,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout trusted repo E2E capability validator
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ steps.workflow.outputs.workflow_repository }}
+          ref: ${{ steps.workflow.outputs.workflow_sha }}
+          path: .release-harness
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Validate selected ref
         id: validate
         env:
@@ -617,7 +626,6 @@ jobs:
           SHARED_IMAGE_ARTIFACT_RUN_ID: ${{ inputs.shared_image_artifact_run_id }}
           SHARED_IMAGE_ARCHIVE_SHA256: ${{ inputs.shared_image_archive_sha256 }}
           SHARED_IMAGE_POLICY: ${{ inputs.shared_image_policy }}
-          WORKFLOW_SHA: ${{ steps.workflow.outputs.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -768,48 +776,36 @@ jobs:
               ;;
           esac
 
-          repo_e2e_shards_available=true
-          if [[ "$selected_sha" != "$WORKFLOW_SHA" ]]; then
-            repo_e2e_shards_available=false
-          fi
-          required_repo_e2e_paths=(
-            scripts/agent-plugin-gateway-e2e.ts
-            scripts/build-all.mts
-            scripts/ensure-playwright-chromium.mts
-            test/vitest/vitest.e2e.config.ts
-            test/vitest/vitest.e2e.global-setup.ts
-            test/vitest/vitest.ui-e2e.config.ts
-            test/vitest/vitest.ui-e2e.global-setup.ts
-            test/vitest/vitest.ui-e2e.sequencer.ts
-          )
-          for required_path in "${required_repo_e2e_paths[@]}"; do
-            if ! git cat-file -e "${selected_sha}:${required_path}" 2>/dev/null; then
-              repo_e2e_shards_available=false
-              break
-            fi
-          done
-          if [[ "$repo_e2e_shards_available" == "true" ]] &&
-            ! git grep -Fq 'repoE2eRuntime:' "$selected_sha" -- scripts/build-all.mts; then
-            repo_e2e_shards_available=false
-          fi
-          if [[ "$repo_e2e_shards_available" == "true" ]] &&
-            ! git grep -Fq 'OPENCLAW_E2E_USE_PREBUILT_DIST' "$selected_sha" -- test/vitest/vitest.e2e.global-setup.ts; then
-            repo_e2e_shards_available=false
-          fi
-          if [[ "$repo_e2e_shards_available" == "true" ]] &&
-            ! git grep -Fq 'OPENCLAW_UI_E2E_SKIP_REAL_GATEWAY' "$selected_sha" -- test/vitest/vitest.ui-e2e.config.ts; then
-            repo_e2e_shards_available=false
-          fi
-
-          echo "repo_e2e_shards_available=$repo_e2e_shards_available" >> "$GITHUB_OUTPUT"
           echo "selected_sha=$selected_sha" >> "$GITHUB_OUTPUT"
           echo "trusted_reason=$trusted_reason" >> "$GITHUB_OUTPUT"
           {
             echo "Validated ref: \`${INPUT_REF}\`"
             echo "Resolved SHA: \`$selected_sha\`"
             echo "Trust reason: \`$trusted_reason\`"
-            echo "Repo E2E mode: \`$([[ "$repo_e2e_shards_available" == "true" ]] && echo sharded || echo legacy)\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve repo E2E capability
+        id: repo_e2e
+        env:
+          CAPABILITY_PATH: .github/repo-e2e-capabilities.json
+          SELECTED_SHA: ${{ steps.validate.outputs.selected_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_path="${RUNNER_TEMP}/repo-e2e-capabilities.json"
+          rm -f "$manifest_path"
+          if git cat-file -e "${SELECTED_SHA}:${CAPABILITY_PATH}" 2>/dev/null; then
+            manifest_size="$(git cat-file -s "${SELECTED_SHA}:${CAPABILITY_PATH}")"
+            if [[ "$manifest_size" =~ ^[0-9]+$ && "$manifest_size" -le 8192 ]]; then
+              git show "${SELECTED_SHA}:${CAPABILITY_PATH}" > "$manifest_path"
+            else
+              printf '{"invalid":"oversized"}\n' > "$manifest_path"
+            fi
+          fi
+          node .release-harness/scripts/validate-repo-e2e-capability.mjs \
+            --manifest "$manifest_path" \
+            --github-output "$GITHUB_OUTPUT" \
+            --github-step-summary "$GITHUB_STEP_SUMMARY"
 
   validate_live_suite_filter:
     runs-on: ubuntu-24.04
@@ -1054,8 +1050,9 @@ jobs:
           WORKFLOW_SHA: ${{ needs.validate_selected_ref.outputs.workflow_sha }}
         run: |
           set -euo pipefail
-          artifact_name="repo-e2e-runtime-${TARGET_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          archive_name="${artifact_name}.tar.zst"
+          artifact_stem="repo-e2e-runtime-${TARGET_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          archive_name="${artifact_stem}.tar.zst"
+          artifact_name="$archive_name"
           archive_path="${RUNNER_TEMP}/${archive_name}"
           bundle_root="${RUNNER_TEMP}/repo-e2e-runtime-bundle"
           archive_root="repo-e2e-runtime"
@@ -1248,7 +1245,7 @@ jobs:
           TARGET_SHA: ${{ needs.validate_selected_ref.outputs.selected_sha }}
         run: |
           set -euo pipefail
-          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}"
+          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}.tar.zst"
           [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || {
             echo "Repo E2E runtime artifact name does not match the target and producer run attempt." >&2
             exit 1
@@ -1409,7 +1406,7 @@ jobs:
           TARGET_SHA: ${{ needs.validate_selected_ref.outputs.selected_sha }}
         run: |
           set -euo pipefail
-          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}"
+          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}.tar.zst"
           [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || {
             echo "Repo E2E runtime artifact name does not match the target and producer run attempt." >&2
             exit 1
@@ -1573,7 +1570,7 @@ jobs:
           TARGET_SHA: ${{ needs.validate_selected_ref.outputs.selected_sha }}
         run: |
           set -euo pipefail
-          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}"
+          expected_artifact_name="repo-e2e-runtime-${TARGET_SHA}-${ARTIFACT_RUN_ID}-${ARTIFACT_RUN_ATTEMPT}.tar.zst"
           [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || {
             echo "Repo E2E runtime artifact name does not match the target and producer run attempt." >&2
             exit 1
