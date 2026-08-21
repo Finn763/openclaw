@@ -50,6 +50,7 @@ export async function prepareGitMutation(params: {
 }): Promise<{
   allowGatewayServiceRepair?: boolean;
   allowGatewayActivation?: boolean;
+  releaseTuiUpdateLock?: () => Promise<void>;
 }> {
   const target = await readGitTargetSchemaVersions(params);
   const preparation = await params.beforeGitMutation?.(
@@ -59,8 +60,11 @@ export async function prepareGitMutation(params: {
         : {}
       : { metadataUnreadable: target.reason },
   );
-  await quiesceLocalTuiProcessesBeforeUpdate();
-  return preparation ?? {};
+  const tuiUpdateLock = await quiesceLocalTuiProcessesBeforeUpdate();
+  return {
+    ...preparation,
+    ...(tuiUpdateLock ? { releaseTuiUpdateLock: tuiUpdateLock.release } : {}),
+  };
 }
 
 export async function readBranchName(

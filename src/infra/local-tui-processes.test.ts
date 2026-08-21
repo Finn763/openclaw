@@ -3,6 +3,7 @@ import {
   listLocalTuiProcesses,
   quiesceLocalTuiProcessesBeforeUpdate,
   terminateLocalTuiProcesses,
+  waitForLocalTuiUpdate,
 } from "./local-tui-processes.js";
 
 describe("local TUI processes", () => {
@@ -74,11 +75,24 @@ describe("local TUI processes", () => {
     });
   });
 
-  it("skips process probing on Windows", () => {
-    const spawnSync = vi.fn();
+  it("lists verified TUI processes on Windows", () => {
+    const spawnSync = vi.fn().mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        { ProcessId: 101, CommandLine: "C:\\openclaw.exe tui" },
+        { ProcessId: 102, CommandLine: "C:\\openclaw.exe gateway" },
+      ]),
+    });
 
-    expect(listLocalTuiProcesses({ platform: "win32", spawnSync })).toEqual([]);
-    expect(spawnSync).not.toHaveBeenCalled();
+    expect(
+      listLocalTuiProcesses({
+        platform: "win32",
+        currentPid: 999,
+        spawnSync,
+        readWindowsStartTime: () => 123,
+      }),
+    ).toEqual([{ pid: 101, command: "C:\\openclaw.exe tui", startTime: "123" }]);
+    expect(spawnSync).toHaveBeenCalledOnce();
   });
 
   it("terminates stale local TUI processes with a kill fallback", async () => {
@@ -161,5 +175,23 @@ describe("local TUI processes", () => {
     ).rejects.toThrow(
       "Update refused: could not stop local TUI clients 101. Close them and retry the update.",
     );
+  });
+
+  it("holds the startup gate after discovery until the update owner releases it", async () => {
+    const release = vi.fn(async () => {});
+    const lock = await quiesceLocalTuiProcessesBeforeUpdate({
+      list: () => [],
+      acquireLock: vi.fn(async () => ({ lockPath: "test", release })),
+    });
+
+    expect(release).not.toHaveBeenCalled();
+    await lock?.release();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the update gate before TUI startup", async () => {
+    const release = vi.fn(async () => {});
+    await waitForLocalTuiUpdate(vi.fn(async () => ({ lockPath: "test", release })));
+    expect(release).toHaveBeenCalledOnce();
   });
 });

@@ -748,6 +748,8 @@ export async function withEmbeddedTuiStateLock<T>(
 }
 
 export async function runTui(opts: RunTuiOptions): Promise<TuiResult> {
+  const { waitForLocalTuiUpdate } = await import("../infra/local-tui-processes.js");
+  await waitForLocalTuiUpdate();
   if (opts.local === true && opts.backend === undefined) {
     return await withEmbeddedTuiStateLock(async () => await runTuiUnlocked(opts));
   }

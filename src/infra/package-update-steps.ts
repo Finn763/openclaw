@@ -881,12 +881,13 @@ export async function runGlobalPackageUpdateSteps(params: {
   let stagedInstall: StagedNpmInstall | null = null;
   let packedInstallDir: string | null = null;
   let mutationPrepared = false;
+  let tuiUpdateLock: Awaited<ReturnType<typeof quiesceLocalTuiProcessesBeforeUpdate>>;
   const prepareMutation = async () => {
     if (mutationPrepared) {
       return;
     }
     await params.beforeMutation?.();
-    await quiesceLocalTuiProcessesBeforeUpdate();
+    tuiUpdateLock = await quiesceLocalTuiProcessesBeforeUpdate();
     mutationPrepared = true;
   };
 
@@ -1246,6 +1247,7 @@ export async function runGlobalPackageUpdateSteps(params: {
       failedStep,
     };
   } finally {
+    await tuiUpdateLock?.release();
     await cleanupStagedNpmInstall(stagedInstall);
     if (packedInstallDir) {
       await removePathBestEffort(packedInstallDir);

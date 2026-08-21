@@ -95,6 +95,12 @@ export async function updateGitCheckout(params: {
   let allowGatewayServiceRepair = opts.allowGatewayServiceRepair !== false;
   let allowGatewayActivation = opts.allowGatewayActivation === true;
   let mutationPrepared = false;
+  let releaseTuiUpdateLock: (() => Promise<void>) | undefined;
+  const releaseTuiUpdateGate = async () => {
+    const release = releaseTuiUpdateLock;
+    releaseTuiUpdateLock = undefined;
+    await release?.();
+  };
   let createdDevBranchDuringUpdate = false;
   let devPreflight: Awaited<ReturnType<typeof runGitDevPreflight>> | undefined;
   let liveBuildStarted = false;
@@ -109,6 +115,7 @@ export async function updateGitCheckout(params: {
     });
     allowGatewayServiceRepair = preparation.allowGatewayServiceRepair ?? allowGatewayServiceRepair;
     allowGatewayActivation = preparation.allowGatewayActivation ?? allowGatewayActivation;
+    releaseTuiUpdateLock = preparation.releaseTuiUpdateLock;
     mutationPrepared = true;
   };
   const buildError = (reason: string, status: "error" | "skipped" = "error"): UpdateRunResult => ({
@@ -300,6 +307,7 @@ export async function updateGitCheckout(params: {
         "checkout-failed",
       );
       if (failure) {
+        await releaseTuiUpdateGate();
         return failure;
       }
     } else {
@@ -316,6 +324,7 @@ export async function updateGitCheckout(params: {
           "checkout-failed",
         );
         if (failure) {
+          await releaseTuiUpdateGate();
           return failure;
         }
         createdAtSelectedSha = !hasLocalMain;
@@ -335,7 +344,9 @@ export async function updateGitCheckout(params: {
             "checkout-failed",
           );
           if (upstreamFailure) {
-            return await rollbackError("checkout-failed");
+            const rollbackFailure = await rollbackError("checkout-failed");
+            await releaseTuiUpdateGate();
+            return rollbackFailure;
           }
         }
       }
@@ -363,6 +374,7 @@ export async function updateGitCheckout(params: {
             totalSteps: 1,
             results: steps,
           });
+          await releaseTuiUpdateGate();
           return buildError("rebase-failed");
         }
       }
@@ -387,6 +399,7 @@ export async function updateGitCheckout(params: {
       "checkout-failed",
     );
     if (failure) {
+      await releaseTuiUpdateGate();
       return failure;
     }
   }
@@ -399,7 +412,9 @@ export async function updateGitCheckout(params: {
     "require-preferred",
   );
   if (manager.kind === "missing-required") {
-    return await rollbackError(mapManagerResolutionFailure(manager.reason));
+    const failure = await rollbackError(mapManagerResolutionFailure(manager.reason));
+    await releaseTuiUpdateGate();
+    return failure;
   }
   try {
     const installEnv = resolveInstallEnv(manager.manager, manager.env);
@@ -574,5 +589,6 @@ export async function updateGitCheckout(params: {
     };
   } finally {
     await manager.cleanup?.();
+    await releaseTuiUpdateGate();
   }
 }

@@ -1,8 +1,12 @@
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { sleep } from "../utils/sleep.js";
 import { getCommandPositionalsWithRootOptions } from "./cli-root-options.js";
 import { extractErrorCode } from "./errors.js";
+import { acquireFileLock, type FileLockHandle } from "./file-lock.js";
+import { getWindowsPowerShellExePath } from "./windows-install-roots.js";
+import { readWindowsProcessStartTimeSync } from "./windows-port-pids.js";
 
 export type LocalTuiProcess = {
   pid: number;
@@ -24,13 +28,24 @@ type PsResult = {
 
 const LOCAL_TUI_SUBCOMMANDS = new Set(["chat", "terminal", "tui"]);
 const LOCAL_TUI_PROCESS_PROBE_TIMEOUT_MS = 1_000;
+const LOCAL_TUI_UPDATE_LOCK_PATH = path.join(os.tmpdir(), "openclaw-local-tui-update");
+const LOCAL_TUI_UPDATE_LOCK_OPTIONS = {
+  stale: 30_000,
+  retries: { retries: 100, factor: 1, minTimeout: 50, maxTimeout: 250 },
+  staleRecovery: "remove-if-unchanged" as const,
+};
 
 function tokenizeCommandLine(command: string): string[] {
   return command.trim().split(/\s+/u).filter(Boolean);
 }
 
 function normalizeExecutableName(value: string | undefined): string {
-  return path.basename(value ?? "").replace(/\.exe$/iu, "");
+  return (
+    (value ?? "")
+      .split(/[\\/]/u)
+      .at(-1)
+      ?.replace(/\.exe$/iu, "") ?? ""
+  );
 }
 
 function isLocalTuiCommand(command: string): boolean {
@@ -90,10 +105,42 @@ export function listLocalTuiProcesses(
       args: string[],
       options: SpawnSyncOptionsWithStringEncoding,
     ) => PsResult;
+    readWindowsStartTime?: (pid: number) => number | null;
   } = {},
 ): LocalTuiProcess[] {
   if ((params.platform ?? process.platform) === "win32") {
-    return [];
+    const result = (params.spawnSync ?? spawnSync)(
+      getWindowsPowerShellExePath(),
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,CreationDate,CommandLine | ConvertTo-Json -Compress",
+      ],
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: LOCAL_TUI_PROCESS_PROBE_TIMEOUT_MS },
+    );
+    if (result.error || result.status !== 0 || typeof result.stdout !== "string") {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(result.stdout) as
+        | { ProcessId?: number; CommandLine?: string }
+        | Array<{ ProcessId?: number; CommandLine?: string }>;
+      return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => {
+        const pid = entry.ProcessId;
+        const command = entry.CommandLine?.trim();
+        const startTime = pid
+          ? (params.readWindowsStartTime ?? readWindowsProcessStartTimeSync)(pid)
+          : null;
+        return pid &&
+          pid !== (params.currentPid ?? process.pid) &&
+          command &&
+          isLocalTuiCommand(command)
+          ? [{ pid, command, ...(startTime === null ? {} : { startTime: String(startTime) }) }]
+          : [];
+      });
+    } catch {
+      return [];
+    }
   }
   const currentUid = params.currentUid ?? process.getuid?.();
   if (currentUid === undefined) {
@@ -131,6 +178,10 @@ function isProcessAlive(controller: ProcessController, pid: number): boolean {
 }
 
 function readProcessStartTime(pid: number): string | undefined {
+  if (process.platform === "win32") {
+    const startTime = readWindowsProcessStartTimeSync(pid);
+    return startTime === null ? undefined : String(startTime);
+  }
   const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], {
     encoding: "utf8",
     killSignal: "SIGKILL",
@@ -220,19 +271,36 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
   overrides: {
     list?: typeof listLocalTuiProcesses;
     terminate?: typeof terminateLocalTuiProcesses;
+    acquireLock?: typeof acquireFileLock;
   } = {},
-): Promise<void> {
+): Promise<FileLockHandle | undefined> {
   if (!overrides.list && (process.env.VITEST || process.env.NODE_ENV === "test")) {
-    return;
+    return undefined;
   }
+  // Keep startup and discovery in one interprocess order. The updater retains
+  // this gate until mutation ends, so a newly launched TUI cannot enter stale code.
+  const updateLock = await (overrides.acquireLock ?? acquireFileLock)(
+    LOCAL_TUI_UPDATE_LOCK_PATH,
+    LOCAL_TUI_UPDATE_LOCK_OPTIONS,
+  );
   const processes = (overrides.list ?? listLocalTuiProcesses)();
   if (processes.length === 0) {
-    return;
+    return updateLock;
   }
   const stopped = await (overrides.terminate ?? terminateLocalTuiProcesses)({ processes });
   if (stopped.failed.length > 0) {
+    await updateLock.release();
     throw new Error(
       `Update refused: could not stop local TUI clients ${stopped.failed.join(", ")}. Close them and retry the update.`,
     );
   }
+  return updateLock;
+}
+
+/** Waits for an in-flight update before a TUI enters its loaded runtime. */
+export async function waitForLocalTuiUpdate(
+  acquireLock: typeof acquireFileLock = acquireFileLock,
+): Promise<void> {
+  const lock = await acquireLock(LOCAL_TUI_UPDATE_LOCK_PATH, LOCAL_TUI_UPDATE_LOCK_OPTIONS);
+  await lock.release();
 }
