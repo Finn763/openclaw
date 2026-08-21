@@ -5672,6 +5672,12 @@ td.data-table-key-col {
   --session-row-glyph-size: 14px;
   --session-row-glyph-stroke: 1.6px;
 
+  /* The run ring is optically sized, not box-matched: it inks its whole box
+     while the line icons beside it only ink 9-10px of theirs (measured: pin
+     9.3, menu dots 10.0), so a box-matched ring reads a size larger than
+     everything on its line. Rows outside this host keep the ring's own size. */
+  --session-row-ring-size: calc(var(--session-row-glyph-size) - 3px);
+
   position: relative;
 }
 
@@ -5929,8 +5935,8 @@ td.data-table-key-col {
 .session-run-spinner {
   box-sizing: border-box;
   display: inline-block;
-  width: var(--session-row-glyph-size, 12px);
-  height: var(--session-row-glyph-size, 12px);
+  width: var(--session-row-ring-size, 12px);
+  height: var(--session-row-ring-size, 12px);
   flex: 0 0 auto;
   border: 1.5px solid color-mix(in srgb, var(--run) 28%, transparent);
   border-top-color: var(--run);

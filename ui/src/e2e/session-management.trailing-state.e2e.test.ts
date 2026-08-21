@@ -333,23 +333,30 @@ suite.define(() => {
         )
         .toBe("1");
 
-      // Badges, fork provenance, the run spinner and the action icons all drew
-      // themselves at different sizes on the same line, which reads as broken
-      // alignment. The unread dot is a dot, not a glyph, and keeps its own size.
-      const sizes = await row.evaluate((element) => {
-        const seen = new Set<string>();
-        for (const glyph of element.querySelectorAll("svg, .session-run-spinner")) {
-          const rect = glyph.getBoundingClientRect();
-          if (rect.width === 0) {
+      // Badges, fork provenance and the action icons drew themselves at
+      // different sizes on the same line, which reads as broken alignment. The
+      // unread dot is a dot rather than a glyph and keeps its own size.
+      const measured = await row.evaluate((element) => {
+        const glyphSizes = new Set<string>();
+        for (const glyph of element.querySelectorAll("svg")) {
+          if (glyph.getBoundingClientRect().width === 0) {
             continue;
           }
           const style = getComputedStyle(glyph);
-          seen.add(`${Number.parseFloat(style.width)}x${Number.parseFloat(style.height)}`);
+          glyphSizes.add(`${Number.parseFloat(style.width)}x${Number.parseFloat(style.height)}`);
         }
-        return [...seen];
+        const spinner = element.querySelector(".session-run-spinner");
+        return {
+          glyphSizes: [...glyphSizes],
+          spinnerWidth: spinner ? Number.parseFloat(getComputedStyle(spinner).width) : null,
+        };
       });
 
-      expect(sizes.length, JSON.stringify(sizes)).toBe(1);
+      expect(measured.glyphSizes.length, JSON.stringify(measured.glyphSizes)).toBe(1);
+      // The ring inks its whole box while the icons only ink 9-10px of theirs,
+      // so it sits three px down rather than matching box for box.
+      const glyphWidth = Number.parseFloat(measured.glyphSizes[0] as string);
+      expect(measured.spinnerWidth).toBe(glyphWidth - 3);
     } finally {
       await context.close();
     }
