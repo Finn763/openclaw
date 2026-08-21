@@ -1,6 +1,7 @@
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { parseCmdScriptCommandLine } from "../daemon/cmd-argv.js";
 import { sleep } from "../utils/sleep.js";
 import { getCommandPositionalsWithRootOptions } from "./cli-root-options.js";
 import { extractErrorCode } from "./errors.js";
@@ -48,8 +49,9 @@ function normalizeExecutableName(value: string | undefined): string {
   );
 }
 
-function isLocalTuiCommand(command: string): boolean {
-  const argv = tokenizeCommandLine(command);
+function isLocalTuiCommand(command: string, platform: NodeJS.Platform): boolean {
+  const argv =
+    platform === "win32" ? parseCmdScriptCommandLine(command) : tokenizeCommandLine(command);
   const executable = normalizeExecutableName(argv[0]);
   if (executable === "openclaw-tui") {
     return true;
@@ -88,7 +90,7 @@ function parseLocalTuiProcessLine(line: string, currentUid: number, currentPid =
   }
   const startTime = match[3]?.trim() ?? "";
   const command = match[4]?.trim() ?? "";
-  if (!isLocalTuiCommand(command)) {
+  if (!isLocalTuiCommand(command, process.platform)) {
     return null;
   }
   return { pid, command, startTime };
@@ -137,7 +139,7 @@ export function listLocalTuiProcesses(
         return pid &&
           pid !== (params.currentPid ?? process.pid) &&
           command &&
-          isLocalTuiCommand(command)
+          isLocalTuiCommand(command, "win32")
           ? [{ pid, command, ...(startTime === null ? {} : { startTime: String(startTime) }) }]
           : [];
       });

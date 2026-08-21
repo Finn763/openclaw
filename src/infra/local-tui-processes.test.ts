@@ -81,6 +81,12 @@ describe("local TUI processes", () => {
       stdout: JSON.stringify([
         { ProcessId: 101, CommandLine: "C:\\openclaw.exe tui" },
         { ProcessId: 102, CommandLine: "C:\\openclaw.exe gateway" },
+        { ProcessId: 103, CommandLine: '"C:\\Program Files\\OpenClaw\\openclaw.exe" chat' },
+        {
+          ProcessId: 104,
+          CommandLine:
+            '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\OpenClaw\\openclaw.mjs" terminal',
+        },
       ]),
     });
 
@@ -91,7 +97,20 @@ describe("local TUI processes", () => {
         spawnSync,
         readWindowsStartTime: () => 123,
       }),
-    ).toEqual([{ pid: 101, command: "C:\\openclaw.exe tui", startTime: "123" }]);
+    ).toEqual([
+      { pid: 101, command: "C:\\openclaw.exe tui", startTime: "123" },
+      {
+        pid: 103,
+        command: '"C:\\Program Files\\OpenClaw\\openclaw.exe" chat',
+        startTime: "123",
+      },
+      {
+        pid: 104,
+        command:
+          '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\OpenClaw\\openclaw.mjs" terminal',
+        startTime: "123",
+      },
+    ]);
     expect(spawnSync).toHaveBeenCalledOnce();
   });
 
