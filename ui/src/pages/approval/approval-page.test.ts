@@ -246,10 +246,11 @@ describe("ApprovalPage", () => {
     { name: "reviewer", scopes: ["operator.approvals"] },
     { name: "administrator", scopes: ["operator.admin"] },
   ])("allows an authenticated $name to resolve a durable approval", async ({ scopes }) => {
+    const instanceId = "instance-current";
     const request = vi.fn(
       async (method: string): Promise<unknown> =>
         method === "approval.get"
-          ? ({ approval: pendingApproval() } satisfies ApprovalGetResult)
+          ? ({ approval: pendingApproval({ instanceId }) } satisfies ApprovalGetResult)
           : ({ applied: true, approval: allowedApproval() } satisfies ApprovalResolveResult),
     );
     const { page } = createPage({
@@ -263,6 +264,7 @@ describe("ApprovalPage", () => {
 
     expect(request).toHaveBeenCalledWith("approval.resolve", {
       id: "exec:approval-1",
+      instanceId,
       kind: "exec",
       decision: "allow-once",
     });
