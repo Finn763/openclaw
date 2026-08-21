@@ -897,6 +897,35 @@ describe("handleInlineActions", () => {
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
 
+  it.each(["/office_hours:", "/skill:office_hours"])(
+    "keeps authorized messaging-channel root marker %j as plain text",
+    async (body) => {
+      const typing = createTypingController();
+      const ctx = buildTestCtx({ Body: body, CommandBody: body });
+
+      const result = await handleInlineActions(
+        createHandleInlineActionsInput({
+          ctx,
+          typing,
+          cleanedBody: body,
+          command: {
+            isAuthorizedSender: true,
+            rawBodyNormalized: body,
+            commandBodyNormalized: body,
+          },
+          overrides: {
+            allowTextCommands: true,
+            cfg: { commands: { text: true } },
+            skillCommands: officeHoursSkillCommands(),
+          },
+        }),
+      );
+
+      expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
+      expect(ctx.Body).toBe(body);
+    },
+  );
+
   it.each(["Review /tmp/foo before continuing", "/tmp/foo should stay a path"])(
     "does not load workspace skills for a bare path in %j",
     async (body) => {

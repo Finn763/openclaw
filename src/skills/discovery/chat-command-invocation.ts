@@ -199,5 +199,5 @@ export function resolveSkillCommandInvocation(params: {
       return { command, args: args || undefined };
     }
   }
-  return resolveInlineSkillCommandInvocation(params);
+  return null;
 }

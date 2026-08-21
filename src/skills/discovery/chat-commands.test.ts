@@ -6,6 +6,7 @@ import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 
 let listSkillCommandsForAgents: typeof import("./chat-commands.js").listSkillCommandsForAgents;
 let listSkillCommandsForWorkspace: typeof import("./chat-commands.js").listSkillCommandsForWorkspace;
+let resolveInlineSkillCommandInvocation: typeof import("./chat-command-invocation.js").resolveInlineSkillCommandInvocation;
 let resolveSkillCommandInvocation: typeof import("./chat-commands.js").resolveSkillCommandInvocation;
 let resolveSkillReferenceInvocations: typeof import("./chat-commands.js").resolveSkillReferenceInvocations;
 
@@ -156,6 +157,7 @@ vi.mock("./agent-filter.js", () => ({
 }));
 
 beforeAll(async () => {
+  ({ resolveInlineSkillCommandInvocation } = await import("./chat-command-invocation.js"));
   ({
     listSkillCommandsForAgents,
     listSkillCommandsForWorkspace,
@@ -211,7 +213,7 @@ describe("resolveSkillCommandInvocation", () => {
   });
 
   it("matches direct skill invocations embedded in a sentence", () => {
-    const invocation = resolveSkillCommandInvocation({
+    const invocation = resolveInlineSkillCommandInvocation({
       commandBodyNormalized: "Please use /demo_skill: to do the thing",
       skillCommands: [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }],
     });
@@ -221,7 +223,7 @@ describe("resolveSkillCommandInvocation", () => {
   });
 
   it("matches /skill invocations embedded in a sentence", () => {
-    const invocation = resolveSkillCommandInvocation({
+    const invocation = resolveInlineSkillCommandInvocation({
       commandBodyNormalized: "Please ask /skill:demo_skill about this",
       skillCommands: [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }],
     });
@@ -234,7 +236,7 @@ describe("resolveSkillCommandInvocation", () => {
     "does not resolve model-hidden inline skill invocations in %j",
     (commandBodyNormalized) => {
       expect(
-        resolveSkillCommandInvocation({
+        resolveInlineSkillCommandInvocation({
           commandBodyNormalized,
           skillCommands: [
             {
@@ -252,19 +254,19 @@ describe("resolveSkillCommandInvocation", () => {
   it("does not treat URL or path fragments as inline skill invocations", () => {
     const skillCommands = [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }];
     expect(
-      resolveSkillCommandInvocation({
+      resolveInlineSkillCommandInvocation({
         commandBodyNormalized: "See https://example.com/demo_skill",
         skillCommands,
       }),
     ).toBeNull();
     expect(
-      resolveSkillCommandInvocation({
+      resolveInlineSkillCommandInvocation({
         commandBodyNormalized: "Open tmp/demo_skill please",
         skillCommands,
       }),
     ).toBeNull();
     expect(
-      resolveSkillCommandInvocation({
+      resolveInlineSkillCommandInvocation({
         commandBodyNormalized: "Open /demo_skill please",
         skillCommands,
       }),
