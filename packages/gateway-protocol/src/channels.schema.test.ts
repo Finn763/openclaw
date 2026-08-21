@@ -52,6 +52,7 @@ describe("TalkSessionCancelOutputResultSchema", () => {
     for (const value of [
       {},
       { status: "applied" },
+      { ok: false },
       { ok: true, status: "unknown" },
       { ok: true, turnId: "" },
       { ok: true, extra: true },

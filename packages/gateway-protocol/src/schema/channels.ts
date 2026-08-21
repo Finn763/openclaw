@@ -319,7 +319,7 @@ export const TalkSessionCancelOutputParamsSchema = closedObject({
 
 /** Reports whether a Talk output cancellation applied to the requested turn. */
 export const TalkSessionCancelOutputResultSchema = closedObject({
-  ok: Type.Boolean(),
+  ok: Type.Literal(true),
   status: Type.Optional(
     Type.Union([Type.Literal("applied"), Type.Literal("stale"), Type.Literal("idle")]),
   ),

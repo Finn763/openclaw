@@ -860,7 +860,7 @@ class TalkModeManagerTest {
 
   @Test
   fun malformedOutputCancellationResultFailsClosed() {
-    for (response in listOf("""{"status":"stale"}""", """{"ok":true,"status":"unknown"}""", """{"ok":true,"extra":1}""")) {
+    for (response in listOf("""{"status":"stale"}""", """{"ok":false}""", """{"ok":true,"status":"unknown"}""", """{"ok":true,"extra":1}""")) {
       assertTrue(runCatching { shouldRetireRealtimeOutputCancellation(response) }.isFailure)
     }
   }

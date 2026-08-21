@@ -549,6 +549,19 @@ private func outputAudioEvent(
         stateversion: nil)
 }
 
+private func outputClearEvent(turnId: String) -> EventFrame {
+    EventFrame(
+        type: "event",
+        event: "talk.event",
+        payload: AnyCodable([
+            "relaySessionId": "relay-1",
+            "type": "clear",
+            "talkEvent": ["turnId": turnId],
+        ]),
+        seq: nil,
+        stateversion: nil)
+}
+
 @MainActor
 struct RealtimeTalkRelaySessionTests {
     private func makeIdleCancellationSession(
@@ -1257,16 +1270,7 @@ extension RealtimeTalkRelaySessionTests {
 
         #expect(session.cancelOutput())
         try await barrier.waitUntilEntered()
-        await session._test_handleGatewayEvent(EventFrame(
-            type: "event",
-            event: "talk.event",
-            payload: AnyCodable([
-                "relaySessionId": "relay-1",
-                "type": "clear",
-                "talkEvent": ["turnId": "turn-1"],
-            ]),
-            seq: nil,
-            stateversion: nil))
+        await session._test_handleGatewayEvent(outputClearEvent(turnId: "turn-1"))
         await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
         #expect(session.cancelOutput())
         await barrier.release()
@@ -1322,6 +1326,60 @@ extension RealtimeTalkRelaySessionTests {
             "talk.session.cancelOutput",
             "talk.session.appendAudio",
         ])
+    }
+
+    @Test(arguments: [
+        #"{"ok":true}"#,
+        #"{"ok":true,"status":"applied","turnId":"turn-1"}"#,
+    ])
+    func `accepted cancellation response keeps fence until matching clear`(
+        response: String) async throws
+    {
+        let barrier = RealtimeRelayStartupBarrier()
+        var speakingStates: [Bool] = []
+        let session = RealtimeTalkRelaySession(
+            transport: RealtimeTalkRelayTransport(
+                subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
+                request: { method, _, _ in
+                    if method == "talk.session.cancelOutput" {
+                        await barrier.suspend()
+                        return Data(response.utf8)
+                    }
+                    return Data(#"{"ok":true}"#.utf8)
+                }),
+            options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
+            audioCapture: TestRealtimeTalkAudioCapture(),
+            pcmPlayer: DrainingPCMStreamingAudioPlayer(),
+            onStatus: { _ in },
+            onSpeakingChanged: { speakingStates.append($0) })
+        defer { session.stop() }
+        session._test_setRelaySessionId("relay-1")
+        session._test_prepareAudioSender(relaySessionId: "relay-1")
+        await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-1"))
+        #expect(session.cancelOutput())
+        var cancellationTask: Task<Void, Never>?
+        do {
+            try await barrier.waitUntilEntered()
+            guard let exactCancellationTask = session._test_outputCancellationTask() else {
+                throw RealtimeRelayTestTimeout(operation: "cancellation task registration")
+            }
+            cancellationTask = exactCancellationTask
+            await barrier.release()
+            await exactCancellationTask.value
+            #expect(session._test_enqueueMicrophoneFrame(Data([0x01])) == nil)
+            await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
+            #expect(speakingStates == [true, false])
+
+            await session._test_handleGatewayEvent(outputClearEvent(turnId: "turn-1"))
+            let admittedTask = try #require(session._test_enqueueMicrophoneFrame(Data([0x02])))
+            await admittedTask.value
+            await session._test_handleGatewayEvent(outputAudioEvent(turnId: "turn-2"))
+        } catch {
+            await barrier.release()
+            await cancellationTask?.value
+            throw error
+        }
+        #expect(speakingStates == [true, false, true])
     }
 
     @Test func `close retires in flight cancellation failure`() async throws {
