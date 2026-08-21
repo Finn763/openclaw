@@ -190,7 +190,9 @@ export function createDiffsTool(params: {
 
       const screenshotter =
         params.screenshotter ??
-        new (await import("./browser.js")).PlaywrightDiffScreenshotter({ config: params.api.config });
+        new (await import("./browser.js")).PlaywrightDiffScreenshotter({
+          config: params.api.config,
+        });
 
       if (isArtifactOnlyMode(mode)) {
         const artifactFile = await renderDiffArtifactFile({
