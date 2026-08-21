@@ -136,6 +136,7 @@ describe("resolvePluginRuntimeLoadContext", () => {
       manifestRegistry,
       metadataSnapshot,
       installRecords: {},
+      preferBuiltPluginArtifacts: false,
     });
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledWith({
       allowWorkspaceScopedCurrent: true,
