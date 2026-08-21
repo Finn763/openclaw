@@ -5738,14 +5738,14 @@ td.data-table-key-col {
   pointer-events: none;
 }
 
+/* Sized to its glyphs. The old 24px box matched the action button this used to
+   trade places with, which padded a 7px unread dot with 8.5px a side and broke
+   the endcap's even 6px rhythm. Nothing trades now, so it sizes to content. */
 .session-row-state {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 24px;
-  min-height: 24px;
-  transition: opacity var(--duration-fast) ease;
   pointer-events: none;
 }
 
@@ -5913,22 +5913,6 @@ td.data-table-key-col {
 
   .sidebar-recent-session .session-action:disabled {
     opacity: 0.35;
-  }
-
-  .sidebar-recent-session .session-row-trail {
-    opacity: 0;
-  }
-
-  .sidebar-recent-session .session-row-aside:has(> .session-row-state) {
-    column-gap: 1px;
-  }
-
-  .sidebar-recent-session .session-row-state {
-    grid-area: 1 / 1;
-  }
-
-  .sidebar-recent-session .session-row-actions {
-    grid-area: 1 / 2;
   }
 }
 

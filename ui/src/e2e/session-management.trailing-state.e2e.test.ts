@@ -248,6 +248,56 @@ suite.define(() => {
     }
   });
 
+  it("spaces endcap glyphs evenly when the state holds a single dot", async () => {
+    const context = await suite.browser.newContext({
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      methodResponses: {
+        "sessions.list": sessionsListResponse([
+          sessionRow("agent:main:main", "Main", Date.now()),
+          sessionRow("agent:main:badged", "Badged session", Date.now() - 1, {
+            hasAutomation: true,
+            incognito: true,
+            status: "done",
+            unread: true,
+          }),
+        ]),
+      },
+      sessionKey: "agent:main:main",
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const row = page.locator('[data-session-key="agent:main:badged"]');
+      await row.waitFor({ state: "visible", timeout: 10_000 });
+      await expect.poll(() => row.locator(".session-unread-dot").isVisible()).toBe(true);
+
+      const gaps = await row.evaluate((element) => {
+        const endcap = element.querySelector(".sidebar-recent-session__details-endcap");
+        const glyphs = [...endcap.querySelectorAll("svg, .session-unread-dot")]
+          .map((glyph) => glyph.getBoundingClientRect())
+          .filter((rect) => rect.width > 0)
+          .sort((left, right) => left.left - right.left);
+        return glyphs
+          .slice(1)
+          .map((rect, index) => Math.round((rect.left - glyphs[index].right) * 10) / 10);
+      });
+
+      // A 7px dot inside a box padded to some other control's width sits adrift
+      // from the badges beside it; every gap here should be the endcap's own.
+      expect(gaps.length).toBeGreaterThan(1);
+      for (const gap of gaps) {
+        expect(gap, JSON.stringify(gaps)).toBeCloseTo(gaps[0] as number, 0);
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
   it("keeps semantic state beside always-visible touch actions", async () => {
     const context = await suite.browser.newContext({
       hasTouch: true,
@@ -388,6 +438,24 @@ suite.define(() => {
       ]);
       if (!endcapBounds || !openPullRequestBounds || !spinnerBounds || !unreadBounds) {
         throw new Error("Expected visible combined session state geometry");
+      }
+      // Even rhythm across the endcap: a box padded to some other control's size
+      // leaves one glyph adrift from its neighbours.
+      const endcapGaps = await row.evaluate((element) => {
+        const endcap = element.querySelector(".sidebar-recent-session__details-endcap");
+        const glyphs = [
+          ...endcap.querySelectorAll("svg, .session-unread-dot, .session-run-spinner"),
+        ]
+          .map((glyph) => glyph.getBoundingClientRect())
+          .filter((rect) => rect.width > 0)
+          .sort((left, right) => left.left - right.left);
+        return glyphs
+          .slice(1)
+          .map((rect, index) => Math.round((rect.left - glyphs[index].right) * 10) / 10);
+      });
+      expect(endcapGaps.length).toBeGreaterThan(1);
+      for (const gap of endcapGaps) {
+        expect(gap).toBeCloseTo(endcapGaps[0] as number, 0);
       }
       for (const iconBounds of [openPullRequestBounds, spinnerBounds, unreadBounds]) {
         expect(iconBounds.x).toBeGreaterThanOrEqual(endcapBounds.x);
