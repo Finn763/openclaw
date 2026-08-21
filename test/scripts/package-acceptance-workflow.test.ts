@@ -2966,6 +2966,8 @@ describe("package acceptance workflow", () => {
     const drainStep = workflowStep(drain, "Drain child diagnostics");
     const decisionUpload = workflowStep(decision, "Upload release decision");
     const drainUpload = workflowStep(drain, "Upload diagnostic drain manifest");
+    const planStep = workflowStep(executionPlan, "Seal immutable release execution plan");
+    const manifestStep = workflowStep(summary, "Write release validation manifest");
 
     expect(decision.needs).toEqual(["resolve_target", "release_execution_plan"]);
     expect(drain.needs).toEqual(["resolve_target", "release_execution_plan"]);
@@ -2981,9 +2983,13 @@ describe("package acceptance workflow", () => {
     expectTextToIncludeAll(decisionStep.run, [
       'node scripts/full-release-validation-state.mjs "$FULL_RELEASE_STATE_MODE"',
     ]);
-    expect(workflowStep(executionPlan, "Seal immutable release execution plan").run).toContain(
-      "FULL_RELEASE_PLAN_INPUTS_JSON",
-    );
+    expect(planStep.run).toContain("FULL_RELEASE_PLAN_INPUTS_JSON");
+    expect(planStep.env).toMatchObject({
+      EVIDENCE_CHANGED_PATHS: "${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}",
+    });
+    expect(manifestStep.env).toMatchObject({
+      EVIDENCE_CHANGED_PATHS: "${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}",
+    });
     expect(workflowStep(executionPlan, "Upload immutable release execution plan").with?.name).toBe(
       "full-release-execution-plan-${{ github.run_id }}",
     );

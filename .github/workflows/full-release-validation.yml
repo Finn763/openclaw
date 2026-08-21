@@ -1115,7 +1115,7 @@ jobs:
           EVIDENCE_RUN_URL: ${{ needs.evidence_reuse.outputs.evidence_run_url }}
           EVIDENCE_SHA: ${{ needs.evidence_reuse.outputs.evidence_sha }}
           EVIDENCE_POLICY: ${{ needs.evidence_reuse.outputs.evidence_policy }}
-          EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths }}
+          EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}
           RELEASE_PACKAGE_SPEC: ${{ inputs.release_package_spec }}
           PACKAGE_ACCEPTANCE_PACKAGE_SPEC: ${{ inputs.package_acceptance_package_spec }}
           NPM_TELEGRAM_PACKAGE_SPEC: ${{ inputs.npm_telegram_package_spec }}
@@ -1523,7 +1523,7 @@ jobs:
           EVIDENCE_ROOT_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_root_run_id }}
           EVIDENCE_SHA: ${{ needs.evidence_reuse.outputs.evidence_sha }}
           EVIDENCE_POLICY: ${{ needs.evidence_reuse.outputs.evidence_policy }}
-          EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths }}
+          EVIDENCE_CHANGED_PATHS: ${{ needs.evidence_reuse.outputs.changed_paths || '[]' }}
           EVIDENCE_MANIFEST: ${{ needs.evidence_reuse.outputs.evidence_manifest }}
           PROVIDER: ${{ inputs.provider }}
           MODE: ${{ inputs.mode }}
