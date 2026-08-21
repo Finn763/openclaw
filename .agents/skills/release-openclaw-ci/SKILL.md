@@ -62,8 +62,8 @@ Use this with `$release-openclaw-maintainer` and `$openclaw-testing` when a rele
   adopts the same children; missing plan state is an orchestration failure, not
   permission to redispatch.
 - Reused evidence is not trusted merely because plan sealing found it. Release
-  Decision repeats the canonical target, policy, changed-path, and exact-child
-  checks before returning `passed`.
+  Decision repeats the sealed target SHA, evidence SHA, policy, changed paths,
+  selected run, root run, and exact-child checks before returning `passed`.
 - Use one release operator, one transition-only watcher, and at most one
   investigator for the current failed surface. Do not build audit-review-plan
   trees around a single workflow transition.
@@ -284,7 +284,7 @@ node scripts/release-ci-summary.mjs <full-release-run-id> --watch
 
 Do not start this watcher when the SHA-pinned helper is still the foreground
 owner. The helper reads the exact Release Decision artifact itself. On
-`blocked_diagnostics_running`, it returns immediately, keeps the temporary
+`blocked_diagnostics_running`, it exits nonzero immediately, keeps the temporary
 refs, and leaves Diagnostic Drain collecting the remaining terminal evidence.
 The watcher behaves the same way for separately dispatched parents: it reports
 the Release Decision blocker once and exits while the drain continues.

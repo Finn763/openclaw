@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { releaseExecutionPlanSha256 } from "../../scripts/full-release-validation-policy.mjs";
 import {
   affectedActiveRunIds,
   buildReleaseExecutionPlan,
@@ -11,6 +12,7 @@ import {
   classifyReleaseSnapshot,
   formatReleaseStateOutcome,
   validateChildBinding,
+  validateReleaseExecutionPlanArtifact,
   verifyReleaseStateArtifacts,
 } from "../../scripts/full-release-validation-state.mjs";
 import { waitForChildClose, waitForFile } from "../helpers/process-wait.js";
@@ -87,6 +89,23 @@ function executionPlan(
   });
 }
 
+function reusedEvidenceChildren() {
+  return [
+    ["normalCi", "101", "CI"],
+    ["pluginPrerelease", "202", "Plugin Prerelease"],
+    ["releaseChecks", "303", "OpenClaw Release Checks"],
+    ["productPerformance", "505", "OpenClaw Performance"],
+  ].map(([role, runId, name]) => ({
+    displayTitle: `${name} full-release-validation-99-1`,
+    headBranch: "release-ci/tooling",
+    role,
+    runAttempt: 1,
+    runId,
+    url: `https://example.invalid/runs/${runId}`,
+    workflowSha: SHA,
+  }));
+}
+
 describe("full release execution plan", () => {
   it("keeps required coverage selected when dispatch output is missing", () => {
     const result = plan({
@@ -143,6 +162,34 @@ describe("full release execution plan", () => {
       {
         required: false,
       },
+    );
+  });
+
+  it("rejects a digest-valid plan with an incomplete reuse selection tuple", () => {
+    const artifact = executionPlan(
+      { rerunGroup: "ci" },
+      {
+        evidenceReuse: {
+          changedPaths: [],
+          evidenceSha: TARGET_SHA,
+          policy: "exact-target-full-validation-v1",
+          requested: true,
+          rootRunId: "99",
+          runUrl: "https://example.invalid/runs/99",
+          selectedRunId: "99",
+        },
+      },
+    );
+    const incompleteArtifact = {
+      ...artifact,
+      evidenceReuse: { ...artifact.evidenceReuse, selectedRunId: "" },
+    };
+    const digestValidArtifact = {
+      ...incompleteArtifact,
+      sha256: releaseExecutionPlanSha256(incompleteArtifact),
+    };
+    expect(() => validateReleaseExecutionPlanArtifact(digestValidArtifact)).toThrow(
+      "release execution plan evidence reuse binding is invalid",
     );
   });
 });
@@ -317,6 +364,113 @@ describe("release state artifacts", () => {
 });
 
 describe("collector subprocess", () => {
+  it.each([
+    {
+      changedPaths: [],
+      evidenceSha: TARGET_SHA,
+      name: "exact-target",
+      policy: "exact-target-full-validation-v1",
+    },
+    {
+      changedPaths: ["CHANGELOG.md"],
+      evidenceSha: "c".repeat(40),
+      name: "changelog-only",
+      policy: "changelog-only-release-v1",
+    },
+  ])("seals and revalidates the complete $name reuse tuple", (reuse) => {
+    const root = mkdtempSync(join(tmpdir(), "frv-plan-reuse-"));
+    const output = join(root, "full-release-execution-plan.json");
+    const validator = join(root, "release-evidence-validator.mjs");
+    const validatorArgs = join(root, "validator-args.json");
+    writeFileSync(
+      validator,
+      `import { writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+writeFileSync(process.env.FRV_VALIDATOR_ARGS, JSON.stringify(args));
+const value = (flag) => args[args.indexOf(flag) + 1];
+const expected = JSON.parse(process.env.FRV_EXPECTED_REUSE);
+for (const [flag, wanted] of Object.entries(expected)) {
+  if (value(flag) !== wanted) {
+    console.error(\`\${flag} mismatch: \${value(flag)} != \${wanted}\`);
+    process.exit(1);
+  }
+}
+console.log(JSON.stringify({
+  children: JSON.parse(process.env.FRV_REUSED_CHILDREN),
+  releaseProfile: process.env.RELEASE_PROFILE,
+  rerunGroup: process.env.RERUN_GROUP,
+}));
+`,
+    );
+    const planInputs = {
+      children: {},
+      dockerPreflightResult: "skipped",
+      evidenceChangedPaths: reuse.changedPaths,
+      evidencePolicy: reuse.policy,
+      evidenceReuse: true,
+      evidenceRootRunId: "99",
+      evidenceRunId: "99",
+      evidenceRunUrl: "https://example.invalid/runs/99",
+      evidenceSha: reuse.evidenceSha,
+      parentRunAttempt: 1,
+      parentRunId: "77",
+      prepareCandidateResult: "skipped",
+      rerunGroup: "all",
+      resolveTargetResult: "success",
+      workflowRef: "release-ci/tooling",
+      workflowSha: SHA,
+    };
+    const result = spawnSync(process.execPath, [SCRIPT, "plan"], {
+      env: {
+        ...process.env,
+        FRV_EXPECTED_REUSE: JSON.stringify({
+          "--expected-changed-paths-json": JSON.stringify(reuse.changedPaths),
+          "--expected-evidence-policy": reuse.policy,
+          "--expected-evidence-sha": reuse.evidenceSha,
+          "--expected-root-run-id": "99",
+          "--expected-selected-run-id": "99",
+          "--expected-target-sha": TARGET_SHA,
+          "--validate-run": "99",
+        }),
+        FRV_REUSED_CHILDREN: JSON.stringify(reusedEvidenceChildren()),
+        FRV_VALIDATOR_ARGS: validatorArgs,
+        FULL_RELEASE_EXECUTION_PLAN_PATH: output,
+        FULL_RELEASE_PLAN_INPUTS_JSON: JSON.stringify(planInputs),
+        GITHUB_REF_NAME: "release-ci/tooling",
+        GITHUB_REPOSITORY: "openclaw/openclaw",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "77",
+        GITHUB_SHA: SHA,
+        OPENCLAW_RELEASE_CI_SUMMARY_VALIDATOR: validator,
+        RELEASE_PROFILE: "stable",
+        RERUN_GROUP: "all",
+        TARGET_SHA,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({
+      children: [
+        expect.objectContaining({ key: "normalCi", runId: "101", source: "reused" }),
+        expect.objectContaining({ key: "pluginPrerelease", runId: "202", source: "reused" }),
+        expect.objectContaining({ key: "releaseChecks", runId: "303", source: "reused" }),
+        expect.objectContaining({ key: "npmTelegram", selected: false }),
+        expect.objectContaining({ key: "productPerformance", runId: "505", source: "reused" }),
+      ],
+      evidenceReuse: {
+        changedPaths: reuse.changedPaths,
+        evidenceSha: reuse.evidenceSha,
+        policy: reuse.policy,
+        requested: true,
+        rootRunId: "99",
+        runUrl: "https://example.invalid/runs/99",
+        selectedRunId: "99",
+      },
+    });
+    expect(JSON.parse(readFileSync(validatorArgs, "utf8"))).toContain("--expected-selected-run-id");
+  });
+
   it("adopts the immutable attempt-one plan on an attempt-two collector retry", () => {
     const root = mkdtempSync(join(tmpdir(), "frv-plan-restore-"));
     const output = join(root, "full-release-execution-plan.json");
@@ -364,6 +518,7 @@ describe("collector subprocess", () => {
           evidencePolicy: "exact-target-full-validation-v1",
           evidenceReuse: true,
           evidenceRootRunId: "99",
+          evidenceRunId: "99",
           evidenceRunUrl: "https://example.invalid/runs/99",
           evidenceSha: TARGET_SHA,
           parentRunAttempt: 1,

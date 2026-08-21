@@ -356,7 +356,7 @@ tests.
 `Release Decision` polls those exact identities and can report
 `blocked_diagnostics_running` before unrelated children finish.
 For reused evidence, it also repeats the canonical target, policy, changed-path,
-and exact-child validation before it can pass.
+selected-run, root-run, and exact-child validation before it can pass.
 `Diagnostic Drain` continues every selected child to terminal with
 `fail_fast=false` unless the collector itself is cancelled or loses API
 access. `orchestration_error` permits collector recovery against the same

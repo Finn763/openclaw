@@ -1111,6 +1111,7 @@ jobs:
           RERUN_GROUP: ${{ inputs.rerun_group }}
           TARGET_SHA: ${{ needs.resolve_target.outputs.sha }}
           EVIDENCE_REUSE: ${{ needs.evidence_reuse.outputs.reuse }}
+          EVIDENCE_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_run_id }}
           EVIDENCE_ROOT_RUN_ID: ${{ needs.evidence_reuse.outputs.evidence_root_run_id }}
           EVIDENCE_RUN_URL: ${{ needs.evidence_reuse.outputs.evidence_run_url }}
           EVIDENCE_SHA: ${{ needs.evidence_reuse.outputs.evidence_sha }}
@@ -1155,6 +1156,7 @@ jobs:
               --arg workflowRef "$GITHUB_REF_NAME" \
               --arg workflowSha "$GITHUB_SHA" \
               --arg evidenceReuse "$EVIDENCE_REUSE" \
+              --arg evidenceRunId "$EVIDENCE_RUN_ID" \
               --arg evidenceRootRunId "$EVIDENCE_ROOT_RUN_ID" \
               --arg evidenceRunUrl "$EVIDENCE_RUN_URL" \
               --arg evidenceSha "$EVIDENCE_SHA" \
@@ -1194,6 +1196,7 @@ jobs:
                 workflowRef: $workflowRef,
                 workflowSha: $workflowSha,
                 evidenceReuse: $evidenceReuse,
+                evidenceRunId: $evidenceRunId,
                 evidenceRootRunId: $evidenceRootRunId,
                 evidenceRunUrl: $evidenceRunUrl,
                 evidenceSha: $evidenceSha,

@@ -19,7 +19,9 @@ import {
 export * from "./full-release-validation-policy.mjs";
 
 const execFileAsync = promisify(execFile);
-const RELEASE_SUMMARY_PATH = fileURLToPath(new URL("./release-ci-summary.mjs", import.meta.url));
+const RELEASE_SUMMARY_PATH =
+  process.env.OPENCLAW_RELEASE_CI_SUMMARY_VALIDATOR ??
+  fileURLToPath(new URL("./release-ci-summary.mjs", import.meta.url));
 const TRANSIENT_GH_PATTERN =
   /HTTP 5[0-9][0-9]|Server Error|secondary rate limit|API rate limit|HTTP 429|abuse detection|error connecting to|context deadline exceeded|connection reset by peer|connection refused|TLS handshake timeout|i\/o timeout|network is unreachable|unexpected EOF|ETIMEDOUT|ECONNRESET|EAI_AGAIN/u;
 const API_ERROR_PATTERN =
@@ -263,7 +265,7 @@ async function validateReuse(plan, planInputs, signal) {
     const args = [
       RELEASE_SUMMARY_PATH,
       "--validate-run",
-      requiredString(planInputs.evidenceRootRunId, "evidence root run ID"),
+      requiredString(planInputs.evidenceRunId, "evidence selected run ID"),
       "--repo",
       requiredString(process.env.GITHUB_REPOSITORY, "GitHub repository"),
       "--trusted-workflow-ref",
@@ -278,6 +280,10 @@ async function validateReuse(plan, planInputs, signal) {
       requiredString(planInputs.evidencePolicy, "evidence policy"),
       "--expected-evidence-sha",
       requiredString(planInputs.evidenceSha, "evidence SHA"),
+      "--expected-root-run-id",
+      requiredString(planInputs.evidenceRootRunId, "evidence root run ID"),
+      "--expected-selected-run-id",
+      requiredString(planInputs.evidenceRunId, "evidence selected run ID"),
       "--expected-changed-paths-json",
       JSON.stringify(changedPathsValue(planInputs.evidenceChangedPaths)),
       "--json",
@@ -304,7 +310,7 @@ async function validateReuse(plan, planInputs, signal) {
       child: "<evidence>",
       kind: API_ERROR_PATTERN.test(message) ? "api_error" : "reused_evidence_invalid",
       message,
-      runId: stringValue(planInputs.evidenceRootRunId),
+      runId: stringValue(planInputs.evidenceRunId),
       url: stringValue(planInputs.evidenceRunUrl),
     };
     return API_ERROR_PATTERN.test(message)
@@ -422,6 +428,7 @@ function evidenceReuseFromInputs(planInputs) {
     requested: planInputs.evidenceReuse === true || planInputs.evidenceReuse === "true",
     rootRunId: stringValue(planInputs.evidenceRootRunId),
     runUrl: stringValue(planInputs.evidenceRunUrl),
+    selectedRunId: stringValue(planInputs.evidenceRunId),
   };
 }
 
@@ -599,6 +606,7 @@ async function collectMode(mode) {
         evidenceChangedPaths: executionPlan.evidenceReuse.changedPaths,
         evidencePolicy: executionPlan.evidenceReuse.policy,
         evidenceReuse: true,
+        evidenceRunId: executionPlan.evidenceReuse.selectedRunId,
         evidenceRootRunId: executionPlan.evidenceReuse.rootRunId,
         evidenceRunUrl: executionPlan.evidenceReuse.runUrl,
         evidenceSha: executionPlan.evidenceReuse.evidenceSha,

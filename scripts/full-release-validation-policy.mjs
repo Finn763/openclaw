@@ -6,6 +6,8 @@ const MAX_SUMMARY_ISSUES = 5;
 const MAX_LABEL_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_URL_LENGTH = 1024;
+const EXACT_TARGET_EVIDENCE_REUSE_POLICY = "exact-target-full-validation-v1";
+const CHANGELOG_ONLY_EVIDENCE_REUSE_POLICY = "changelog-only-release-v1";
 
 export const RELEASE_DECISION_STATES = Object.freeze([
   "qualifying",
@@ -186,7 +188,26 @@ function normalizedEvidenceReuse(evidenceReuse) {
     requested: true,
     rootRunId: boundedString(evidenceReuse.rootRunId, MAX_LABEL_LENGTH),
     runUrl: boundedString(evidenceReuse.runUrl, MAX_URL_LENGTH),
+    selectedRunId: boundedString(evidenceReuse.selectedRunId, MAX_LABEL_LENGTH),
   };
+}
+
+function validEvidenceReuseIdentity(evidenceReuse) {
+  if (!evidenceReuse.requested) {
+    return true;
+  }
+  const validChangedPaths =
+    (evidenceReuse.policy === EXACT_TARGET_EVIDENCE_REUSE_POLICY &&
+      evidenceReuse.changedPaths.length === 0) ||
+    (evidenceReuse.policy === CHANGELOG_ONLY_EVIDENCE_REUSE_POLICY &&
+      evidenceReuse.changedPaths.length === 1 &&
+      evidenceReuse.changedPaths[0] === "CHANGELOG.md");
+  return (
+    /^[a-f0-9]{40}$/u.test(evidenceReuse.evidenceSha) &&
+    /^[1-9][0-9]*$/u.test(evidenceReuse.rootRunId) &&
+    /^[1-9][0-9]*$/u.test(evidenceReuse.selectedRunId) &&
+    validChangedPaths
+  );
 }
 
 function executionPlanDigestPayload(plan) {
@@ -224,6 +245,10 @@ export function buildReleaseExecutionPlanArtifact({
   releaseProfile,
   rerunGroup,
 }) {
+  const normalizedReuse = normalizedEvidenceReuse(evidenceReuse);
+  if (!validEvidenceReuseIdentity(normalizedReuse)) {
+    throw new Error("release execution plan evidence reuse binding is invalid");
+  }
   const plan = {
     version: 1,
     kind: "openclaw.full-release-execution-plan",
@@ -234,7 +259,7 @@ export function buildReleaseExecutionPlanArtifact({
     targetSha: boundedString(expected.targetSha, MAX_LABEL_LENGTH),
     releaseProfile: boundedString(releaseProfile, MAX_LABEL_LENGTH),
     rerunGroup: boundedString(rerunGroup, MAX_LABEL_LENGTH),
-    evidenceReuse: normalizedEvidenceReuse(evidenceReuse),
+    evidenceReuse: normalizedReuse,
     gates: gates.map(normalizedGate),
     children: children.map(normalizedPlanChild),
     blockers: normalizeIssues(blockers, "release_blocker"),
@@ -264,6 +289,10 @@ export function validateReleaseExecutionPlanArtifact(payload, expected = {}) {
   ) {
     throw new Error("release execution plan artifact binding is invalid");
   }
+  const evidenceReuse = normalizedEvidenceReuse(payload.evidenceReuse);
+  if (!validEvidenceReuseIdentity(evidenceReuse)) {
+    throw new Error("release execution plan evidence reuse binding is invalid");
+  }
   const plan = {
     ...payload,
     parentRunAttempt: positiveInteger(payload.parentRunAttempt),
@@ -271,7 +300,7 @@ export function validateReleaseExecutionPlanArtifact(payload, expected = {}) {
     children: validatePlan(payload.children),
     blockers: normalizeIssues(payload.blockers, "release_blocker"),
     errors: normalizeIssues(payload.errors, "orchestration_error"),
-    evidenceReuse: normalizedEvidenceReuse(payload.evidenceReuse),
+    evidenceReuse,
     gates: Array.isArray(payload.gates) ? payload.gates.map(normalizedGate) : [],
   };
   const sha256 = releaseExecutionPlanSha256(plan);

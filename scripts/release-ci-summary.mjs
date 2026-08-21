@@ -686,23 +686,79 @@ export function validateEvidenceReuseChain(
 
 export function validateRequestedEvidenceReuse(
   currentManifest,
+  selectedManifest,
   rootManifest,
-  { expectedChangedPaths, expectedEvidencePolicy, expectedEvidenceSha, expectedTargetSha },
+  {
+    expectedChangedPaths,
+    expectedEvidencePolicy,
+    expectedEvidenceSha,
+    expectedRootRunId,
+    expectedSelectedRunId,
+    expectedTargetSha,
+  },
+  compareCommits,
 ) {
+  if (
+    !Array.isArray(expectedChangedPaths) ||
+    expectedChangedPaths.some(
+      (changedPath) => typeof changedPath !== "string" || changedPath.length === 0,
+    ) ||
+    new Set(expectedChangedPaths).size !== expectedChangedPaths.length
+  ) {
+    throw new Error("expected evidence changed paths are invalid");
+  }
+  const requested = {
+    changedPaths: expectedChangedPaths,
+    evidenceSha: normalizeSha(expectedEvidenceSha, "expected evidence SHA"),
+    policy: String(expectedEvidencePolicy ?? ""),
+    runId: normalizeRequiredRunId(expectedRootRunId, "expected evidence root run ID"),
+    selectedRunId: normalizeRequiredRunId(
+      expectedSelectedRunId,
+      "expected evidence selected run ID",
+    ),
+  };
+  const expectedTarget = normalizeSha(expectedTargetSha, "expected target SHA");
   const reuse = currentManifest.evidenceReuse;
   if (!reuse) {
-    throw new Error("requested release validation does not contain evidence reuse");
+    if (
+      currentManifest.runId !== requested.selectedRunId ||
+      selectedManifest.runId !== requested.selectedRunId ||
+      rootManifest.runId !== requested.runId
+    ) {
+      throw new Error("reused release evidence no longer matches the requested validation");
+    }
+    validateEvidenceReuseChain(
+      { ...currentManifest, evidenceReuse: requested, targetSha: expectedTarget },
+      selectedManifest,
+      rootManifest,
+      compareCommits,
+    );
+    return;
   }
-  const changedPaths = Array.isArray(expectedChangedPaths) ? expectedChangedPaths : [];
   if (
-    currentManifest.targetSha !== normalizeSha(expectedTargetSha, "expected target SHA") ||
-    rootManifest.targetSha !== normalizeSha(expectedEvidenceSha, "expected evidence SHA") ||
-    reuse.evidenceSha !== expectedEvidenceSha ||
-    reuse.policy !== expectedEvidencePolicy ||
-    JSON.stringify(reuse.changedPaths) !== JSON.stringify(changedPaths)
+    currentManifest.targetSha !== expectedTarget ||
+    selectedManifest.runId !== requested.selectedRunId ||
+    rootManifest.runId !== requested.runId ||
+    rootManifest.targetSha !== requested.evidenceSha ||
+    reuse.evidenceSha !== requested.evidenceSha ||
+    reuse.policy !== requested.policy ||
+    reuse.runId !== requested.runId ||
+    reuse.selectedRunId !== requested.selectedRunId ||
+    JSON.stringify(reuse.changedPaths) !== JSON.stringify(requested.changedPaths)
   ) {
     throw new Error("reused release evidence no longer matches the requested validation");
   }
+}
+
+function hasRequestedEvidenceReuse(options) {
+  return [
+    options.expectedTargetSha,
+    options.expectedEvidencePolicy,
+    options.expectedEvidenceSha,
+    options.expectedChangedPaths,
+    options.expectedRootRunId,
+    options.expectedSelectedRunId,
+  ].some((value) => value !== undefined);
 }
 
 export function selectedChildKeys(parentJobs) {
@@ -1529,6 +1585,8 @@ function validateStrictChildRun({
  *   expectedChangedPaths?: string[],
  *   expectedEvidencePolicy?: string,
  *   expectedEvidenceSha?: string,
+ *   expectedRootRunId?: string,
+ *   expectedSelectedRunId?: string,
  *   expectedTargetSha?: string,
  *   trustedWorkflowFullRef?: string,
  *   trustedWorkflowRef?: string,
@@ -1545,6 +1603,8 @@ export function validateReleaseRunEvidence(
     expectedChangedPaths,
     expectedEvidencePolicy,
     expectedEvidenceSha,
+    expectedRootRunId,
+    expectedSelectedRunId,
     expectedTargetSha,
     trustedWorkflowFullRef,
     trustedWorkflowRef = "main",
@@ -1573,6 +1633,14 @@ export function validateReleaseRunEvidence(
     repository: normalizedRepository,
     runId: normalizedRunId,
   });
+  const requestedReuse = {
+    expectedChangedPaths,
+    expectedEvidencePolicy,
+    expectedEvidenceSha,
+    expectedRootRunId,
+    expectedSelectedRunId,
+    expectedTargetSha,
+  };
   const producerIdentities = new Map([
     [
       currentEvidence.manifest.runId,
@@ -1610,26 +1678,15 @@ export function validateReleaseRunEvidence(
       rootEvidence.manifest,
       (base, head) => evidenceClient.compareCommits(base, head),
     );
-    if (
-      expectedTargetSha !== undefined ||
-      expectedEvidencePolicy !== undefined ||
-      expectedEvidenceSha !== undefined ||
-      expectedChangedPaths !== undefined
-    ) {
-      validateRequestedEvidenceReuse(currentEvidence.manifest, rootEvidence.manifest, {
-        expectedChangedPaths,
-        expectedEvidencePolicy,
-        expectedEvidenceSha,
-        expectedTargetSha,
-      });
-    }
-  } else if (
-    expectedTargetSha !== undefined ||
-    expectedEvidencePolicy !== undefined ||
-    expectedEvidenceSha !== undefined ||
-    expectedChangedPaths !== undefined
-  ) {
-    throw new Error("requested release validation does not contain evidence reuse");
+  }
+  if (hasRequestedEvidenceReuse(requestedReuse)) {
+    validateRequestedEvidenceReuse(
+      currentEvidence.manifest,
+      selectedEvidence.manifest,
+      rootEvidence.manifest,
+      requestedReuse,
+      (base, head) => evidenceClient.compareCommits(base, head),
+    );
   }
 
   for (const evidence of [currentEvidence, selectedEvidence, rootEvidence]) {
@@ -1768,6 +1825,8 @@ function parseReleaseCiSummaryArgs(argv) {
     expectedChangedPaths: undefined,
     expectedEvidencePolicy: undefined,
     expectedEvidenceSha: undefined,
+    expectedRootRunId: undefined,
+    expectedSelectedRunId: undefined,
     expectedTargetSha: undefined,
     json: false,
     manifestPath: undefined,
@@ -1806,6 +1865,10 @@ function parseReleaseCiSummaryArgs(argv) {
       options.expectedEvidencePolicy = argv[++index];
     } else if (argument === "--expected-evidence-sha") {
       options.expectedEvidenceSha = argv[++index];
+    } else if (argument === "--expected-root-run-id") {
+      options.expectedRootRunId = argv[++index];
+    } else if (argument === "--expected-selected-run-id") {
+      options.expectedSelectedRunId = argv[++index];
     } else if (argument === "--expected-changed-paths-json") {
       const value = argv[++index];
       try {
@@ -1855,7 +1918,7 @@ function printUsage() {
     [
       "usage: release-ci-summary.mjs <full-release-run-id>",
       "       release-ci-summary.mjs <full-release-run-id> --watch [--interval seconds]",
-      "       release-ci-summary.mjs --validate-run <id> [--repo owner/name] [--trusted-workflow-ref main --trusted-workflow-full-ref refs/heads/main] [--trusted-workflow-sha sha] [--manifest path] [--verifier-source-sha sha --verifier-source-file path] --json",
+      "       release-ci-summary.mjs --validate-run <id> [--repo owner/name] [--trusted-workflow-ref main --trusted-workflow-full-ref refs/heads/main] [--trusted-workflow-sha sha] [--manifest path] [--verifier-source-sha sha --verifier-source-file path] [--expected-target-sha sha --expected-evidence-sha sha --expected-evidence-policy policy --expected-root-run-id id --expected-selected-run-id id --expected-changed-paths-json json] --json",
     ].join("\n"),
   );
 }
@@ -2030,6 +2093,8 @@ async function main() {
         expectedChangedPaths: options.expectedChangedPaths,
         expectedEvidencePolicy: options.expectedEvidencePolicy,
         expectedEvidenceSha: options.expectedEvidenceSha,
+        expectedRootRunId: options.expectedRootRunId,
+        expectedSelectedRunId: options.expectedSelectedRunId,
         expectedTargetSha: options.expectedTargetSha,
         manifestPath: options.manifestPath,
         repository,

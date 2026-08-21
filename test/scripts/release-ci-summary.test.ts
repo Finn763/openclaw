@@ -2366,14 +2366,20 @@ describe("release CI summary child correlation", () => {
             changedPaths: ["CHANGELOG.md"],
             evidenceSha,
             policy: "changelog-only-release-v1",
+            runId: "101",
+            selectedRunId: "101",
           },
+          runId: "101",
           targetSha,
         },
-        { targetSha: evidenceSha },
+        { runId: "101", targetSha: evidenceSha },
+        { runId: "101", targetSha: evidenceSha },
         {
           expectedChangedPaths: ["CHANGELOG.md"],
           expectedEvidencePolicy: "changelog-only-release-v1",
           expectedEvidenceSha: evidenceSha,
+          expectedRootRunId: "101",
+          expectedSelectedRunId: "101",
           expectedTargetSha: targetSha,
         },
       ),
@@ -2385,16 +2391,76 @@ describe("release CI summary child correlation", () => {
             changedPaths: ["CHANGELOG.md"],
             evidenceSha,
             policy: "changelog-only-release-v1",
+            runId: "101",
+            selectedRunId: "101",
           },
+          runId: "101",
           targetSha,
         },
-        { targetSha },
+        { runId: "101", targetSha },
+        { runId: "101", targetSha },
         {
           expectedChangedPaths: ["CHANGELOG.md"],
           expectedEvidencePolicy: "changelog-only-release-v1",
           expectedEvidenceSha: evidenceSha,
+          expectedRootRunId: "101",
+          expectedSelectedRunId: "101",
           expectedTargetSha: targetSha,
         },
+      ),
+    ).toThrow("no longer matches");
+  });
+
+  it.each([
+    {
+      changedPaths: [],
+      policy: "exact-target-full-validation-v1",
+      targetSha: "a".repeat(40),
+    },
+    {
+      changedPaths: ["CHANGELOG.md"],
+      policy: "changelog-only-release-v1",
+      targetSha: "b".repeat(40),
+    },
+  ])("validates the complete prospective $policy selection tuple", (selection) => {
+    const root = validateParentManifest(rawManifest({}), {
+      runAttempt: 2,
+      runId: "29090000000",
+    });
+    expect(() =>
+      validateRequestedEvidenceReuse(
+        root,
+        root,
+        root,
+        {
+          expectedChangedPaths: selection.changedPaths,
+          expectedEvidencePolicy: selection.policy,
+          expectedEvidenceSha: root.targetSha,
+          expectedRootRunId: root.runId,
+          expectedSelectedRunId: root.runId,
+          expectedTargetSha: selection.targetSha,
+        },
+        (base: string) => ({
+          files: [{ filename: "CHANGELOG.md", status: "modified" }],
+          merge_base_commit: { sha: base },
+          status: "ahead",
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateRequestedEvidenceReuse(
+        root,
+        root,
+        root,
+        {
+          expectedChangedPaths: selection.changedPaths,
+          expectedEvidencePolicy: selection.policy,
+          expectedEvidenceSha: root.targetSha,
+          expectedRootRunId: root.runId,
+          expectedSelectedRunId: "29090000001",
+          expectedTargetSha: selection.targetSha,
+        },
+        () => ({ status: "identical" }),
       ),
     ).toThrow("no longer matches");
   });

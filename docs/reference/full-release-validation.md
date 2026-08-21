@@ -52,14 +52,14 @@ Decision, Drain, manifest generation, evidence verification, and the final
 verifier consume this artifact. Collector retries restore it and adopt the
 same children; they never rebuild the plan or redispatch tests.
 Release Decision also repeats canonical reuse-chain validation before a reused
-run can pass, so a stale target, policy, changed-path set, or child tuple remains
-blocking even when the plan artifact itself is intact.
+run can pass. The sealed target SHA, evidence SHA, policy, changed-path set,
+selected run, root run, and child tuple must all still match.
 
 The helper creates a temporary `release-ci/*` ref pinned to the Tooling SHA,
 passes the Validation SHA as both the candidate ref and `expected_sha`, and
 deletes the temporary ref after successful validation and strict evidence
 verification. If Release Decision reports a blocker while Diagnostic Drain is
-still collecting failures, the helper returns immediately and keeps both
+still collecting failures, the helper exits nonzero immediately and keeps both
 temporary refs for reruns and diagnosis. The Validation SHA equals the Code
 SHA for product validation or the Release SHA for changelog-only validation; it
 is not a third release identity. The workflow rejects malformed or mismatched
