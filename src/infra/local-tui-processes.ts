@@ -122,12 +122,15 @@ export function listLocalTuiProcesses(
       return [];
     }
     try {
-      const parsed = JSON.parse(result.stdout) as
-        | { ProcessId?: number; CommandLine?: string }
-        | Array<{ ProcessId?: number; CommandLine?: string }>;
+      const parsed: unknown = JSON.parse(result.stdout);
       return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => {
-        const pid = entry.ProcessId;
-        const command = entry.CommandLine?.trim();
+        if (typeof entry !== "object" || entry === null) {
+          return [];
+        }
+        const pidValue = Reflect.get(entry, "ProcessId");
+        const commandValue = Reflect.get(entry, "CommandLine");
+        const pid = typeof pidValue === "number" ? pidValue : undefined;
+        const command = typeof commandValue === "string" ? commandValue.trim() : undefined;
         const startTime = pid
           ? (params.readWindowsStartTime ?? readWindowsProcessStartTimeSync)(pid)
           : null;
