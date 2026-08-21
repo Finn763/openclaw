@@ -303,7 +303,7 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
   );
   const processes = (overrides.list ?? listLocalTuiProcesses)();
   if (processes.length === 0) {
-    return Object.assign(updateLock, { stopped: [] as number[] });
+    return Object.assign(updateLock, { stopped: [] });
   }
   const stopped = await (overrides.terminate ?? terminateLocalTuiProcesses)({ processes });
   if (stopped.failed.length > 0) {
