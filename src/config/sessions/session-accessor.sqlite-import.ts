@@ -20,7 +20,6 @@ import {
 } from "./session-accessor.sqlite-scope.js";
 import {
   advanceTranscriptMutationAtInTransaction,
-  ensureTranscriptGenerationInTransaction,
   ensureTranscriptSessionRoot,
   touchTranscriptMutationInTransaction,
 } from "./session-accessor.sqlite-transcript-state.js";
@@ -139,7 +138,6 @@ function importSqliteSessionRowsInTransaction(
       ensureTranscriptSessionRoot(database, transcriptScope, exactTranscriptRows[0]!.createdAt, {
         allowStoredAlias: true,
       });
-      ensureTranscriptGenerationInTransaction(database, params.entry.sessionId);
       for (const [seq, row] of exactTranscriptRows.entries()) {
         executeSqliteQuerySync(
           database.db,

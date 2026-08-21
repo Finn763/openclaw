@@ -56,6 +56,7 @@ import {
   canonicalSessionKeyMigrationRequiredError,
 } from "./session-canonical-key.js";
 import { parseSqliteSessionEntryRecord } from "./session-entry-json.js";
+import { ensureSessionTranscriptSourceGenerationInTransaction } from "./session-transcript-source-generation.js";
 import { projectCanonicalSessionEntryShape } from "./store-entry-shape.js";
 import {
   collectSessionEntryLookupKeys,
@@ -724,6 +725,7 @@ export function writeSessionEntry(
         }),
       ),
   );
+  ensureSessionTranscriptSourceGenerationInTransaction(database, sessionRow.session_id);
   if (conversation) {
     linkSessionConversation({
       database,

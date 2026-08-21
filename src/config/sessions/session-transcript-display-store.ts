@@ -30,6 +30,11 @@ import {
   parseDisplayRowKind,
   reduceSessionTranscriptDisplaySource,
 } from "./session-transcript-display-semantics.js";
+import {
+  deleteSessionTranscriptProjectionBindingsInTransaction,
+  readSessionTranscriptSourceGenerationInTransaction,
+  writeSessionTranscriptProjectionBindingInTransaction,
+} from "./session-transcript-source-generation.js";
 
 type SessionTranscriptDisplayState = {
   generation: string;
@@ -120,6 +125,7 @@ export function invalidateSessionTranscriptDisplayInTransaction(
   sessionId: string,
 ): string {
   ensureOpenClawAgentDisplayRowSchema(db);
+  deleteSessionTranscriptProjectionBindingsInTransaction(db, sessionId, "display");
   const state = readSessionTranscriptDisplayState(db, sessionId);
   const generation = createDisplayGeneration();
   writeDisplayState(db, sessionId, {
@@ -584,6 +590,15 @@ export function appendEligibleSessionTranscriptDisplayRowInTransaction(
     needsRebuild: false,
     rowCount: effects.rowCount(),
     updatedAt: Date.now(),
+  });
+  const source = readSessionTranscriptSourceGenerationInTransaction(db, params.sessionId);
+  if (!source || source.indexedSeq !== params.seq) {
+    throw new Error(`Transcript source generation changed while appending ${params.sessionId}`);
+  }
+  writeSessionTranscriptProjectionBindingInTransaction(db, params.sessionId, {
+    projection: "display",
+    projectionGeneration: generation,
+    sourceGeneration: source.generation,
   });
   return false;
 }

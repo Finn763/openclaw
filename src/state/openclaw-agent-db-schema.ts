@@ -56,7 +56,7 @@ import {
 } from "./openclaw-agent-db-session-provenance.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "./openclaw-agent-db.generated.js";
 import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
-import { AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL } from "./openclaw-agent-display-row-schema.js";
+import { AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL } from "./openclaw-agent-display-row-schema.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db.js";
 
@@ -64,7 +64,7 @@ type OpenClawAgentMetadataDatabase = Pick<OpenClawAgentKyselyDatabase, "schema_m
 type MigratedSessionEntry = Record<string, unknown>;
 
 const agentDbLog = createSubsystemLogger("state/agent-db");
-const BASE_AGENT_SCHEMA_SQL = AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_SQL;
+const BASE_AGENT_SCHEMA_SQL = AGENT_SCHEMA_WITHOUT_DISPLAY_ROWS_AND_PROJECTION_BINDINGS_SQL;
 
 function migratedSessionColumn(
   columns: ReadonlySet<string>,
@@ -345,8 +345,7 @@ function migrateSessionTranscriptGenerations(db: DatabaseSync, previousVersion: 
   db.prepare(
     `INSERT OR IGNORE INTO transcript_rewrite_watermarks (session_id, generation, updated_at)
      SELECT session_id, lower(hex(randomblob(16))), ?
-     FROM transcript_events
-     GROUP BY session_id`,
+     FROM session_windows`,
   ).run(Date.now());
 }
 

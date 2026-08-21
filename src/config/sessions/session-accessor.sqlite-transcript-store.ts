@@ -21,12 +21,9 @@ import { getSessionKysely, type ResolvedTranscriptScope } from "./session-access
 import {
   advanceTranscriptMutationAtInTransaction,
   deleteTranscriptEventsInTransaction,
-  ensureTranscriptGenerationInTransaction,
   ensureTranscriptSessionRoot,
-  readTranscriptGenerationInTransaction,
   readTranscriptMutationStateInTransaction,
   readNextTranscriptSeq,
-  rotateTranscriptGenerationInTransaction,
   touchTranscriptMutationInTransaction,
 } from "./session-accessor.sqlite-transcript-state.js";
 import { invalidateSessionTranscriptDisplayInTransaction } from "./session-transcript-display.js";
@@ -36,6 +33,10 @@ import {
   reconcileSessionTranscriptIndexInTransaction,
 } from "./session-transcript-index.js";
 import { startSessionTranscriptIndexReconcile } from "./session-transcript-reconcile.js";
+import {
+  ensureSessionTranscriptSourceGenerationInTransaction,
+  replaceSessionTranscriptSourceGenerationInTransaction,
+} from "./session-transcript-source-generation.js";
 import { createSessionTranscriptHeader } from "./transcript-header.js";
 import {
   isSessionTranscriptLeafControl,
@@ -63,7 +64,7 @@ export function appendTranscriptEventInTransaction(
   ensureTranscriptSessionRoot(database, scope, createdAt, {
     allowStoredAlias: options.allowStoredAlias === true,
   });
-  ensureTranscriptGenerationInTransaction(database, scope.sessionId);
+  ensureSessionTranscriptSourceGenerationInTransaction(database, scope.sessionId);
   const identity = readTranscriptEventIdentity(persistedEvent);
   if (identity && readTranscriptIdentityByEventId(database, scope.sessionId, identity.eventId)) {
     return false;
@@ -338,30 +339,25 @@ export function replaceSqliteTranscriptEventsInTransaction(
     options.preserveSessionWindowRecency === true
       ? readTranscriptMutationStateInTransaction(database, resolved.sessionId).updatedAt
       : undefined;
-  const previousGeneration = readTranscriptGenerationInTransaction(database, resolved.sessionId);
-  const deleted = deleteTranscriptEventsInTransaction(database, resolved.sessionId);
-  if (events.length === 0) {
-    if (deleted || previousGeneration) {
-      rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
-      invalidateSessionTranscriptDisplayInTransaction(database.db, resolved.sessionId);
-      recordTranscriptReplacementMutation(
-        database,
-        resolved.sessionId,
-        preservedTranscriptUpdatedAt,
-      );
-      scheduleTranscriptProjectionReconcile(database, resolved, true, {});
-    }
-    return;
-  }
-  if (!deleted || options.preserveSessionWindowRecency !== true) {
+  const db = getSessionKysely(database.db);
+  const sourceWindow = executeSqliteQueryTakeFirstSync(
+    database.db,
+    db
+      .selectFrom("session_windows")
+      .select("updated_at")
+      .where("session_id", "=", resolved.sessionId),
+  );
+  if (!sourceWindow || (events.length > 0 && options.preserveSessionWindowRecency !== true)) {
     ensureTranscriptSessionRoot(database, resolved, readEventTimestamp(events[0]) ?? Date.now());
   }
-  if (deleted || previousGeneration) {
-    rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
-  } else {
-    ensureTranscriptGenerationInTransaction(database, resolved.sessionId);
-  }
+  const deleted = deleteTranscriptEventsInTransaction(database, resolved.sessionId);
+  replaceSessionTranscriptSourceGenerationInTransaction(database, resolved.sessionId);
   invalidateSessionTranscriptDisplayInTransaction(database.db, resolved.sessionId);
+  if (events.length === 0) {
+    recordTranscriptReplacementMutation(database, resolved.sessionId, preservedTranscriptUpdatedAt);
+    scheduleTranscriptProjectionReconcile(database, resolved, true, {});
+    return;
+  }
   let seq = 0;
   const seenEventIds = new Set<string>();
   const seenMessageIdempotencyKeys = new Set<string>();
@@ -436,7 +432,7 @@ export function rewriteSqliteTranscriptEventRowsInTransaction(
       );
     }
   }
-  rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
+  replaceSessionTranscriptSourceGenerationInTransaction(database, resolved.sessionId);
   invalidateSessionTranscriptDisplayInTransaction(database.db, resolved.sessionId);
   touchTranscriptMutationInTransaction(database, resolved.sessionId);
   reconcileSessionTranscriptIndexInTransaction(database.db, resolved.sessionId);
@@ -465,7 +461,7 @@ export function updateSqliteTranscriptEventJsonInTransaction(
         .where("seq", "=", seq),
     );
   }
-  rotateTranscriptGenerationInTransaction(database, sessionId);
+  replaceSessionTranscriptSourceGenerationInTransaction(database, sessionId);
   invalidateSessionTranscriptDisplayInTransaction(database.db, sessionId);
   deleteSessionTranscriptIndexInTransaction(database.db, sessionId);
   reconcileSessionTranscriptIndexInTransaction(database.db, sessionId);
