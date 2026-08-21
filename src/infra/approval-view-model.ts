@@ -64,6 +64,7 @@ function buildExecViewBase<TPhase extends ApprovalPhase>(
   const { commandText, commandPreview } = resolveExecApprovalCommandDisplay(request.request);
   return {
     approvalId: request.id,
+    ...(request.instanceId ? { instanceId: request.instanceId } : {}),
     approvalKind: "exec",
     phase,
     title: phase === "pending" ? "Exec Approval Required" : "Exec Approval",
@@ -89,6 +90,7 @@ function buildPluginViewBase<TPhase extends ApprovalPhase>(
 ): PluginApprovalViewBase & { phase: TPhase } {
   return {
     approvalId: request.id,
+    ...(request.instanceId ? { instanceId: request.instanceId } : {}),
     approvalKind: "plugin",
     phase,
     title: request.request.title,
@@ -109,6 +111,7 @@ export function buildPendingApprovalView(request: ApprovalRequest): PendingAppro
       ...buildPluginViewBase(normalizedRequest, "pending"),
       actions: buildTypedApprovalActionDescriptors({
         approvalCommandId: normalizedRequest.id,
+        instanceId: normalizedRequest.instanceId,
         approvalKind: normalizedRequest.approvalKind,
         allowedDecisions: resolveCanonicalPluginApprovalRequestAllowedDecisions(
           normalizedRequest.request,
@@ -121,6 +124,7 @@ export function buildPendingApprovalView(request: ApprovalRequest): PendingAppro
     ...buildExecViewBase(normalizedRequest, "pending"),
     actions: buildTypedApprovalActionDescriptors({
       approvalCommandId: normalizedRequest.id,
+      instanceId: normalizedRequest.instanceId,
       approvalKind: normalizedRequest.approvalKind,
       ask: normalizedRequest.request.ask,
       allowedDecisions: resolveExecApprovalRequestAllowedDecisions(normalizedRequest.request),

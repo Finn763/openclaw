@@ -128,6 +128,7 @@ class ExecApprovalActionButton extends Button {
 
   constructor(params: {
     approvalId: string;
+    instanceId?: string;
     approvalKind: PendingApprovalView["approvalKind"];
     descriptor: ExecApprovalActionDescriptor;
   }) {
@@ -136,6 +137,7 @@ class ExecApprovalActionButton extends Button {
       params.approvalId,
       params.approvalKind,
       params.descriptor.decision,
+      params.instanceId,
     );
     this.label = params.descriptor.label;
     this.style =
@@ -152,6 +154,7 @@ class ExecApprovalActionButton extends Button {
 class ExecApprovalActionRow extends Row<Button> {
   constructor(params: {
     approvalId: string;
+    instanceId?: string;
     approvalKind: PendingApprovalView["approvalKind"];
     actions: readonly ExecApprovalActionDescriptor[];
   }) {
@@ -160,6 +163,7 @@ class ExecApprovalActionRow extends Row<Button> {
         (descriptor) =>
           new ExecApprovalActionButton({
             approvalId: params.approvalId,
+            instanceId: params.instanceId,
             approvalKind: params.approvalKind,
             descriptor,
           }),
@@ -171,6 +175,7 @@ class ExecApprovalActionRow extends Row<Button> {
 function createApprovalActionRow(view: PendingApprovalView): Row<Button> {
   return new ExecApprovalActionRow({
     approvalId: view.approvalId,
+    instanceId: view.instanceId,
     approvalKind: view.approvalKind,
     actions: view.actions,
   });
