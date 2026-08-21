@@ -72,7 +72,7 @@ function scheduleChatMetadataRefresh(callback: () => void) {
 }
 
 export async function refreshChatCommands(host: ChatPageHost) {
-  const agentId = resolveChatModelMetadataAgentId(host);
+  const agentId = resolveChatAgentId(host);
   if (!agentId) {
     return;
   }

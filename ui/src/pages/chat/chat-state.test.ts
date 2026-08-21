@@ -17,6 +17,7 @@ import { handlePageGatewayEvent } from "./chat-state-events.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
 import { createPageState } from "./chat-state-page.ts";
 import {
+  refreshChatCommands,
   refreshChatMetadata,
   refreshChatModelCatalogOnDemand,
   refreshChatModelAuthStatus,
@@ -2579,5 +2580,46 @@ describe("refreshChatModelAuthStatus", () => {
       expect(request).toHaveBeenCalledOnce();
     },
   );
+});
+
+describe("refreshChatCommands", () => {
+  it("refreshes commands for a routed system agent independently of model eligibility", async () => {
+    const request = vi.fn(async () => ({
+      commands: [
+        {
+          name: "system-status",
+          textAliases: ["/system-status"],
+          description: "Show system status.",
+          source: "plugin",
+          scope: "text",
+          acceptsArgs: false,
+        },
+      ],
+    }));
+    const state = {
+      client: { request },
+      connected: true,
+      sessionKey: "agent:openclaw:dashboard:current",
+      agentsList: {
+        defaultId: "main",
+        mainKey: "main",
+        scope: "agent",
+        agents: [
+          { id: "main", kind: "agent" },
+          { id: "openclaw", kind: "system" },
+        ],
+      },
+      assistantAgentId: "main",
+    } as unknown as ChatPageHost;
+
+    await refreshChatCommands(state);
+
+    expect(request).toHaveBeenCalledWith("commands.list", {
+      agentId: "openclaw",
+      includeArgs: true,
+      scope: "text",
+    });
+    expect(SLASH_COMMANDS.some((command) => command.name === "system-status")).toBe(true);
+  });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
