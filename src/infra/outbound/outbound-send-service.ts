@@ -98,6 +98,8 @@ type OutboundSendContext = {
   onDeliveryIntent?: (intent: DurableMessageSendIntent) => void;
   /** Runs on identified platform evidence before queue acknowledgement. */
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
+  /** Revalidates caller authority immediately before recipient-visible I/O. */
+  onPlatformSendDispatch?: () => Promise<void>;
   /** Runs once a plugin action accepted the send, before transcript mirroring. */
   onPluginSendAccepted?: () => Promise<void>;
 };
@@ -195,6 +197,7 @@ async function sendCoreMessage(params: {
     requireUnknownSendReconciliation: params.ctx.requireQueuePersistence ? false : undefined,
     onDeliveryIntent: params.ctx.onDeliveryIntent,
     onDeliveryResult: params.ctx.onDeliveryResult,
+    onPlatformSendDispatch: params.ctx.onPlatformSendDispatch,
     onDeliveredPayload: (payload) => deliveredPayloads.push(payload),
   });
   const deliveredText =
@@ -243,6 +246,7 @@ async function tryHandleWithPluginAction(params: {
     mediaAccess: params.ctx.mediaAccess,
     mediaReadFile: params.ctx.mediaReadFile,
   });
+  await params.ctx.onPlatformSendDispatch?.();
   const handled = await dispatchChannelMessageAction(
     createChannelActionContext({
       ctx: params.ctx,

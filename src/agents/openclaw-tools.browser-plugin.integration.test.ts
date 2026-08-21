@@ -168,7 +168,14 @@ describe("createOpenClawTools browser plugin integration", () => {
       ),
       mediaUrl,
     );
-    const sendMedia = vi.fn(async () => ({ channel: "telegram", messageId: "sent-1" }));
+    const platformSendMedia = vi.fn(async () => ({ channel: "telegram", messageId: "sent-1" }));
+    const sendMedia = vi.fn(async (params: { onPlatformSendDispatch?: () => Promise<void> }) => {
+      await params.onPlatformSendDispatch?.();
+      return await platformSendMedia();
+    });
+    const preparationStarted = createDeferred();
+    const resumePreparation = createDeferred();
+    let deferPreparation = false;
     const telegramPlugin = createOutboundTestPlugin({
       id: "telegram",
       outbound: {
@@ -184,6 +191,16 @@ describe("createOpenClawTools browser plugin integration", () => {
         },
       },
     });
+    telegramPlugin.actions = {
+      describeMessageTool: () => null,
+      prepareSendPayload: async ({ payload }) => {
+        if (deferPreparation) {
+          preparationStarted.resolve();
+          await resumePreparation.promise;
+        }
+        return payload;
+      },
+    };
     const activeRegistry = createTestRegistry([
       {
         pluginId: "telegram",
@@ -270,19 +287,19 @@ describe("createOpenClawTools browser plugin integration", () => {
         }),
       );
 
-      const deferredSend = createDeferred<{ channel: string; messageId: string }>();
-      sendMedia.mockImplementationOnce(async () => await deferredSend.promise);
+      deferPreparation = true;
       const pending = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
         activeDelivery.send({ text: "closing", mediaUrl }),
       );
-      await vi.waitFor(() => expect(sendMedia).toHaveBeenCalledTimes(2));
+      await preparationStarted.promise;
       revokeMessageActionTurnCapability(turnCapability);
-      deferredSend.resolve({ channel: "telegram", messageId: "sent-2" });
+      resumePreparation.resolve();
       await expect(pending).rejects.toThrow("plugin delivery capability is no longer active");
+      expect(platformSendMedia).toHaveBeenCalledTimes(1);
       await expect(activeDelivery.send({ text: "too late" })).rejects.toThrow(
         "plugin delivery capability is no longer active",
       );
-      expect(sendMedia).toHaveBeenCalledTimes(2);
+      expect(platformSendMedia).toHaveBeenCalledTimes(1);
 
       nextTurnCapability = mintMessageActionTurnCapability({
         agentId: "main",

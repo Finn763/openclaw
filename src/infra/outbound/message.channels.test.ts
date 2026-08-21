@@ -482,6 +482,26 @@ describe("gateway url override hardening", () => {
     });
   });
 
+  it("rejects revoked authority before a gateway send RPC", async () => {
+    setThreadChatGatewayRegistry();
+    const onPlatformSendDispatch = vi.fn(async () => {
+      throw new Error("delivery authority revoked");
+    });
+
+    await expect(
+      sendMessage({
+        cfg: {},
+        to: "channel:town-square",
+        content: "hi",
+        channel: "threadchat",
+        onPlatformSendDispatch,
+      }),
+    ).rejects.toThrow("delivery authority revoked");
+
+    expect(onPlatformSendDispatch).toHaveBeenCalledOnce();
+    expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
   it("drops unused buffer metadata when explicit gateway media is present", async () => {
     const result = await sendThreadChatGatewayMessage({
       mediaUrl: "https://example.com/photo.png",

@@ -280,6 +280,31 @@ describe("executeSendAction", () => {
     });
   });
 
+  it("rejects revoked authority before provider-native dispatch", async () => {
+    const onPlatformSendDispatch = vi.fn(async () => {
+      throw new Error("delivery authority revoked");
+    });
+
+    await expect(
+      executeSendAction({
+        ctx: {
+          plugin: defaultPlugin,
+          cfg: {},
+          channel: "demo-outbound",
+          params: { to: "channel:123", message: "hello" },
+          dryRun: false,
+          onPlatformSendDispatch,
+        },
+        to: "channel:123",
+        message: "hello",
+      }),
+    ).rejects.toThrow("delivery authority revoked");
+
+    expect(onPlatformSendDispatch).toHaveBeenCalledOnce();
+    expect(mocks.dispatchChannelMessageAction).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("reports delivery-layer effective text instead of the pre-adapter message", async () => {
     mocks.dispatchChannelMessageAction.mockResolvedValue(null);
     mocks.sendMessage.mockImplementationOnce(async (params: unknown) => {

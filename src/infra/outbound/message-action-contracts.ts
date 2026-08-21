@@ -94,6 +94,8 @@ export type MessageActionInput = {
   onDeliveryIntent?: (intent: DurableMessageSendIntent) => void;
   /** @internal Runs on identified platform evidence before queue acknowledgement. */
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
+  /** @internal Revalidates caller authority immediately before recipient-visible I/O. */
+  onPlatformSendDispatch?: () => Promise<void>;
   /** @internal Runs when broadcast converts a typed target denial into result text. */
   onActionDenied?: (
     error: MessageActionDeniedError,

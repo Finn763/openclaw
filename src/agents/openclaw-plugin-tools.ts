@@ -140,6 +140,9 @@ function createPluginToolDelivery(params: {
           sessionId,
           runId,
           agentId,
+          onPlatformSendDispatch: async () => {
+            resolveAuthorization();
+          },
           dryRun: false,
         }),
       );

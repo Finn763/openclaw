@@ -597,6 +597,7 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
       deliveryIntentId: input.deliveryIntentId,
       deliveryCompletion: input.deliveryCompletion,
       onDeliveryIntent: input.onDeliveryIntent,
+      onPlatformSendDispatch: input.onPlatformSendDispatch,
       // Identified platform evidence is the first success proof on the core
       // path; commit the route here so the transcript mirror (which runs later
       // in the same delivery) can resolve a just-created session entry.
