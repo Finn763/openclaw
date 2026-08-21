@@ -446,7 +446,7 @@ describe("plugin npm extended-stable workflow", () => {
       .split("\n")
       .filter((line) => line.includes('npm publish "$TARBALL_PATH"'));
 
-    expect(gitFetchLines).toHaveLength(7);
+    expect(gitFetchLines).toHaveLength(6);
     expect(
       gitFetchLines.every((line) => line.includes("timeout --signal=TERM --kill-after=10s 120s")),
     ).toBe(true);

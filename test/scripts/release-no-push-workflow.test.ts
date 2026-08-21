@@ -1514,7 +1514,7 @@ describe("release validation no-push transport", () => {
     expect(validateInputs.run).toContain(
       'if [[ "${RELEASE_NPM_DIST_TAG}" == "extended-stable" ]]; then',
     );
-    expect(publishJob.if).toBeUndefined();
+    expect(publishJob.if).toBe("${{ !inputs.publish_docker_only }}");
     expect(validateEvidence.env?.EXPECTED_WORKFLOW_BRANCH).toBe(
       "${{ steps.inputs.outputs.expected_validation_branch }}",
     );
@@ -1525,9 +1525,15 @@ describe("release validation no-push transport", () => {
       "must be reachable from ${EXPECTED_VALIDATION_BRANCH}",
     );
 
-    expect(dockerCall.needs).toEqual(["resolve_release_target", "publish"]);
+    expect(dockerCall.needs).toEqual([
+      "resolve_release_target",
+      "publish",
+      "verify_core_npm_registry",
+    ]);
     expect(dockerCall.if).toContain("inputs.publish_openclaw_npm");
     expect(dockerCall.if).toContain("needs.publish.result == 'success'");
+    expect(dockerCall.if).toContain("inputs.publish_docker_only");
+    expect(dockerCall.if).toContain("needs.verify_core_npm_registry.result == 'success'");
     expect(dockerCall.with).toEqual({
       tag: "${{ inputs.tag }}",
       release_sha: "${{ needs.resolve_release_target.outputs.sha }}",
@@ -1593,8 +1599,8 @@ describe("release validation no-push transport", () => {
     expect(publishRelease.run).toContain("--draft=false");
 
     const releasePublishText = readFileSync(releasePublishPath, "utf8");
-    expect(releasePublishText).not.toContain("publish_docker_only");
-    expect(releasePublishText).not.toContain("verify_core_npm_registry");
+    expect(releasePublishText).toContain("publish_docker_only");
+    expect(releasePublishText).toContain("verify_core_npm_registry");
     expect(releasePublishText).not.toContain("prepare_extended_stable_release");
     expect(releasePublishText).not.toContain("finalize_extended_stable_github_release");
     expect(releasePublishText).not.toContain("extended-stable-release-notes-${{ inputs.tag }}");

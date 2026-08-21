@@ -1618,8 +1618,8 @@ describe("package acceptance workflow", () => {
     expect(identity.run).toContain(
       "node .release-tooling/scripts/release-tooling-identity.mjs verify",
     );
-    expect(target.run).not.toContain('WORKFLOW_REF}" != "refs/heads/main');
-    expect(target.run).not.toContain('git merge-base --is-ancestor "${WORKFLOW_SHA}" origin/main');
+    expect(target.run).toContain('if [[ -n "${RELEASE_CANDIDATE_BRANCH// }" ]]; then');
+    expect(target.run).toContain('git merge-base --is-ancestor "${WORKFLOW_SHA}" origin/main');
   });
 
   it("accepts only the live exact lightweight protected tag for plugin npm preflight", () => {

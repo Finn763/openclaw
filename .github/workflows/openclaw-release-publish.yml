@@ -67,6 +67,11 @@ on:
         required: true
         default: true
         type: boolean
+      publish_docker_only:
+        description: Publish Docker only after independently verifying an already-published beta or extended-stable npm package
+        required: true
+        default: false
+        type: boolean
       release_profile:
         description: Release coverage profile used for release evidence summaries; default reads it from the validation manifest
         required: false
@@ -121,6 +126,7 @@ jobs:
           WINDOWS_NODE_TAG: ${{ inputs.windows_node_tag }}
           WINDOWS_NODE_INSTALLER_DIGESTS: ${{ inputs.windows_node_installer_digests }}
           PUBLISH_OPENCLAW_NPM: ${{ inputs.publish_openclaw_npm && 'true' || 'false' }}
+          PUBLISH_DOCKER_ONLY: ${{ inputs.publish_docker_only && 'true' || 'false' }}
           PLUGIN_PUBLISH_SCOPE: ${{ inputs.plugin_publish_scope }}
           PLUGINS: ${{ inputs.plugins }}
           RELEASE_NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
@@ -142,7 +148,7 @@ jobs:
             exit 1
           fi
           release_evidence_required=false
-          if [[ "${PUBLISH_OPENCLAW_NPM}" == "true" || "${PLUGIN_PUBLISH_SCOPE}" == "all-publishable" ]]; then
+          if [[ "${PUBLISH_OPENCLAW_NPM}" == "true" || "${PUBLISH_DOCKER_ONLY}" == "true" || "${PLUGIN_PUBLISH_SCOPE}" == "all-publishable" ]]; then
             release_evidence_required=true
           fi
           release_evidence_supplied=false
@@ -174,6 +180,16 @@ jobs:
           if [[ -n "${OPENCLAW_NPM_RESUME_RUN_ID}" && "${PUBLISH_OPENCLAW_NPM}" != "true" ]]; then
             echo "openclaw_npm_resume_run_id requires publish_openclaw_npm=true." >&2
             exit 1
+          fi
+          if [[ "${PUBLISH_DOCKER_ONLY}" == "true" ]]; then
+            if [[ "${PUBLISH_OPENCLAW_NPM}" == "true" ]]; then
+              echo "publish_docker_only requires publish_openclaw_npm=false." >&2
+              exit 1
+            fi
+            if [[ "${RELEASE_NPM_DIST_TAG}" != "beta" && "${RELEASE_NPM_DIST_TAG}" != "extended-stable" ]]; then
+              echo "publish_docker_only supports already-published beta or extended-stable releases only." >&2
+              exit 1
+            fi
           fi
           stable_release=true
           if [[ "${RELEASE_TAG}" == *"-alpha."* || "${RELEASE_TAG}" == *"-beta."* ]]; then
@@ -728,6 +744,7 @@ jobs:
   publish:
     name: Publish plugins, then OpenClaw
     needs: [resolve_release_target]
+    if: ${{ !inputs.publish_docker_only }}
     permissions:
       actions: write
       attestations: write
@@ -2546,10 +2563,42 @@ jobs:
           path: ${{ runner.temp }}/openclaw-release-postpublish-evidence
           if-no-files-found: error
 
+  verify_core_npm_registry:
+    name: Verify already-published core npm package
+    needs: [resolve_release_target]
+    if: ${{ inputs.publish_docker_only }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify exact npm and selector readback matches preflight bytes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+          EXPECTED_TARBALL_SHA256: ${{ needs.resolve_release_target.outputs.preflight_tarball_sha256 }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          exact_version="$(npm view "openclaw@${version}" version)"
+          selector_version="$(npm view "openclaw@${RELEASE_NPM_DIST_TAG}" version)"
+          if [[ "${exact_version}" != "${version}" || "${selector_version}" != "${version}" ]]; then
+            echo "npm exact-version or ${RELEASE_NPM_DIST_TAG} selector readback does not match ${version}." >&2
+            exit 1
+          fi
+          tarball_url="$(npm view "openclaw@${version}" dist.tarball)"
+          tarball_path="${RUNNER_TEMP}/openclaw-${version}.tgz"
+          curl -fsSL --connect-timeout 10 --max-time 120 --retry 3 --retry-max-time 180 \
+            -o "${tarball_path}" "${tarball_url}"
+          actual_tarball_sha256="$(sha256sum "${tarball_path}" | awk '{print $1}')"
+          if [[ -z "${EXPECTED_TARBALL_SHA256}" || "${actual_tarball_sha256}" != "${EXPECTED_TARBALL_SHA256}" ]]; then
+            echo "Published npm tarball does not match the release preflight artifact." >&2
+            exit 1
+          fi
+
   publish_docker:
     name: Publish Docker images
-    needs: [resolve_release_target, publish]
-    if: ${{ always() && inputs.publish_openclaw_npm && needs.publish.result == 'success' }}
+    needs: [resolve_release_target, publish, verify_core_npm_registry]
+    if: ${{ always() && ((inputs.publish_openclaw_npm && needs.publish.result == 'success') || (inputs.publish_docker_only && needs.verify_core_npm_registry.result == 'success')) }}
     uses: ./.github/workflows/docker-release.yml
     with:
       tag: ${{ inputs.tag }}
