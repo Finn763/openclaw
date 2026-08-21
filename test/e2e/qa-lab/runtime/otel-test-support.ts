@@ -73,7 +73,7 @@ export type CapturedLogRecord = {
   traceId: string;
 };
 
-export type CapturedTraceSummary = {
+type CapturedTraceSummary = {
   traceId: string;
   names: Record<string, number>;
 };
