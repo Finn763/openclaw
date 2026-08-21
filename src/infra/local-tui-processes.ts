@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_p
 import path from "node:path";
 import { sleep } from "../utils/sleep.js";
 import { getCommandPositionalsWithRootOptions } from "./cli-root-options.js";
+import { extractErrorCode } from "./errors.js";
 
 export type LocalTuiProcess = {
   pid: number;
@@ -125,7 +126,7 @@ function isProcessAlive(controller: ProcessController, pid: number): boolean {
     controller.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    return extractErrorCode(error) !== "ESRCH";
   }
 }
 
@@ -216,11 +217,7 @@ export async function quiesceLocalTuiProcessesBeforeUpdate(
     terminate?: typeof terminateLocalTuiProcesses;
   } = {},
 ): Promise<void> {
-  if (
-    !overrides.list &&
-    (process.env.VITEST || process.env.NODE_ENV === "test") &&
-    process.env.OPENCLAW_ALLOW_TEST_LOCAL_TUI_PROCESS_MUTATION !== "1"
-  ) {
+  if (!overrides.list && (process.env.VITEST || process.env.NODE_ENV === "test")) {
     return;
   }
   const processes = (overrides.list ?? listLocalTuiProcesses)();
