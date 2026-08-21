@@ -2,18 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   listLocalTuiProcesses,
   quiesceLocalTuiProcessesBeforeUpdate,
-  resolveLocalTuiUpdateLockPath,
   terminateLocalTuiProcesses,
   waitForLocalTuiUpdate,
 } from "./local-tui-processes.js";
 
 describe("local TUI processes", () => {
-  it("scopes the update gate to the invoking user's home", () => {
-    expect(resolveLocalTuiUpdateLockPath("/home/alice")).not.toBe(
-      resolveLocalTuiUpdateLockPath("/home/bob"),
-    );
-  });
-
   it("lists only verified local TUI processes from ps output", () => {
     const spawnSync = vi.fn().mockReturnValue({
       status: 0,

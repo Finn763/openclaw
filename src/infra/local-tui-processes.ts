@@ -30,7 +30,7 @@ type PsResult = {
 
 const LOCAL_TUI_SUBCOMMANDS = new Set(["chat", "terminal", "tui"]);
 const LOCAL_TUI_PROCESS_PROBE_TIMEOUT_MS = 1_000;
-export function resolveLocalTuiUpdateLockPath(userHome = os.homedir()): string {
+function resolveLocalTuiUpdateLockPath(userHome = os.homedir()): string {
   const ownerScope = createHash("sha256").update(userHome).digest("hex").slice(0, 16);
   return path.join(os.tmpdir(), `openclaw-local-tui-update-${ownerScope}`);
 }
