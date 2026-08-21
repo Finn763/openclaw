@@ -303,16 +303,19 @@ export class OpenClawChannelBridge {
   async respondToApproval(params: {
     kind: ChannelApprovalKind;
     id: string;
+    instanceId?: string;
     decision: ApprovalDecision;
   }): Promise<Record<string, unknown>> {
     if (params.kind === "exec") {
       return await this.requestGateway("exec.approval.resolve", {
         id: params.id,
+        ...(params.instanceId ? { instanceId: params.instanceId } : {}),
         decision: params.decision,
       });
     }
     return await this.requestGateway("plugin.approval.resolve", {
       id: params.id,
+      ...(params.instanceId ? { instanceId: params.instanceId } : {}),
       decision: params.decision,
     });
   }
@@ -500,6 +503,10 @@ export class OpenClawChannelBridge {
       approval: {
         kind,
         id,
+        instanceId:
+          typeof payload.instanceId === "string" && payload.instanceId.trim()
+            ? payload.instanceId.trim()
+            : undefined,
         request:
           payload.request && typeof payload.request === "object"
             ? (payload.request as Record<string, unknown>)
