@@ -59,76 +59,105 @@ private struct RealtimeRelayTestTimeout: Error, CustomStringConvertible {
     }
 }
 
+private typealias RealtimeRelayTestDeadlineScheduler =
+    @Sendable (@escaping @Sendable () -> Void) -> Task<Void, Never>
+
 private final class RealtimeRelayTestSignal<Value: Sendable>: @unchecked Sendable {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Value, any Error>
+        var deadline: Task<Void, Never>?
+    }
+
     private let lock = NSLock()
     private let onWaiting: @Sendable () -> Void
-    private let timeoutSeconds: Double
+    private let scheduleDeadline: RealtimeRelayTestDeadlineScheduler
     private var values: [Value] = []
-    private var waiters: [(id: UUID, continuation: CheckedContinuation<Value, any Error>)] = []
+    private var waiters: [Waiter] = []
 
-    init(timeoutSeconds: Double = 30, onWaiting: @escaping @Sendable () -> Void = {}) {
-        self.timeoutSeconds = timeoutSeconds
+    init(
+        timeoutSeconds: Double = 30,
+        onWaiting: @escaping @Sendable () -> Void = {},
+        scheduleDeadline: RealtimeRelayTestDeadlineScheduler? = nil)
+    {
         self.onWaiting = onWaiting
+        self.scheduleDeadline = scheduleDeadline ?? { expire in
+            Task {
+                do {
+                    try await Task.sleep(for: .seconds(timeoutSeconds))
+                    expire()
+                } catch {}
+            }
+        }
     }
 
     func send(_ value: Value) {
-        let continuation: CheckedContinuation<Value, any Error>? = self.lock.withLock {
+        let waiter: Waiter? = self.lock.withLock {
             guard !self.waiters.isEmpty else {
                 self.values.append(value)
                 return nil
             }
-            return self.waiters.removeFirst().continuation
+            return self.waiters.removeFirst()
         }
-        continuation?.resume(returning: value)
+        self.resume(waiter, with: .success(value))
     }
 
     func next(_ operation: String) async throws -> Value {
         try Task.checkCancellation()
         let id = UUID()
-        do {
-            return try await AsyncTimeout.withTimeout(
-                seconds: self.timeoutSeconds,
-                onTimeout: { RealtimeRelayTestTimeout(operation: operation) },
-                operation: {
-                    try await withTaskCancellationHandler {
-                        try await withCheckedThrowingContinuation { continuation in
-                            let registration: Result<Value, any Error>? = self.lock.withLock {
-                                if Task.isCancelled {
-                                    return .failure(CancellationError())
-                                }
-                                if !self.values.isEmpty {
-                                    return .success(self.values.removeFirst())
-                                }
-                                self.waiters.append((id, continuation))
-                                return nil
-                            }
-                            switch registration {
-                            case let .success(value):
-                                continuation.resume(returning: value)
-                            case let .failure(error):
-                                continuation.resume(throwing: error)
-                            case nil:
-                                self.onWaiting()
-                            }
-                        }
-                    } onCancel: {
-                        self.cancelWaiter(id)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let registration: Result<Value, any Error>? = self.lock.withLock {
+                    if Task.isCancelled {
+                        return .failure(CancellationError())
                     }
-                })
-        } catch {
-            self.cancelWaiter(id)
-            throw error
+                    if !self.values.isEmpty {
+                        return .success(self.values.removeFirst())
+                    }
+                    self.waiters.append(Waiter(id: id, continuation: continuation))
+                    return nil
+                }
+                if let registration {
+                    continuation.resume(with: registration)
+                    return
+                }
+                self.onWaiting()
+                let deadline = self.scheduleDeadline {
+                    self.failWaiter(id, with: RealtimeRelayTestTimeout(operation: operation))
+                }
+                let retained = self.lock.withLock {
+                    guard let index = self.waiters.firstIndex(where: { $0.id == id }) else {
+                        return false
+                    }
+                    self.waiters[index].deadline = deadline
+                    return true
+                }
+                if !retained {
+                    deadline.cancel()
+                }
+            }
+        } onCancel: {
+            self.failWaiter(id, with: CancellationError())
         }
     }
 
-    private func cancelWaiter(_ id: UUID) {
-        let continuation: CheckedContinuation<Value, any Error>? = self.lock.withLock {
+    private func failWaiter(_ id: UUID, with error: any Error) {
+        self.resume(self.claimWaiter(id), with: .failure(error))
+    }
+
+    private func claimWaiter(_ id: UUID) -> Waiter? {
+        self.lock.withLock {
             guard let index = self.waiters.firstIndex(where: { $0.id == id }) else {
                 return nil
             }
-            return self.waiters.remove(at: index).continuation
+            return self.waiters.remove(at: index)
         }
-        continuation?.resume(throwing: CancellationError())
+    }
+
+    private func resume(_ waiter: Waiter?, with result: Result<Value, any Error>) {
+        guard let waiter else { return }
+        waiter.deadline?.cancel()
+        waiter.continuation.resume(with: result)
     }
 }
 
@@ -185,11 +214,19 @@ private struct RealtimeRelayTestSignalTests {
                 _ = try await task.value
                 Issue.record("cancelled consumer unexpectedly received a value")
             } catch is CancellationError {}
+            second = nil
 
             signal.send(7)
             #expect(try await first.value == 7)
             signal.send(9)
             #expect(try await signal.next("post-cancellation buffered value") == 9)
+
+            let claimed = Task { try await signal.next("claimed consumer") }
+            second = claimed
+            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "claimed registration")
+            signal.send(13)
+            claimed.cancel()
+            #expect(try await claimed.value == 13)
         } catch {
             await cancelAndAwaitSignalTasks(first, second)
             throw error
@@ -197,14 +234,21 @@ private struct RealtimeRelayTestSignalTests {
     }
 
     @Test func `timed out consumer cannot steal a later value`() async throws {
-        let waiting = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .unbounded)
+        let deadlines = AsyncStream.makeStream(
+            of: (@Sendable () -> Void).self,
+            bufferingPolicy: .unbounded)
         let signal = RealtimeRelayTestSignal<Int>(
-            timeoutSeconds: 0.01,
-            onWaiting: { waiting.continuation.yield() })
-        defer { waiting.continuation.finish() }
+            scheduleDeadline: { expire in
+                deadlines.continuation.yield(expire)
+                return Task {}
+            })
+        defer { deadlines.continuation.finish() }
         let timedOut = Task { try await signal.next("expiring consumer") }
         do {
-            _ = try await waitForRealtimeRelayEvent(waiting.stream, operation: "expiring registration")
+            let expire = try await waitForRealtimeRelayEvent(
+                deadlines.stream,
+                operation: "expiring deadline")
+            expire()
             do {
                 _ = try await timedOut.value
                 Issue.record("consumer unexpectedly survived its deadline")
