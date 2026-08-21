@@ -15,7 +15,6 @@ import {
   readStringValue,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createQaBusState, type QaBusState } from "./bus-state.js";
-import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
 import {
   createCrablineProviderDelivery,
   createCrablineProviderInboundInput,
@@ -364,10 +363,7 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
       id: CRABLINE_TRANSPORT_ID,
       label: `crabline local ${params.selection.channel}`,
       accountId: params.adapter.accountId,
-      requiredPluginIds:
-        params.selection.channel === "discord"
-          ? ["qa-lab", ...params.adapter.requiredPluginIds]
-          : params.adapter.requiredPluginIds,
+      requiredPluginIds: params.adapter.requiredPluginIds,
       state: params.state,
     });
     this.#adapter = params.adapter;
@@ -487,26 +483,18 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     return delivery;
   };
 
-  createRuntimeEnvPatch = () => this.#adapter.createProviderReadinessEnv({});
-
-  stageGatewayRuntime = async ({ tempRoot }: { tempRoot: string }) => {
+  createRuntimeEnvPatch = () => {
+    const env = this.#adapter.createProviderReadinessEnv({});
     if (this.#adapter.manifest.provider !== "discord") {
-      return;
+      return env;
     }
     const gatewayUrl = new URL(this.#adapter.manifest.endpoints.gatewayUrl);
-    await fs.writeFile(
-      path.join(tempRoot, CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT),
-      `${JSON.stringify(
-        {
-          restApiBaseUrl: `${this.#adapter.manifest.endpoints.apiRoot}/v10`,
-          gatewayBotUrl: this.#adapter.manifest.endpoints.gatewayBotUrl,
-          gatewayOrigin: gatewayUrl.origin,
-        },
-        null,
-        2,
-      )}\n`,
-      { encoding: "utf8", flag: "wx", mode: 0o600 },
-    );
+    return {
+      ...env,
+      DISCORD_REST_API_BASE_URL: `${this.#adapter.manifest.endpoints.apiRoot}/v10`,
+      DISCORD_GATEWAY_BOT_URL: this.#adapter.manifest.endpoints.gatewayBotUrl,
+      DISCORD_GATEWAY_ORIGIN: gatewayUrl.origin,
+    };
   };
 
   handleAction = async (_params: {

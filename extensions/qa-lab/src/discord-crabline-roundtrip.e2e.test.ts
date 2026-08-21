@@ -3,7 +3,6 @@ import path from "node:path";
 import { resolveOpenClawCrablineChannelDriverSelection } from "@openclaw/crabline";
 import { readStringValue } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { describe, expect, it } from "vitest";
-import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
 import { runQaSuite } from "./suite-launch.runtime.js";
 
 const RUN_DISCORD_CRABLINE_E2E = process.env.OPENCLAW_QA_DISCORD_CRABLINE_E2E === "1";
@@ -133,11 +132,8 @@ describe("Discord Crabline real-plugin roundtrip", () => {
       ).toBe(true);
 
       // Suite return occurs only after the child Gateway and its WebSocket are stopped, then the
-      // Discord HTTP server and recorder are closed. The QA-owned descriptor lives in the removed
-      // child temp root and must never escape into durable suite artifacts.
-      await expect(
-        fs.access(path.join(suite.result.outputDir, CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT)),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      // Discord HTTP server and recorder are closed. Endpoint routing stays in the child env and
+      // never becomes a durable suite artifact.
       await expect(fs.readFile(recorderPath, "utf8")).resolves.toContain(EXPECTED_MARKER);
     },
     180_000,

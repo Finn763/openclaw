@@ -1,11 +1,8 @@
 // QA Lab tests cover the Discord-specific Crabline provider lifecycle.
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { OpenClawCrablineChannelDriverSelection } from "@openclaw/crabline";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it } from "vitest";
 import { createQaBusState } from "./bus-state.js";
-import { CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT } from "./crabline-discord-provider-endpoint-artifact.js";
 import { createQaCrablineTransportAdapter } from "./crabline-transport.js";
 
 const DISCORD_SELECTION = {
@@ -24,11 +21,8 @@ describe("Crabline Discord transport", () => {
         selection: DISCORD_SELECTION,
         state: createQaBusState(),
       });
-      const gatewayTempRoot = path.join(outputDir, "gateway-temp");
-      await fs.mkdir(gatewayTempRoot);
-
       try {
-        expect(transport.requiredPluginIds).toEqual(["qa-lab", "discord"]);
+        expect(transport.requiredPluginIds).toEqual(["discord"]);
         const config = transport.createGatewayConfig({ baseUrl: "http://127.0.0.1:1" });
         const discord = config.channels?.discord as
           | {
@@ -50,15 +44,21 @@ describe("Crabline Discord transport", () => {
           token: expect.any(String),
         });
 
-        await transport.stageGatewayRuntime?.({ tempRoot: gatewayTempRoot });
-        const descriptorPath = path.join(
-          gatewayTempRoot,
-          CRABLINE_DISCORD_PROVIDER_ENDPOINT_ARTIFACT,
-        );
-        const descriptor = JSON.parse(await fs.readFile(descriptorPath, "utf8")) as {
-          gatewayBotUrl: string;
-          gatewayOrigin: string;
-          restApiBaseUrl: string;
+        const runtimeEnv = transport.createRuntimeEnvPatch?.() ?? {};
+        expect(runtimeEnv).toMatchObject({
+          DISCORD_BOT_TOKEN: expect.any(String),
+          DISCORD_GATEWAY_BOT_URL: expect.stringMatching(
+            /^http:\/\/127\.0\.0\.1:\d+\/api\/v10\/gateway\/bot$/u,
+          ),
+          DISCORD_GATEWAY_ORIGIN: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+$/u),
+          DISCORD_REST_API_BASE_URL: expect.stringMatching(
+            /^http:\/\/127\.0\.0\.1:\d+\/api\/v10$/u,
+          ),
+        });
+        const descriptor = {
+          gatewayBotUrl: runtimeEnv.DISCORD_GATEWAY_BOT_URL,
+          gatewayOrigin: runtimeEnv.DISCORD_GATEWAY_ORIGIN,
+          restApiBaseUrl: runtimeEnv.DISCORD_REST_API_BASE_URL,
         };
         expect(descriptor).toEqual({
           gatewayBotUrl: expect.stringMatching(
@@ -67,10 +67,6 @@ describe("Crabline Discord transport", () => {
           gatewayOrigin: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+$/u),
           restApiBaseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/v10$/u),
         });
-        if (process.platform !== "win32") {
-          expect((await fs.stat(descriptorPath)).mode & 0o077).toBe(0);
-        }
-
         await expect(
           transport.sendInbound({
             conversation: { id: "discord-crabline-primary", kind: "group" },

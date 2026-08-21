@@ -9,8 +9,7 @@
     }
   ],
   "activation": {
-    "onStartup": false,
-    "onConfigPaths": ["plugins.entries.qa-lab"]
+    "onStartup": false
   },
   "contracts": {
     "webSearchProviders": ["qa-lab-search"],
