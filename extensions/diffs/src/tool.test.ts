@@ -346,6 +346,26 @@ describe("diffs tool", () => {
     await expect(fs.readdir(rootDir)).resolves.toEqual([]);
   });
 
+  it("falls back to view output when the default image renderer cannot load", async () => {
+    const tool = createDiffsTool({
+      api: createApi(),
+      store,
+      defaults: DEFAULT_DIFFS_TOOL_DEFAULTS,
+    });
+
+    const result = await tool.execute?.("tool-3b", {
+      before: "one\n",
+      after: "two\n",
+      mode: "both",
+    });
+
+    expect(readTextContent(result, 0)).toContain("Diff viewer ready.");
+    expect((result?.details as Record<string, unknown>).viewerUrl).toEqual(expect.any(String));
+    expect((result?.details as Record<string, unknown>).fileError).toContain(
+      "viewer-only rendering must not load the Playwright renderer",
+    );
+  });
+
   it("rejects invalid base URLs as tool input errors", async () => {
     const tool = createDiffsTool({
       api: createApi(),

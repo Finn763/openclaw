@@ -272,12 +272,12 @@ export function createDiffsTool(params: {
         };
       }
 
-      const screenshotter =
-        params.screenshotter ??
-        new (await import("./browser.js")).PlaywrightDiffScreenshotter({
-          config: params.api.config,
-        });
       try {
+        const screenshotter =
+          params.screenshotter ??
+          new (await import("./browser.js")).PlaywrightDiffScreenshotter({
+            config: params.api.config,
+          });
         const artifactFile = await renderDiffArtifactFile({
           screenshotter,
           store: params.store,
