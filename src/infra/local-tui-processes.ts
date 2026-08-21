@@ -182,7 +182,12 @@ export async function terminateLocalTuiProcesses(params: {
       stopped.push(proc.pid);
       continue;
     }
-    if (!proc.startTime || readStartTime(proc.pid) !== proc.startTime) {
+    const currentStartTime = readStartTime(proc.pid);
+    if (!currentStartTime) {
+      failed.push(proc.pid);
+      continue;
+    }
+    if (currentStartTime !== proc.startTime) {
       stopped.push(proc.pid);
       continue;
     }

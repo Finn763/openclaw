@@ -134,6 +134,22 @@ describe("local TUI processes", () => {
     ).resolves.toEqual({ stopped: [], failed: [101] });
   });
 
+  it("fails closed when a live process identity can no longer be read", async () => {
+    const controller = { kill: vi.fn(() => true) };
+    let reads = 0;
+
+    await expect(
+      terminateLocalTuiProcesses({
+        processes: [{ pid: 101, command: "openclaw-tui", startTime: "start" }],
+        controller,
+        graceMs: 0,
+        killGraceMs: 0,
+        readStartTime: () => (++reads === 1 ? "start" : undefined),
+      }),
+    ).resolves.toEqual({ stopped: [], failed: [101] });
+    expect(controller.kill).not.toHaveBeenCalledWith(101, "SIGKILL");
+  });
+
   it("refuses shared update mutation when a matched client survives", async () => {
     const processes = [{ pid: 101, command: "openclaw --profile work tui" }];
 
