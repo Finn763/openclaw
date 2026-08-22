@@ -338,7 +338,16 @@ describe("githubCopilotMemoryEmbeddingProviderAdapter", () => {
       ]),
     });
 
-    await githubCopilotMemoryEmbeddingProviderAdapter.create({
+    const fetchImpl = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ data: [{ index: 0, embedding: [0.1] }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    // The embedding client captures the fetch impl at create time.
+    vi.stubGlobal("fetch", fetchImpl);
+    const created = await githubCopilotMemoryEmbeddingProviderAdapter.create({
       ...defaultCreateOptions(),
       config: {
         models: {
@@ -355,6 +364,17 @@ describe("githubCopilotMemoryEmbeddingProviderAdapter", () => {
 
     const discoveryCall = firstDiscoveryRequest();
     expect(discoveryCall.init.headers["Copilot-Integration-Id"]).toBe("vscode-chat");
+
+    await created.provider?.embedQuery("hello");
+
+    const [embedCall] = fetchImpl.mock.calls;
+    if (!embedCall) {
+      throw new Error("expected embedding request");
+    }
+    expect(embedCall[1]?.headers).toMatchObject({
+      "Copilot-Integration-Id": "vscode-chat",
+      Authorization: "Bearer test-token-placeholder",
+    });
   });
 
   it("does not forward a stored GitHub token to a custom remote endpoint", async () => {

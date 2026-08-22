@@ -323,6 +323,9 @@ describe("github-copilot plugin", () => {
       authMode: "oauth",
     } as never);
 
+    if (!prepared) {
+      throw new Error("expected prepared runtime auth");
+    }
     expect((prepared.request?.headers as Record<string, string>)?.["Copilot-Integration-Id"]).toBe(
       "vscode-chat",
     );

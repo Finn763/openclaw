@@ -85,14 +85,14 @@ export function createGithubCopilotDynamicModelHooks(params: {
     let discoveredModels: Awaited<ReturnType<typeof fetchCopilotModelCatalog>> = [];
     if (copilotApiToken) {
       try {
+        // The integration id changes tenant authorization and model visibility,
+        // so it participates in the cache identity: switching the identity must
+        // never reuse the previous identity's catalog within the TTL (#127287).
+        const integrationId = resolveGithubCopilotIntegrationId({ config: ctx.config });
         discoveredModels = await getCachedLiveCatalogValue({
-          keyParts: [PROVIDER_ID, "models", baseUrl, copilotApiToken],
+          keyParts: [PROVIDER_ID, "models", baseUrl, copilotApiToken, integrationId],
           load: async () =>
-            await fetchCopilotModelCatalog({
-              copilotApiToken,
-              baseUrl,
-              integrationId: resolveGithubCopilotIntegrationId({ config: ctx.config }),
-            }),
+            await fetchCopilotModelCatalog({ copilotApiToken, baseUrl, integrationId }),
         });
       } catch {
         discoveredModels = [];

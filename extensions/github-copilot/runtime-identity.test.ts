@@ -1,5 +1,5 @@
 // Github Copilot tests cover runtime identity plugin behavior.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   COPILOT_RUNTIME_INTEGRATION_ID,
   buildCopilotRuntimeHeaders,
@@ -43,6 +43,21 @@ describe("resolveGithubCopilotIntegrationId", () => {
     expect(resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("") })).toBe(
       COPILOT_RUNTIME_INTEGRATION_ID,
     );
+  });
+
+  it("warns once per invalid configured value so escape-hatch typos surface (#127287)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
+    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
+    expect(
+      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
+    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("warn-me once");
+    warnSpy.mockRestore();
   });
 });
 

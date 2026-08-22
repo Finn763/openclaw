@@ -36,7 +36,7 @@ describe("resolveCopilotStarterModel", () => {
               "github-copilot": { params: { integrationId: "vscode-chat" } },
             },
           },
-        },
+        } as never,
       }),
     ).rejects.toThrow();
 
