@@ -169,6 +169,29 @@ in against public `github.com`), so routing stays correct even after the
 environment variable is unset.
 </Note>
 
+### Integration identity for data-residency tenants
+
+Copilot requests carry a `Copilot-Integration-Id` header identifying the
+integration. The default is `copilot-developer-cli`, which matches GitHub's
+fine-grained PAT contract for `github.com`. Some `*.ghe.com` data-residency
+tenants authorize only the `vscode-chat` identity and reject the default with
+`HTTP 400 model_not_supported`. Override the header for those tenants via the
+provider params:
+
+```json5
+{
+  models: {
+    providers: {
+      "github-copilot": { params: { integrationId: "vscode-chat" } },
+    },
+  },
+}
+```
+
+The override applies to every Copilot request path (runtime auth, model
+catalog discovery, embeddings, and completions). Leave it unset to keep the
+`copilot-developer-cli` default.
+
 ## Optional flags
 
 | Command                                                                | Flag            | Description                                          |

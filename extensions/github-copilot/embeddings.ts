@@ -18,7 +18,10 @@ import { resolveFirstGithubToken } from "./auth.js";
 import { resolveGithubCopilotDomain } from "./domain.js";
 import { CopilotRuntimeAuthError } from "./runtime-auth-error.js";
 import { DEFAULT_COPILOT_API_BASE_URL, resolveCopilotRuntimeAuth } from "./runtime-auth.js";
-import { COPILOT_RUNTIME_INTEGRATION_ID } from "./runtime-identity.js";
+import {
+  COPILOT_RUNTIME_INTEGRATION_ID,
+  resolveGithubCopilotIntegrationId,
+} from "./runtime-identity.js";
 
 const COPILOT_EMBEDDING_PROVIDER_ID = "github-copilot";
 
@@ -65,6 +68,7 @@ type GitHubCopilotEmbeddingClient = {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   githubDomain?: string;
+  integrationId?: string;
 };
 
 function isCopilotSetupError(err: unknown): boolean {
@@ -94,6 +98,7 @@ async function discoverEmbeddingModels(params: {
   copilotToken: string;
   headers?: Record<string, string>;
   ssrfPolicy?: SsrFPolicy;
+  integrationId?: string;
 }): Promise<string[]> {
   const url = `${params.baseUrl.replace(/\/$/, "")}/models`;
   const { response, release } = await fetchWithSsrFGuard({
@@ -102,6 +107,7 @@ async function discoverEmbeddingModels(params: {
       method: "GET",
       headers: {
         ...COPILOT_HEADERS_STATIC,
+        "Copilot-Integration-Id": params.integrationId ?? COPILOT_RUNTIME_INTEGRATION_ID,
         ...params.headers,
         Authorization: `Bearer ${params.copilotToken}`,
       },
@@ -229,6 +235,7 @@ async function resolveGitHubCopilotEmbeddingSession(client: GitHubCopilotEmbeddi
     baseUrl,
     headers: {
       ...COPILOT_HEADERS_STATIC,
+      "Copilot-Integration-Id": client.integrationId ?? COPILOT_RUNTIME_INTEGRATION_ID,
       ...client.headers,
       Authorization: `Bearer ${auth.apiKey}`,
     },
@@ -329,6 +336,7 @@ export const githubCopilotMemoryEmbeddingProviderAdapter: MemoryEmbeddingProvide
       env: process.env,
       config: options.config,
     });
+    const integrationId = resolveGithubCopilotIntegrationId({ config: options.config });
     // A custom endpoint owns its own explicit credential. Never resolve a
     // durable GitHub token and then forward it to an operator-supplied host.
     const runtimeAuth =
@@ -349,6 +357,7 @@ export const githubCopilotMemoryEmbeddingProviderAdapter: MemoryEmbeddingProvide
       copilotToken: runtimeAuth.apiKey,
       headers: options.remote?.headers,
       ssrfPolicy,
+      integrationId,
     });
 
     const userModel = options.model?.trim() || undefined;
@@ -363,6 +372,7 @@ export const githubCopilotMemoryEmbeddingProviderAdapter: MemoryEmbeddingProvide
       githubDomain,
       headers: options.remote?.headers,
       model,
+      integrationId,
     });
 
     return {

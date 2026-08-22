@@ -712,6 +712,9 @@ describe("fetchCopilotModelCatalog", () => {
     expect(((calledInit as RequestInit).headers as Record<string, string>)["Accept-Encoding"]).toBe(
       "identity",
     );
+    expect(
+      ((calledInit as RequestInit).headers as Record<string, string>)["Copilot-Integration-Id"],
+    ).toBe("copilot-developer-cli");
 
     expect(out.map((m) => m.id)).toEqual([
       "gpt-5.5",
@@ -776,6 +779,22 @@ describe("fetchCopilotModelCatalog", () => {
     });
 
     expect(fetchImpl.mock.calls[0]?.[0]).toBe("https://api.githubcopilot.com/models");
+  });
+
+  it("sends the configured integration id in catalog discovery headers", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(makeResponse(200, { data: [] }));
+
+    await fetchCopilotModelCatalog({
+      copilotApiToken: "tid=test",
+      baseUrl: "https://api.githubcopilot.com",
+      integrationId: "vscode-chat",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const [, calledInit] = fetchImpl.mock.calls[0] ?? [];
+    expect(
+      ((calledInit as RequestInit).headers as Record<string, string>)["Copilot-Integration-Id"],
+    ).toBe("vscode-chat");
   });
 
   it("dedupes by id when API returns duplicates", async () => {

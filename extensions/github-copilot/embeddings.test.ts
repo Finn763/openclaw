@@ -330,6 +330,33 @@ describe("githubCopilotMemoryEmbeddingProviderAdapter", () => {
     expect(discoveryCall.init.headers["X-Proxy-Token"]).toBe("test-token-placeholder");
   });
 
+  it("honors a configured integrationId in discovery and session headers (GHE data residency)", async () => {
+    mockDiscoveryResponse({
+      ok: true,
+      json: buildModelsResponse([
+        { id: "text-embedding-3-small", supported_endpoints: ["/v1/embeddings"] },
+      ]),
+    });
+
+    await githubCopilotMemoryEmbeddingProviderAdapter.create({
+      ...defaultCreateOptions(),
+      config: {
+        models: {
+          providers: {
+            "github-copilot": { params: { integrationId: "vscode-chat" } },
+          },
+        },
+      },
+      remote: {
+        apiKey: "test-token-placeholder",
+        baseUrl: "https://proxy.example/v1",
+      },
+    } as never);
+
+    const discoveryCall = firstDiscoveryRequest();
+    expect(discoveryCall.init.headers["Copilot-Integration-Id"]).toBe("vscode-chat");
+  });
+
   it("does not forward a stored GitHub token to a custom remote endpoint", async () => {
     await expect(
       githubCopilotMemoryEmbeddingProviderAdapter.create({

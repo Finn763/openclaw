@@ -328,6 +328,8 @@ type FetchCopilotModelCatalogParams = {
   copilotApiToken: string;
   /** Resolved baseUrl from the same token-exchange response. */
   baseUrl: string;
+  /** Optional Copilot-Integration-Id override; defaults to the runtime identity. */
+  integrationId?: string;
   /** Optional fetch override for testing. */
   fetchImpl?: typeof fetch;
   /** Optional AbortSignal; defaults to a 10s timeout. */
@@ -367,7 +369,7 @@ export async function fetchCopilotModelCatalog(
         Accept: "application/json",
         Authorization: `Bearer ${params.copilotApiToken}`,
         ...buildCopilotIdeHeaders(),
-        "Copilot-Integration-Id": COPILOT_RUNTIME_INTEGRATION_ID,
+        "Copilot-Integration-Id": params.integrationId ?? COPILOT_RUNTIME_INTEGRATION_ID,
       },
       signal: params.signal ?? controller?.signal,
     });

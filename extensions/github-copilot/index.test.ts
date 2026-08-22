@@ -300,6 +300,34 @@ describe("github-copilot plugin", () => {
     });
   });
 
+  it("honors a configured integrationId in runtime auth headers (GHE data residency)", async () => {
+    mocks.resolveCopilotRuntimeAuth.mockResolvedValueOnce({
+      apiKey: "github-source-token",
+      baseUrl: "https://api.individual.githubcopilot.com",
+    });
+    const provider = registerProviderWithPluginConfig({});
+
+    const prepared = await provider.prepareRuntimeAuth({
+      config: {
+        models: {
+          providers: {
+            "github-copilot": { params: { integrationId: "vscode-chat" } },
+          },
+        },
+      },
+      env: {},
+      provider: "github-copilot",
+      modelId: "gpt-5-mini",
+      model: { id: "gpt-5-mini", provider: "github-copilot" },
+      apiKey: "github-source-token",
+      authMode: "oauth",
+    } as never);
+
+    expect((prepared.request?.headers as Record<string, string>)?.["Copilot-Integration-Id"]).toBe(
+      "vscode-chat",
+    );
+  });
+
   it("carries a legacy OAuth tenant into request-time routing", async () => {
     mocks.resolveCopilotRuntimeAuth.mockResolvedValueOnce({
       apiKey: "durable-github-token",

@@ -8,7 +8,10 @@ import {
 } from "openclaw/plugin-sdk/provider-stream-shared";
 import { sanitizeCopilotReplayResponsePayload } from "./connection-bound-ids.js";
 import { stripCopilotAssistantThinkingMessages } from "./replay-policy.js";
-import { buildCopilotRuntimeHeaders } from "./runtime-identity.js";
+import {
+  buildCopilotRuntimeHeaders,
+  resolveGithubCopilotIntegrationId,
+} from "./runtime-identity.js";
 
 type StreamOptions = Parameters<StreamFn>[2];
 
@@ -49,9 +52,10 @@ function hasCopilotVisionInput(messages: Context["messages"]): boolean {
 function buildCopilotDynamicHeaders(params: {
   messages: Context["messages"];
   hasImages: boolean;
+  integrationId?: string;
 }): Record<string, string> {
   return {
-    ...buildCopilotRuntimeHeaders(),
+    ...buildCopilotRuntimeHeaders({ integrationId: params.integrationId }),
     "x-initiator": inferCopilotInitiator(params.messages),
     ...(params.hasImages ? { "Copilot-Vision-Request": "true" } : {}),
   };
@@ -75,11 +79,13 @@ function patchOnPayloadResult(
 function buildCopilotRequestHeaders(
   context: Parameters<StreamFn>[1],
   headers: Record<string, string> | undefined,
+  integrationId?: string,
 ): Record<string, string> {
   return {
     ...buildCopilotDynamicHeaders({
       messages: context.messages,
       hasImages: hasCopilotVisionInput(context.messages),
+      integrationId,
     }),
     ...headers,
   };
@@ -187,6 +193,7 @@ function patchCopilotAnthropicPayload(payload: Record<string, unknown>): void {
 
 export function wrapCopilotAnthropicStream(
   baseStreamFn: StreamFn | undefined,
+  integrationId?: string,
 ): StreamFn | undefined {
   if (!baseStreamFn) {
     return undefined;
@@ -203,7 +210,7 @@ export function wrapCopilotAnthropicStream(
     const originalOnPayload = options?.onPayload;
     return payloadWrapper(model, context, {
       ...options,
-      headers: buildCopilotRequestHeaders(context, options?.headers),
+      headers: buildCopilotRequestHeaders(context, options?.headers, integrationId),
       onPayload: (payload, payloadModel) =>
         patchOnPayloadResult(
           originalOnPayload?.(payload, payloadModel),
@@ -220,6 +227,7 @@ export function wrapCopilotAnthropicStream(
 
 function wrapCopilotOpenAIResponsesStream(
   baseStreamFn: StreamFn | undefined,
+  integrationId?: string,
 ): StreamFn | undefined {
   if (!baseStreamFn) {
     return undefined;
@@ -233,7 +241,7 @@ function wrapCopilotOpenAIResponsesStream(
     const originalOnPayload = options?.onPayload;
     const wrappedOptions: StreamOptions = {
       ...options,
-      headers: buildCopilotRequestHeaders(context, options?.headers),
+      headers: buildCopilotRequestHeaders(context, options?.headers, integrationId),
       onPayload: (payload, payloadModel) => {
         sanitizeCopilotReplayResponsePayload(payload);
         return patchOnPayloadResult(originalOnPayload?.(payload, payloadModel));
@@ -245,6 +253,7 @@ function wrapCopilotOpenAIResponsesStream(
 
 function wrapCopilotOpenAICompletionsStream(
   baseStreamFn: StreamFn | undefined,
+  integrationId?: string,
 ): StreamFn | undefined {
   if (!baseStreamFn) {
     return undefined;
@@ -257,13 +266,18 @@ function wrapCopilotOpenAICompletionsStream(
 
     return underlying(model, context, {
       ...options,
-      headers: buildCopilotRequestHeaders(context, options?.headers),
+      headers: buildCopilotRequestHeaders(context, options?.headers, integrationId),
     });
   };
 }
 
 export function wrapCopilotProviderStream(ctx: ProviderWrapStreamFnContext): StreamFn | undefined {
+  const integrationId = resolveGithubCopilotIntegrationId({ config: ctx.config });
   return wrapCopilotOpenAICompletionsStream(
-    wrapCopilotOpenAIResponsesStream(wrapCopilotAnthropicStream(ctx.streamFn)),
+    wrapCopilotOpenAIResponsesStream(
+      wrapCopilotAnthropicStream(ctx.streamFn, integrationId),
+      integrationId,
+    ),
+    integrationId,
   );
 }

@@ -15,6 +15,7 @@ import {
   isCopilotCatalogModelVisible,
   resolveCopilotForwardCompatModel,
 } from "./models.js";
+import { resolveGithubCopilotIntegrationId } from "./runtime-identity.js";
 
 type GithubCopilotCatalogContext = {
   agentDir?: string;
@@ -86,7 +87,12 @@ export function createGithubCopilotDynamicModelHooks(params: {
       try {
         discoveredModels = await getCachedLiveCatalogValue({
           keyParts: [PROVIDER_ID, "models", baseUrl, copilotApiToken],
-          load: async () => await fetchCopilotModelCatalog({ copilotApiToken, baseUrl }),
+          load: async () =>
+            await fetchCopilotModelCatalog({
+              copilotApiToken,
+              baseUrl,
+              integrationId: resolveGithubCopilotIntegrationId({ config: ctx.config }),
+            }),
         });
       } catch {
         discoveredModels = [];

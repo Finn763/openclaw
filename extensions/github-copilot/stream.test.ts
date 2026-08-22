@@ -661,6 +661,38 @@ describe("wrapCopilotAnthropicStream", () => {
     expect(payloads[0]?.input[1]).not.toHaveProperty("encrypted_content");
   });
 
+  it("honors a configured integrationId in stream headers (GHE data residency)", () => {
+    const baseStreamFn = vi.fn().mockReturnValue({
+      async *[Symbol.asyncIterator]() {},
+    } as never);
+
+    const wrapped = requireStreamFn(
+      wrapCopilotProviderStream({
+        streamFn: baseStreamFn,
+        config: {
+          models: {
+            providers: {
+              "github-copilot": { params: { integrationId: "vscode-chat" } },
+            },
+          },
+        },
+      } as never),
+    );
+
+    void wrapped(
+      {
+        provider: "github-copilot",
+        api: "openai-completions",
+        id: "gpt-5-mini",
+      } as never,
+      { messages: [] } as never,
+      {},
+    );
+
+    const options = requireFirstStreamOptions(baseStreamFn, "Copilot Completions stream");
+    expect(options.headers?.["Copilot-Integration-Id"]).toBe("vscode-chat");
+  });
+
   it("rewrites Copilot Responses IDs returned by an existing payload hook", async () => {
     const connectionBoundId = Buffer.from(`message-${"y".repeat(24)}`).toString("base64");
     let returnedPayload: unknown;
