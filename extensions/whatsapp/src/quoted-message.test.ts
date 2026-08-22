@@ -171,6 +171,34 @@ describe("quoted message metadata cache", () => {
     );
   });
 
+  it("sends unquoted on a cache miss so WhatsApp never renders a blank bubble (#127948)", () => {
+    const quoteOptions = buildQuotedMessageOptions({
+      messageId: "expired-cache-msg",
+      remoteJid: "120363400000000000@g.us",
+      fromMe: false,
+      participant: "111@s.whatsapp.net",
+    });
+
+    expect(quoteOptions).toBeUndefined();
+  });
+
+  it("encodes a cache-miss reply as a plain message without contextInfo (#127948)", () => {
+    const remoteJid = "120363400000000000@g.us";
+    const quoteOptions = buildQuotedMessageOptions({
+      messageId: "expired-cache-msg",
+      remoteJid,
+    });
+
+    const encoded = generateWAMessageFromContent(
+      remoteJid,
+      { extendedTextMessage: { text: "late reply" } },
+      { ...quoteOptions, userJid: "15551112222@s.whatsapp.net" },
+    );
+
+    expect(quoteOptions).toBeUndefined();
+    expect(encoded.message?.extendedTextMessage?.contextInfo).toBeUndefined();
+  });
+
   it("renders a cached structured media fact into the quote preview", () => {
     const remoteJid = "15551112222@s.whatsapp.net";
     cacheInboundMessageMeta("account-media", remoteJid, "media-msg-1", {

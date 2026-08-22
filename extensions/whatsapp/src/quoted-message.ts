@@ -243,6 +243,14 @@ export function buildQuotedMessageOptions(params: {
   ]
     .filter(Boolean)
     .join("\n");
+  if (!previewText) {
+    // Cache miss (entry evicted or past CACHE_TTL_MS): no preview text to
+    // quote. Shipping a stub with `conversation: ""` renders a blank bubble
+    // on WhatsApp clients, and baileys cannot encode a key-only quote
+    // (`generateWAMessageFromContent` dereferences the message type), so
+    // degrade to an unquoted reply — the body text still renders (#127948).
+    return undefined;
+  }
   return {
     quoted: {
       key: {
