@@ -15,6 +15,7 @@ import { requiresDurableToolResultDelivery } from "./dispatch-from-config.payloa
 import type { AdmittedFollowupTurn, FollowupRunnerParams } from "./followup-turn-admission.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { drainPendingToolTasks } from "./pending-tool-task-drain.js";
+import { acknowledgePrecedingDeliveryInPrompt } from "./prompt-prelude.js";
 import { recordReplyOperationAgentTurn } from "./reply-operation-run-state.js";
 import { hasReplyOperationExecutionStarted } from "./reply-run-registry.js";
 import { createTypingSignaler, type TypingSignaler } from "./typing-mode.js";
@@ -357,7 +358,9 @@ export async function executeFollowupTurn(params: {
     try {
       const execute = () =>
         executeAgentTurn({
-          commandBody: turn.queued.prompt,
+          commandBody: turn.queued.precedingTurnDeliveredViaSourceReply
+            ? acknowledgePrecedingDeliveryInPrompt(turn.queued.prompt)
+            : turn.queued.prompt,
           transcriptCommandBody: turn.queued.transcriptPrompt,
           followupRun: turn.queued,
           sessionCtx,
