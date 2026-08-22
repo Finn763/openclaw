@@ -36,7 +36,11 @@ import {
 } from "./pending-final-delivery.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { warnPrivateMessageToolFinal } from "./private-message-tool-final.js";
-import { enqueueFollowupRun, refreshQueuedFollowupSession } from "./queue.js";
+import {
+  enqueueFollowupRun,
+  markFollowupQueuePrecedingDelivery,
+  refreshQueuedFollowupSession,
+} from "./queue.js";
 import { incrementRunCompactionCount } from "./session-run-accounting.js";
 import {
   buildStrandedReplyDeliveryFailurePayload,
@@ -420,6 +424,16 @@ export async function completeReplyAgentRun(input: {
         throw new Error("pending final delivery session changed or was deleted");
       }
     }
+  }
+  // Runs queued behind this turn must know whether it already answered, so
+  // drain-time prompt composition can acknowledge the delivery instead of
+  // re-presenting the answer-expected hint (#126813). Heartbeats do not
+  // answer and must not overwrite the preceding turn's delivery fact.
+  if (!isHeartbeat) {
+    markFollowupQueuePrecedingDelivery({
+      key: queueKey,
+      precedingTurnDeliveredViaSourceReply: completedSourceReplyDelivery,
+    });
   }
   const result = returnWithQueuedFollowupDrain(
     finalPayloads.length === 1 ? finalPayloads[0] : finalPayloads,
