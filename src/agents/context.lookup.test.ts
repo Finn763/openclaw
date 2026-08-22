@@ -19,6 +19,9 @@ const contextTestState = vi.hoisted(() => {
     loadConfigImpl: () => ({}) as unknown,
     discoveredModels: [] as DiscoveredModel[],
     staticCatalogModels: [] as DiscoveredModel[],
+    staticSnapshot: undefined as
+      | { entries: DiscoveredModel[]; routeVariants: never[]; staticEntries: DiscoveredModel[] }
+      | undefined,
     runtimeConfigSnapshot: null as OpenClawConfig | null,
     runtimeConfigSourceSnapshot: null as OpenClawConfig | null,
     loadModelCatalogOwnerSnapshot: vi.fn(async (_params: unknown) => ({
@@ -49,6 +52,7 @@ const contextTestState = vi.hoisted(() => {
         },
       }),
     ),
+    getPreparedModelCatalogSnapshot: vi.fn(() => state.staticSnapshot),
   };
   return state;
 });
@@ -69,6 +73,7 @@ vi.mock("./prepared-model-catalog.js", () => ({
   loadPreparedModelCatalogOwnerSnapshot: contextTestState.loadModelCatalogOwnerSnapshot,
   getPublishedPreparedModelCatalogOwnerSnapshot:
     contextTestState.getPublishedModelCatalogOwnerSnapshot,
+  getPreparedModelCatalogSnapshot: contextTestState.getPreparedModelCatalogSnapshot,
 }));
 
 function mockContextDeps(params: {
@@ -155,6 +160,7 @@ describe("lookupContextTokens", () => {
     contextTestState.loadConfigImpl = () => ({});
     contextTestState.discoveredModels = [];
     contextTestState.staticCatalogModels = [];
+    contextTestState.staticSnapshot = undefined;
     contextTestState.runtimeConfigSnapshot = null;
     contextTestState.runtimeConfigSourceSnapshot = null;
     contextTestState.loadModelCatalogOwnerSnapshot.mockClear();
@@ -357,6 +363,26 @@ describe("lookupContextTokens", () => {
     await flushAsyncWarmup();
     // Conservative minimum: bare-id cache feeds runtime flush/compaction paths.
     expect(lookupContextTokens("gemini-3.1-pro-preview")).toBe(128_000);
+  });
+
+  it("reads the published static catalog row synchronously instead of the 200k fallback (#127239)", async () => {
+    contextTestState.staticSnapshot = {
+      entries: [],
+      routeVariants: [],
+      staticEntries: [{ provider: "deepseek", id: "deepseek-v4-flash", contextWindow: 1_000_000 }],
+    };
+
+    const { lookupContextTokens } = await importContextModule();
+    expect(lookupContextTokens("deepseek/deepseek-v4-flash", { allowAsyncLoad: false })).toBe(
+      1_000_000,
+    );
+  });
+
+  it("does not consult the static catalog when no published snapshot exists", async () => {
+    const { lookupContextTokens } = await importContextModule();
+    expect(lookupContextTokens("deepseek/deepseek-v4-flash", { allowAsyncLoad: false })).toBe(
+      undefined,
+    );
   });
 
   it("loads the read-only catalog during warmup and preserves provider-owned context metadata", async () => {
@@ -633,6 +659,23 @@ describe("lookupContextTokens", () => {
       model: "gemini-3.1-pro-preview",
     });
     expect(result).toBe(200_000);
+  });
+
+  it("resolveContextTokensForModel prefers the static catalog row over the 200k fallback (#127239)", async () => {
+    contextTestState.staticSnapshot = {
+      entries: [],
+      routeVariants: [],
+      staticEntries: [{ provider: "deepseek", id: "deepseek-v4-flash", contextWindow: 1_000_000 }],
+    };
+    const resolveContextTokensForModel = await importResolveContextTokensForModel();
+
+    const result = resolveContextTokensForModel({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      allowAsyncLoad: false,
+      fallbackContextTokens: 200_000,
+    });
+    expect(result).toBe(1_000_000);
   });
 
   it("bounds a per-model cap by the Anthropic fixed contract", async () => {

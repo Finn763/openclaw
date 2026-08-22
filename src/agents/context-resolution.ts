@@ -200,6 +200,8 @@ export function resolveContextTokensForModelFromCache(
   params: ContextTokenResolutionParams,
   lookupContextTokens: (modelId?: string) => number | undefined = lookupCachedContextTokens,
   lookupContextWindow: (modelId?: string) => number | undefined = lookupCachedContextWindow,
+  lookupStaticCatalogContextTokens: (provider: string, model: string) => number | undefined = () =>
+    undefined,
 ): number | undefined {
   const ref = resolveProviderModelRef(params);
   const explicitProvider = params.provider?.trim();
@@ -266,6 +268,13 @@ export function resolveContextTokensForModelFromCache(
     }
     if (configuredContextWindow !== undefined) {
       return configuredContextWindow;
+    }
+    // Read-only callers (allowAsyncLoad: false) never populate the discovered
+    // cache; consult the published snapshot's static row for this exact
+    // provider/model pair instead of degrading to the generic 200k default.
+    const staticCatalogTokens = lookupStaticCatalogContextTokens(ref.provider, ref.model);
+    if (staticCatalogTokens !== undefined) {
+      return staticCatalogTokens;
     }
   }
 

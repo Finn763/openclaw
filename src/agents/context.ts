@@ -27,6 +27,7 @@ import {
   beginContextWindowCacheRefresh,
   CONTEXT_WINDOW_RUNTIME_STATE,
 } from "./context-runtime-state.js";
+import { lookupPreparedStaticContextTokens } from "./static-context-window.js";
 
 export {
   ANTHROPIC_CONTEXT_1M_TOKENS,
@@ -299,10 +300,17 @@ export function lookupContextTokens(
     return undefined;
   }
   prepareContextWindowCache(options);
-  return minPositiveContextTokens(
+  const cached = minPositiveContextTokens(
     lookupCachedContextTokens(modelId),
     lookupCachedContextWindow(modelId),
   );
+  if (cached !== undefined) {
+    return cached;
+  }
+  const slash = modelId.indexOf("/");
+  const provider = slash > 0 ? modelId.slice(0, slash) : undefined;
+  const model = slash > 0 ? modelId.slice(slash + 1) : modelId;
+  return provider ? lookupPreparedStaticContextTokens({ provider, model }) : undefined;
 }
 
 export function resolveContextTokensForModel(
@@ -317,5 +325,6 @@ export function resolveContextTokensForModel(
     params,
     (modelId) => lookupCachedContextTokens(modelId),
     (modelId) => lookupCachedContextWindow(modelId),
+    (provider, model) => lookupPreparedStaticContextTokens({ config: params.cfg, provider, model }),
   );
 }
