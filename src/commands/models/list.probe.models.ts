@@ -1,4 +1,5 @@
 /** Model candidate normalization and catalog selection for auth probes. */
+import type { ModelCatalogStatus } from "@openclaw/model-catalog-core/model-catalog-types";
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeProviderId, parseModelRef } from "../../agents/model-selection.js";
 import { DEFAULT_PROVIDER } from "./shared.js";
@@ -50,16 +51,24 @@ function catalogProbePriority(provider: string, modelId: string): number {
 export function selectProbeModel(params: {
   provider: string;
   candidates: Map<string, string[]>;
-  catalog: Array<{ provider: string; id: string }>;
+  catalog: Array<{ provider: string; id: string; status?: ModelCatalogStatus }>;
 }): { provider: string; model: string } | null {
   const { provider, candidates, catalog } = params;
   const direct = candidates.get(provider);
   if (direct && direct.length > 0) {
     return { provider, model: expectDefined(direct[0], "direct entry at 0") };
   }
+  // Generic fallback mirrors picker visibility: deprecated/disabled rows are
+  // only usable when explicitly configured, so probing them falsely reports
+  // retired models as credential failures (#124689).
   const fromCatalog = catalog
     .map((entry, index) => ({ entry, index }))
-    .filter(({ entry }) => normalizeProviderId(entry.provider) === provider)
+    .filter(
+      ({ entry }) =>
+        normalizeProviderId(entry.provider) === provider &&
+        entry.status !== "deprecated" &&
+        entry.status !== "disabled",
+    )
     .toSorted((left, right) => {
       const priority =
         catalogProbePriority(provider, left.entry.id) -

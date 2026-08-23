@@ -1,11 +1,17 @@
+import type { ModelCatalogStatus } from "@openclaw/model-catalog-core/model-catalog-types";
 // Ollama probe planning tests cover keyless runtime auth and provider-scoped catalog reads.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { buildProbeCandidateMap, selectProbeModel } from "./list.probe.models.js";
 
-const loadPreparedModelCatalog = vi.fn(async () => [
-  { provider: "ollama", id: "llama3.2:latest" },
-  { provider: "ollama", id: "gemma4:latest" },
-]);
+type CatalogRow = { provider: string; id: string; status?: ModelCatalogStatus };
+
+const loadPreparedModelCatalog = vi.fn(
+  async (): Promise<CatalogRow[]> => [
+    { provider: "ollama", id: "llama3.2:latest" },
+    { provider: "ollama", id: "gemma4:latest" },
+  ],
+);
 
 vi.mock("../../agents/prepared-model-catalog.js", () => ({ loadPreparedModelCatalog }));
 vi.mock("../../agents/auth-profiles.js", () => ({
@@ -141,5 +147,77 @@ describe("Ollama probe targets", () => {
         useRuntimeAuth: true,
       }),
     ]);
+  });
+
+  it("probes the first active fallback row instead of a retired ollama-cloud row (#124689)", async () => {
+    loadPreparedModelCatalog.mockResolvedValueOnce([
+      { provider: "ollama-cloud", id: "kimi-k2.5", status: "deprecated" },
+      { provider: "ollama-cloud", id: "gemma4:31b-cloud" },
+    ]);
+    const cfg = {
+      models: {
+        providers: {
+          "ollama-cloud": { apiKey: "cloud-key", baseUrl: "https://ollama.com", models: [] },
+        },
+      },
+    } satisfies OpenClawConfig;
+
+    const plan = await buildProbeTargets({
+      cfg,
+      providers: ["ollama-cloud"],
+      modelCandidates: [],
+      options,
+    });
+
+    expect(plan.targets[0]?.model).toEqual({ provider: "ollama-cloud", model: "gemma4:31b-cloud" });
+  });
+});
+
+describe("probe fallback selection", () => {
+  const catalogWithStatuses = (rows: CatalogRow[]) => rows;
+
+  it("skips deprecated and disabled rows in the generic fallback (#124689)", () => {
+    const catalog = catalogWithStatuses([
+      { provider: "ollama-cloud", id: "kimi-k2.5", status: "deprecated" },
+      { provider: "ollama-cloud", id: "old-model", status: "disabled" },
+      { provider: "ollama-cloud", id: "gemma4:31b-cloud" },
+    ]);
+
+    const selected = selectProbeModel({
+      provider: "ollama-cloud",
+      candidates: buildProbeCandidateMap([]),
+      catalog,
+    });
+
+    expect(selected).toEqual({ provider: "ollama-cloud", model: "gemma4:31b-cloud" });
+  });
+
+  it("preserves an explicitly configured deprecated model (#124689)", () => {
+    const catalog = catalogWithStatuses([
+      { provider: "ollama-cloud", id: "kimi-k2.5", status: "deprecated" },
+    ]);
+
+    const selected = selectProbeModel({
+      provider: "ollama-cloud",
+      candidates: buildProbeCandidateMap(["ollama-cloud/kimi-k2.5"]),
+      catalog,
+    });
+
+    expect(selected).toEqual({ provider: "ollama-cloud", model: "kimi-k2.5" });
+  });
+
+  it("returns null when every fallback row is deprecated or disabled (#124689)", () => {
+    const catalog = catalogWithStatuses([
+      { provider: "ollama-cloud", id: "kimi-k2.5", status: "deprecated" },
+      { provider: "ollama-cloud", id: "old-model", status: "disabled" },
+    ]);
+
+    const selected = selectProbeModel({
+      provider: "ollama-cloud",
+      candidates: buildProbeCandidateMap([]),
+      catalog,
+    });
+
+    expect(selected).toBeNull();
   });
 });
