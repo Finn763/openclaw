@@ -35,6 +35,7 @@ vi.mock("../infra/system-events.js", () => ({
   enqueueSystemEvent: (...args: unknown[]) => effects.enqueueSystemEvent(...args),
 }));
 vi.mock("../auto-reply/reply/queue.js", () => ({
+  markFollowupQueuePrecedingDelivery: vi.fn(),
   refreshQueuedFollowupSession: (...args: unknown[]) =>
     effects.refreshQueuedFollowupSession(...args),
 }));
