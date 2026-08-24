@@ -190,7 +190,10 @@ provider params:
 
 The override applies to every Copilot request path (runtime auth, model
 catalog discovery, embeddings, and completions). Leave it unset to keep the
-`copilot-developer-cli` default.
+`copilot-developer-cli` default. Any present invalid value (empty string,
+non-slug string such as one containing spaces, or a non-string type) is
+ignored and falls back to the default, and a runtime warning names the
+offending value so a config typo never disappears silently.
 
 ## Optional flags
 

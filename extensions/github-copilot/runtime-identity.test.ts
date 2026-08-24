@@ -30,6 +30,42 @@ describe("resolveGithubCopilotIntegrationId", () => {
     ).toBe("vscode-chat");
   });
 
+  it("warns for every present invalid configured value so nothing falls back silently (#127287)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Non-empty malformed string.
+    expect(
+      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
+    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
+    // Numeric value.
+    expect(resolveGithubCopilotIntegrationId({ config: configWithIntegrationId(42) })).toBe(
+      COPILOT_RUNTIME_INTEGRATION_ID,
+    );
+    // Empty string.
+    expect(resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("") })).toBe(
+      COPILOT_RUNTIME_INTEGRATION_ID,
+    );
+    // Non-string value (boolean).
+    expect(resolveGithubCopilotIntegrationId({ config: configWithIntegrationId(true) })).toBe(
+      COPILOT_RUNTIME_INTEGRATION_ID,
+    );
+    // A repeated value still warns only once.
+    expect(
+      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
+    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
+
+    // Every distinct present-invalid shape fell back to the default AND surfaced a warning.
+    expect(warnSpy).toHaveBeenCalledTimes(4);
+    const messages = warnSpy.mock.calls.map((call) => String(call[0]));
+    expect(messages).toEqual([
+      expect.stringContaining("warn-me once"),
+      expect.stringContaining("42"),
+      expect.stringContaining('""'),
+      expect.stringContaining("true"),
+    ]);
+    warnSpy.mockRestore();
+  });
+
   it("fails closed on malformed or non-string values so no header injection ships", () => {
     expect(
       resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("vscode chat") }),
@@ -43,21 +79,6 @@ describe("resolveGithubCopilotIntegrationId", () => {
     expect(resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("") })).toBe(
       COPILOT_RUNTIME_INTEGRATION_ID,
     );
-  });
-
-  it("warns once per invalid configured value so escape-hatch typos surface (#127287)", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(
-      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
-    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
-    expect(
-      resolveGithubCopilotIntegrationId({ config: configWithIntegrationId("warn-me once") }),
-    ).toBe(COPILOT_RUNTIME_INTEGRATION_ID);
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain("warn-me once");
-    warnSpy.mockRestore();
   });
 });
 

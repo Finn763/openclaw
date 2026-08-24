@@ -17,22 +17,28 @@ const warnedInvalidIntegrationIds = new Set<string>();
  * Resolve the Copilot-Integration-Id this provider sends. `*.ghe.com`
  * data-residency tenants authorize only the `vscode-chat` identity, so the
  * header is overridable via
- * `models.providers.github-copilot.params.integrationId`; unset or malformed
- * values fall back to the public default (malformed ones with a warning).
+ * `models.providers.github-copilot.params.integrationId`; unset values fall
+ * back to the public default silently, while every present invalid value
+ * (empty string, non-slug string, or non-string type) falls back with a
+ * one-time warning per distinct value.
  */
 export function resolveGithubCopilotIntegrationId(params?: { config?: OpenClawConfig }): string {
   const providerParams = params?.config?.models?.providers?.["github-copilot"]?.params;
-  const raw =
+  const raw: unknown =
     providerParams && typeof providerParams === "object" ? providerParams.integrationId : undefined;
-  const value = typeof raw === "string" ? raw.trim() : "";
-  if (value && COPILOT_INTEGRATION_ID_SLUG.test(value)) {
-    return value;
-  }
-  if (value && !warnedInvalidIntegrationIds.has(value)) {
-    warnedInvalidIntegrationIds.add(value);
-    console.warn(
-      `[openclaw] github-copilot: ignoring invalid params.integrationId ${JSON.stringify(value)}; using ${COPILOT_RUNTIME_INTEGRATION_ID}`,
-    );
+  if (raw !== undefined) {
+    const value = typeof raw === "string" ? raw.trim() : undefined;
+    if (value && COPILOT_INTEGRATION_ID_SLUG.test(value)) {
+      return value;
+    }
+    const display =
+      value === undefined ? (JSON.stringify(raw) ?? String(raw)) : JSON.stringify(value);
+    if (!warnedInvalidIntegrationIds.has(display)) {
+      warnedInvalidIntegrationIds.add(display);
+      console.warn(
+        `[openclaw] github-copilot: ignoring invalid params.integrationId ${display}; using ${COPILOT_RUNTIME_INTEGRATION_ID}`,
+      );
+    }
   }
   return COPILOT_RUNTIME_INTEGRATION_ID;
 }
