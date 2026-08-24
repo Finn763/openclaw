@@ -201,7 +201,7 @@ describe("Ollama probe targets", () => {
       expect.objectContaining({
         provider: "ollama-cloud",
         status: "no_model",
-        reasonCode: "no_model",
+        reasonCode: "no_model_retired_catalog",
         error: expect.stringContaining("deprecated or disabled"),
       }),
     );

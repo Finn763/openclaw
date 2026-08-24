@@ -354,6 +354,80 @@ describe("models.probe", () => {
     );
   });
 
+  it("passes the retired-catalog no-model reason through to the Control UI", async () => {
+    mocks.runAuthProbes.mockResolvedValue(
+      summary([
+        {
+          provider: "ollama-cloud",
+          label: "config",
+          source: "models.json",
+          mode: "api_key",
+          status: "no_model",
+          reasonCode: "no_model_retired_catalog",
+          error:
+            'No model available for probe: every "ollama-cloud" catalog row is deprecated or disabled',
+        },
+      ]),
+    );
+    const { options, respond } = createOptions({ provider: "ollama-cloud" });
+
+    await handler(options);
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      {
+        provider: "ollama-cloud",
+        status: "no_model",
+        error: "No model is available for this provider.",
+        results: [
+          {
+            label: "Configured credential",
+            status: "no_model",
+            error:
+              "No model is available for this provider: every catalog row is deprecated or disabled. Configure a model explicitly, then retry.",
+          },
+        ],
+      },
+      undefined,
+    );
+  });
+
+  it("keeps the generic message for a plain no_model reason", async () => {
+    mocks.runAuthProbes.mockResolvedValue(
+      summary([
+        {
+          provider: "openai",
+          label: "config",
+          source: "models.json",
+          mode: "api_key",
+          status: "no_model",
+          reasonCode: "no_model",
+          error: "No model available for probe",
+        },
+      ]),
+    );
+    const { options, respond } = createOptions({ provider: "openai" });
+
+    await handler(options);
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      {
+        provider: "openai",
+        status: "no_model",
+        error: "No model is available for this provider.",
+        results: [
+          {
+            label: "Configured credential",
+            status: "no_model",
+            error: "No model is available for this provider. Configure a model, then retry.",
+          },
+        ],
+      },
+      undefined,
+    );
+  });
+
   it("redacts credential-shaped text from target and provider errors", async () => {
     const secret = ["AI", "za", "SyOpaqueProviderCredential"].join("");
     mocks.runAuthProbes.mockResolvedValue(

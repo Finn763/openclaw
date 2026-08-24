@@ -125,7 +125,8 @@ export type AuthProbeReasonCode =
   | "invalid_expires"
   | "unresolved_ref"
   | "ineligible_profile"
-  | "no_model";
+  | "no_model"
+  | "no_model_retired_catalog";
 
 /** Result for one profile/env/models.json auth probe target. */
 export type AuthProbeResult = {
@@ -424,6 +425,12 @@ export async function buildProbeTargets(params: {
     const fallbackSkipReason = model
       ? null
       : describeProbeFallbackSkip({ provider: providerKey, catalog });
+    // Retired-catalog skips keep a typed reason so the Gateway whitelist can
+    // carry the specific explanation to the Control UI instead of collapsing
+    // every no-model outcome into the generic no_model message.
+    const noModelReasonCode: AuthProbeReasonCode = fallbackSkipReason
+      ? "no_model_retired_catalog"
+      : "no_model";
     const noModelError = formatNoModelProbeError(fallbackSkipReason);
     const configuredProviderEntry = resolveMergedModelProviderEntry(cfg, providerKey);
     const configuredProvider = configuredProviderEntry?.providerConfig;
@@ -538,7 +545,7 @@ export async function buildProbeTargets(params: {
                 source: "models.json",
                 mode: configuredMode,
                 status: model ? "unknown" : "no_model",
-                reasonCode: model ? "unresolved_ref" : "no_model",
+                reasonCode: model ? "unresolved_ref" : noModelReasonCode,
                 error: model ? "Configured auth profile could not be resolved." : noModelError,
               });
             }
@@ -551,7 +558,7 @@ export async function buildProbeTargets(params: {
             source: "models.json",
             mode: configuredMode,
             status: model ? "unknown" : "no_model",
-            reasonCode: model ? "unresolved_ref" : "no_model",
+            reasonCode: model ? "unresolved_ref" : noModelReasonCode,
             error: model ? "Configured API key could not be resolved." : noModelError,
           });
         } else if (model) {
@@ -575,7 +582,7 @@ export async function buildProbeTargets(params: {
             source: "models.json",
             mode: configuredMode,
             status: "no_model",
-            reasonCode: "no_model",
+            reasonCode: noModelReasonCode,
             error: noModelError,
           });
         }
@@ -608,7 +615,7 @@ export async function buildProbeTargets(params: {
             source: "env",
             mode,
             status: "no_model",
-            reasonCode: "no_model",
+            reasonCode: noModelReasonCode,
             error: noModelError,
           });
         }
@@ -710,7 +717,7 @@ export async function buildProbeTargets(params: {
             source: "profile",
             mode,
             status: "no_model",
-            reasonCode: "no_model",
+            reasonCode: noModelReasonCode,
             error: noModelError,
           });
           continue;
@@ -767,7 +774,7 @@ export async function buildProbeTargets(params: {
         source,
         mode,
         status: "no_model",
-        reasonCode: "no_model",
+        reasonCode: noModelReasonCode,
         error: noModelError,
       });
       continue;

@@ -64,6 +64,8 @@ const PROBE_REASON_MESSAGES: Partial<Record<AuthProbeReasonCode, string>> = {
   ineligible_profile:
     "This profile is not compatible with the provider configuration. Choose another profile, then retry.",
   no_model: "No model is available for this provider. Configure a model, then retry.",
+  no_model_retired_catalog:
+    "No model is available for this provider: every catalog row is deprecated or disabled. Configure a model explicitly, then retry.",
 };
 
 function safeProbeTargetLabel(result: AuthProbeResult): string {
