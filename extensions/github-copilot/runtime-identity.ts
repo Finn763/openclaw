@@ -13,6 +13,25 @@ const COPILOT_INTEGRATION_ID_SLUG = /^[a-z0-9._-]{1,64}$/i;
 // hatch surfaces a diagnostic instead of silently becoming the default.
 const warnedInvalidIntegrationIds = new Set<string>();
 
+// Render a non-string configured value for diagnostics without relying on
+// Object's default stringification; mirrors the core allowed-values renderer.
+function safeStringify(value: unknown): string {
+  if (value === undefined) {
+    return "";
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized !== undefined) {
+      return serialized;
+    }
+  } catch {
+    // Fall back to string coercion when value is not JSON-serializable.
+  }
+  // Deliberate last-resort renderer; the assertion opts into String()
+  // semantics for non-JSON values without changing runtime behavior.
+  return String(value as string | number | boolean | bigint | symbol | null);
+}
+
 /**
  * Resolve the Copilot-Integration-Id this provider sends. `*.ghe.com`
  * data-residency tenants authorize only the `vscode-chat` identity, so the
@@ -31,8 +50,7 @@ export function resolveGithubCopilotIntegrationId(params?: { config?: OpenClawCo
     if (value && COPILOT_INTEGRATION_ID_SLUG.test(value)) {
       return value;
     }
-    const display =
-      value === undefined ? (JSON.stringify(raw) ?? String(raw)) : JSON.stringify(value);
+    const display = value === undefined ? safeStringify(raw) : JSON.stringify(value);
     if (!warnedInvalidIntegrationIds.has(display)) {
       warnedInvalidIntegrationIds.add(display);
       console.warn(
