@@ -171,6 +171,41 @@ describe("Ollama probe targets", () => {
 
     expect(plan.targets[0]?.model).toEqual({ provider: "ollama-cloud", model: "gemma4:31b-cloud" });
   });
+
+  it("explains the no_model outcome when every fallback row is retired (#124689)", async () => {
+    loadPreparedModelCatalog.mockResolvedValueOnce([
+      { provider: "ollama-cloud", id: "kimi-k2.5", status: "deprecated" },
+      { provider: "ollama-cloud", id: "old-model", status: "disabled" },
+    ]);
+    const cfg = {
+      models: {
+        providers: {
+          "ollama-cloud": {
+            apiKey: "ollama-local",
+            baseUrl: "https://ollama.com",
+            models: [],
+          },
+        },
+      },
+    } satisfies OpenClawConfig;
+
+    const plan = await buildProbeTargets({
+      cfg,
+      providers: ["ollama-cloud"],
+      modelCandidates: [],
+      options,
+    });
+
+    expect(plan.targets).toEqual([]);
+    expect(plan.results).toContainEqual(
+      expect.objectContaining({
+        provider: "ollama-cloud",
+        status: "no_model",
+        reasonCode: "no_model",
+        error: expect.stringContaining("deprecated or disabled"),
+      }),
+    );
+  });
 });
 
 describe("probe fallback selection", () => {

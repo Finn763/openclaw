@@ -47,6 +47,27 @@ function catalogProbePriority(provider: string, modelId: string): number {
   return 50;
 }
 
+/** Whether a catalog row remains selectable by automatic fallback. */
+function isActiveCatalogRow(status: ModelCatalogStatus | undefined): boolean {
+  return status !== "deprecated" && status !== "disabled";
+}
+
+/** Explains why generic fallback selected nothing, for operator-visible probe output. */
+export function describeProbeFallbackSkip(params: {
+  provider: string;
+  catalog: Array<{ provider: string; id: string; status?: ModelCatalogStatus }>;
+}): string | null {
+  const matching = params.catalog.filter(
+    (entry) => normalizeProviderId(entry.provider) === params.provider,
+  );
+  if (matching.length === 0) {
+    return null;
+  }
+  return matching.every((entry) => !isActiveCatalogRow(entry.status))
+    ? `every "${params.provider}" catalog row is deprecated or disabled`
+    : null;
+}
+
 /** Selects a requested-provider candidate before falling back to its catalog rows. */
 export function selectProbeModel(params: {
   provider: string;
@@ -58,16 +79,13 @@ export function selectProbeModel(params: {
   if (direct && direct.length > 0) {
     return { provider, model: expectDefined(direct[0], "direct entry at 0") };
   }
-  // Generic fallback mirrors picker visibility: deprecated/disabled rows are
-  // only usable when explicitly configured, so probing them falsely reports
-  // retired models as credential failures (#124689).
+  // Automatic fallback must not select deprecated or disabled catalog rows:
+  // those rows are only usable when explicitly configured by the operator.
   const fromCatalog = catalog
     .map((entry, index) => ({ entry, index }))
     .filter(
       ({ entry }) =>
-        normalizeProviderId(entry.provider) === provider &&
-        entry.status !== "deprecated" &&
-        entry.status !== "disabled",
+        normalizeProviderId(entry.provider) === provider && isActiveCatalogRow(entry.status),
     )
     .toSorted((left, right) => {
       const priority =

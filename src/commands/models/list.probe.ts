@@ -71,7 +71,11 @@ import { type SecretRefResolveCache, resolveSecretRefString } from "../../secret
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { disposeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
 import { redactStatusSecrets } from "../status-all/format.js";
-import { buildProbeCandidateMap, selectProbeModel } from "./list.probe.models.js";
+import {
+  buildProbeCandidateMap,
+  describeProbeFallbackSkip,
+  selectProbeModel,
+} from "./list.probe.models.js";
 import { formatMs } from "./shared.js";
 
 const PROBE_PROMPT = "Reply with OK. Do not use tools.";
@@ -233,6 +237,12 @@ function formatMissingCredentialProbeError(reasonCode: AuthProbeReasonCode): str
     return `${legacyLine}\n↳ Auth reason [unresolved_ref]: configured SecretRef could not be resolved.`;
   }
   return `${legacyLine}\n↳ Auth reason [ineligible_profile]: profile is incompatible with provider config.`;
+}
+
+function formatNoModelProbeError(fallbackSkipReason: string | null): string {
+  return fallbackSkipReason
+    ? `No model available for probe: ${fallbackSkipReason}`
+    : "No model available for probe";
 }
 
 function resolveProbeSecretRef(profile: ProfileEntry, cfg: OpenClawConfig) {
@@ -411,6 +421,10 @@ export async function buildProbeTargets(params: {
       candidates,
       catalog,
     });
+    const fallbackSkipReason = model
+      ? null
+      : describeProbeFallbackSkip({ provider: providerKey, catalog });
+    const noModelError = formatNoModelProbeError(fallbackSkipReason);
     const configuredProviderEntry = resolveMergedModelProviderEntry(cfg, providerKey);
     const configuredProvider = configuredProviderEntry?.providerConfig;
     const hasConfiguredProviderSecretRef = Boolean(
@@ -525,9 +539,7 @@ export async function buildProbeTargets(params: {
                 mode: configuredMode,
                 status: model ? "unknown" : "no_model",
                 reasonCode: model ? "unresolved_ref" : "no_model",
-                error: model
-                  ? "Configured auth profile could not be resolved."
-                  : "No model available for probe",
+                error: model ? "Configured auth profile could not be resolved." : noModelError,
               });
             }
           }
@@ -540,9 +552,7 @@ export async function buildProbeTargets(params: {
             mode: configuredMode,
             status: model ? "unknown" : "no_model",
             reasonCode: model ? "unresolved_ref" : "no_model",
-            error: model
-              ? "Configured API key could not be resolved."
-              : "No model available for probe",
+            error: model ? "Configured API key could not be resolved." : noModelError,
           });
         } else if (model) {
           targets.push({
@@ -566,7 +576,7 @@ export async function buildProbeTargets(params: {
             mode: configuredMode,
             status: "no_model",
             reasonCode: "no_model",
-            error: "No model available for probe",
+            error: noModelError,
           });
         }
       }
@@ -599,7 +609,7 @@ export async function buildProbeTargets(params: {
             mode,
             status: "no_model",
             reasonCode: "no_model",
-            error: "No model available for probe",
+            error: noModelError,
           });
         }
       }
@@ -701,7 +711,7 @@ export async function buildProbeTargets(params: {
             mode,
             status: "no_model",
             reasonCode: "no_model",
-            error: "No model available for probe",
+            error: noModelError,
           });
           continue;
         }
@@ -758,7 +768,7 @@ export async function buildProbeTargets(params: {
         mode,
         status: "no_model",
         reasonCode: "no_model",
-        error: "No model available for probe",
+        error: noModelError,
       });
       continue;
     }
