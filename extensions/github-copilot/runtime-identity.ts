@@ -28,7 +28,7 @@ function safeStringify(value: unknown): string {
     // Fall back to string coercion when value is not JSON-serializable.
   }
   // Deliberate last-resort renderer; the assertion opts into String()
-  // semantics for non-JSON values without changing runtime behavior.
+  // SAFETY: this branch is only reached for non-JSON-serializable values, whose runtime type is limited to the primitive set String() coerces.
   return String(value as string | number | boolean | bigint | symbol | null);
 }
 
