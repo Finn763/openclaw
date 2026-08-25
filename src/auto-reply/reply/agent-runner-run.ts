@@ -1,6 +1,9 @@
 import { resolveDefaultAgentId } from "../../agents/agent-scope-config.js";
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
-import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-recovery-state.js";
+import {
+  hasRestartRecoverySourceClaim,
+  hasTerminalRestartRecoveryDeliveryReceipt,
+} from "../../config/sessions/restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
@@ -178,6 +181,23 @@ export async function runReplyAgent(
           hydrateSkillPromptRefs: false,
         }) ?? activeSessionEntry)
       : activeSessionEntry;
+  // A terminal source-reply receipt means the active run's message-tool final
+  // already started or completed on its source turn. A steered inbound reuses
+  // that run's delivery claim, so its own terminal send would be fail-closed to
+  // `delivery_ambiguous` / `already_delivered` and the user would see no reply
+  // (#128971). Fence steering and drain the inbound as the next ordered turn,
+  // which mints a fresh source-turn identity and its own receipt.
+  const shouldQueueTerminalReceiptSteer =
+    effectiveShouldSteer &&
+    isActive &&
+    !shouldQueueAuthorityMismatch &&
+    messageInjectionDisposition === "none" &&
+    hasTerminalRestartRecoveryDeliveryReceipt(restartRecoveryEntry);
+  if (shouldQueueTerminalReceiptSteer) {
+    logVerbose(
+      `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} holds a terminal source-reply receipt; queuing instead of steering`,
+    );
+  }
   if (
     restartRecoverySourceTurnId &&
     isDuplicateRestartRecoverySource(restartRecoveryEntry, restartRecoverySourceTurnId)
@@ -265,6 +285,7 @@ export async function runReplyAgent(
     effectiveShouldSteer &&
     isActive &&
     !shouldQueueAuthorityMismatch &&
+    !shouldQueueTerminalReceiptSteer &&
     messageInjectionDisposition === "none"
   ) {
     replyRunState.bindQueueDispositionToRunState(followupRun, replyOperationRunState);
