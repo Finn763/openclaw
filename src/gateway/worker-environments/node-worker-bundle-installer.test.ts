@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/client-info.js";
 import { NODE_WORKER_BUNDLE_INSTALL_COMMAND } from "../../infra/node-commands.js";
 import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
+import { WORKER_BUNDLE_FORMAT_VERSION } from "../../shared/worker-bundle-hash.js";
 import type {
   NodeWorkerSupervisorNodeProof,
   NodeWorkerSupervisorTransport,
@@ -17,7 +18,11 @@ const node: NodeWorkerSupervisorNodeProof = {
   clientId: GATEWAY_CLIENT_IDS.NODE_HOST,
   clientMode: "node",
   protocolFeature: NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE,
-  workerHost: { enabled: true, capacity: { total: 2, available: 2 } },
+  workerHost: {
+    enabled: true,
+    capacity: { total: 2, available: 2 },
+    bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+  },
   commands: [],
 };
 const artifact = {
@@ -30,7 +35,11 @@ const artifact = {
   tarballPath: "/gateway/bundle.tgz",
 };
 
-function nodeProof(nodeId: string, bundlePrewarm?: 1): NodeWorkerSupervisorNodeProof {
+function nodeProof(
+  nodeId: string,
+  bundlePrewarm?: 1,
+  bundleFormat: typeof WORKER_BUNDLE_FORMAT_VERSION = WORKER_BUNDLE_FORMAT_VERSION,
+): NodeWorkerSupervisorNodeProof {
   return {
     ...node,
     nodeId,
@@ -38,6 +47,7 @@ function nodeProof(nodeId: string, bundlePrewarm?: 1): NodeWorkerSupervisorNodeP
     workerHost: {
       enabled: true,
       capacity: { total: 2, available: 2 },
+      bundleFormat,
       ...(bundlePrewarm === undefined ? {} : { bundlePrewarm: 1 }),
     },
   };
@@ -118,14 +128,14 @@ describe("Gateway node worker bundle installer", () => {
       generateToken: () => String.fromCharCode(65 + invoke.mock.calls.length).repeat(43),
     });
     const advertising = nodeProof("advertising", 1);
-    const legacy = nodeProof("legacy");
+    const withoutPrewarm = nodeProof("without-prewarm");
     const invoke = vi.fn<NodeWorkerSupervisorTransport["invoke"]>(async (request) => ({
       ok: true,
       payloadJSON: JSON.stringify((request.params as { build: typeof artifact }).build),
     }));
     const transport: NodeWorkerSupervisorTransport = {
       hasCurrentRunner: () => false,
-      listCurrentNodes: async () => [advertising, legacy],
+      listCurrentNodes: async () => [advertising, withoutPrewarm],
       isCurrent: () => true,
       invoke,
     };
@@ -139,11 +149,49 @@ describe("Gateway node worker bundle installer", () => {
     await expect(ensure({ deviceId: advertising.nodeId })).resolves.toMatchObject({
       bundleHash: artifact.bundleHash,
     });
-    await expect(ensure({ deviceId: legacy.nodeId })).resolves.toMatchObject({
+    await expect(ensure({ deviceId: withoutPrewarm.nodeId })).resolves.toMatchObject({
       bundleHash: artifact.bundleHash,
     });
 
     expect(invoke.mock.calls[0]?.[0].params).toMatchObject({ bundlePrewarm: 1 });
     expect(invoke.mock.calls[1]?.[0].params).not.toHaveProperty("bundlePrewarm");
+  });
+
+  it("rejects a v1-format node with an explicit upgrade error before any transfer", async () => {
+    const transfer = createNodeWorkerBundleTransferService({
+      generateToken: () => "C".repeat(43),
+    });
+    const invoke = vi.fn<NodeWorkerSupervisorTransport["invoke"]>();
+    const v1Node: NodeWorkerSupervisorNodeProof = {
+      ...node,
+      nodeId: "node-v1",
+      connId: "conn-node-v1",
+      // No bundleFormat declaration: an older node host that only speaks the
+      // v1 manifest format. It still answered the v6 supervisor dialect, so
+      // the registry admits it — the installer is the last fence.
+      workerHost: { enabled: true, capacity: { total: 2, available: 2 } },
+    };
+    const prepareBundle = vi.fn(async () => artifact);
+    const transport: NodeWorkerSupervisorTransport = {
+      hasCurrentRunner: () => false,
+      listCurrentNodes: async () => [v1Node],
+      isCurrent: () => true,
+      invoke,
+    };
+    const ensure = createGatewayNodeWorkerBundleInstaller({
+      gatewayNamespace: "gateway-test",
+      getTransport: () => transport,
+      prepareBundle,
+      transfer,
+    });
+
+    await expect(ensure({ deviceId: v1Node.nodeId })).rejects.toThrow(
+      /worker bundle format v2 requires upgrade/,
+    );
+    // Early rejection: no bundle is built, no transfer token is minted, and the
+    // install command is never dispatched — the failure is explicit, not a
+    // silent extracted-manifest hash mismatch on the node.
+    expect(prepareBundle).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

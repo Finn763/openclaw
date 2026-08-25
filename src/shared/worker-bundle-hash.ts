@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 
-export const WORKER_BUNDLE_MANIFEST_VERSION = "openclaw-worker-bundle-v2";
+/**
+ * Numeric bundle-format version, negotiated between Gateway and node hosts.
+ *
+ * Node hosts declare the format they understand in their runner inventory
+ * (workerHost.bundleFormat). A Gateway that built a v2-format bundle refuses
+ * to dispatch the install to a node that only speaks v1 — the node would
+ * otherwise fail bootstrap with a silent "does not match its expected hash".
+ */
+export const WORKER_BUNDLE_FORMAT_VERSION = 2;
+export const WORKER_BUNDLE_MANIFEST_VERSION = `openclaw-worker-bundle-v${WORKER_BUNDLE_FORMAT_VERSION}`;
 export const WORKER_BUNDLE_ENTRY_PATH = "worker.mjs";
 export const WORKER_BUNDLE_RSYNC_RECEIVER_PATH = "workspace-rsync-receiver.mjs";
 

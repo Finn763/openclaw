@@ -1,5 +1,6 @@
 import { WORKER_BUNDLE_PREWARM_VERSION } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { NODE_WORKER_BUNDLE_INSTALL_COMMAND } from "../../infra/node-commands.js";
+import { WORKER_BUNDLE_FORMAT_VERSION } from "../../shared/worker-bundle-hash.js";
 import { parseNodeWorkerBundleInstallResult } from "../../worker/node-bundle-install-protocol.js";
 import type { NodeWorkerSupervisorTransport } from "../node-registry-private.js";
 import { verifyWorkerAdmissionHandshake } from "./admission.js";
@@ -25,6 +26,20 @@ export function createGatewayNodeWorkerBundleInstaller(options: {
     );
     if (!node) {
       throw new Error("Device worker node is not connected with the installer dialect");
+    }
+    // Bundle-format compatibility fence: a node that only understands the v1
+    // manifest format cannot install a v2-format bundle — its recomputed
+    // manifest hash would never match, failing bootstrap with a confusing
+    // "Extracted worker bundle does not match its expected hash". Refuse
+    // before transfer so the operator gets an explicit upgrade requirement
+    // instead of a silent hash failure.
+    const nodeBundleFormat = node.workerHost.bundleFormat ?? 1;
+    if (nodeBundleFormat < WORKER_BUNDLE_FORMAT_VERSION) {
+      throw new Error(
+        `worker bundle format v${WORKER_BUNDLE_FORMAT_VERSION} requires upgrade: ` +
+          `device worker node ${node.nodeId} supports worker bundle format v${nodeBundleFormat}; ` +
+          "run `openclaw update` on the node and reconnect it before worker sessions can bootstrap",
+      );
     }
     const artifact = await options.prepareBundle();
     const isAuthorized = () => transport.isCurrent(node);

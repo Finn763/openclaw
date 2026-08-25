@@ -108,6 +108,7 @@ export function sameNodeWorkerHostDeclaration(
       (right?.enabled === true &&
         left.capacity.total === right.capacity.total &&
         left.capacity.available === right.capacity.available &&
+        left.bundleFormat === right.bundleFormat &&
         left.bundlePrewarm === right.bundlePrewarm &&
         left.bundleRetention === right.bundleRetention &&
         left.bundleStatus === right.bundleStatus))

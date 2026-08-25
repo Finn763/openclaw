@@ -18,11 +18,15 @@ import {
   NODE_WORKER_SUPERVISOR_STATUS_COMMAND,
   NODE_WORKER_WORKSPACE_EXEC_COMMAND,
 } from "../infra/node-commands.js";
-import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../infra/node-runner-inventory.js";
+import {
+  NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE,
+  parseNodeRunnerInventoryDeclaration,
+} from "../infra/node-runner-inventory.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { createDiagnosticLogRecordCapture } from "../logging/test-helpers/diagnostic-log-capture.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import { WORKER_BUNDLE_FORMAT_VERSION } from "../shared/worker-bundle-hash.js";
 import { listConnectedNodePluginTools } from "./node-plugin-tool-snapshot.js";
 import {
   createNodeRegistryRuntime,
@@ -490,6 +494,91 @@ describe("gateway/node-registry", () => {
         workerHost: { enabled: true, capacity: { total: 2, available: 2 } },
       }),
     ]);
+  });
+
+  it("exposes bundleFormat in the supervisor proof while admitting v1-format nodes for the installer to fence", async () => {
+    const { nodeRegistry, nodeWorkerSupervisorTransport } = createPrivateNodeRegistryRuntime();
+    registerNodeSession(
+      nodeRegistry,
+      makeClient("conn-1", "node-1", [], {
+        clientId: GATEWAY_CLIENT_IDS.NODE_HOST,
+        commands: ["system.run"],
+      }),
+      { pairingIdentity: "identity-a", pairingGeneration: "generation-a" },
+    );
+
+    // A v2-format node host declares the current bundle format in workerHost.
+    expect(
+      updateNodeRunnerInventory({
+        registry: nodeRegistry,
+        nodeId: "node-1",
+        connId: "conn-1",
+        declaration: {
+          protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+          workerHost: {
+            enabled: true,
+            capacity: { total: 2, available: 2 },
+            bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+          },
+        },
+      }),
+    ).toEqual({ changed: true });
+    await expect(nodeWorkerSupervisorTransport.listCurrentNodes()).resolves.toEqual([
+      expect.objectContaining({
+        workerHost: expect.objectContaining({
+          bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+        }),
+      }),
+    ]);
+
+    // An older node host answers the same v6 supervisor dialect but does not
+    // declare bundleFormat. It is still admitted — the registry is not the
+    // fence for the bundle format, the installer is (see
+    // node-worker-bundle-installer.test.ts) — so it must stay listable with
+    // the capability absent rather than being silently dropped.
+    expect(
+      updateNodeRunnerInventory({
+        registry: nodeRegistry,
+        nodeId: "node-1",
+        connId: "conn-1",
+        declaration: {
+          protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+          workerHost: { enabled: true, capacity: { total: 2, available: 2 } },
+        },
+      }),
+    ).toEqual({ changed: true });
+    const [proof] = await nodeWorkerSupervisorTransport.listCurrentNodes();
+    expect(proof?.workerHost).not.toHaveProperty("bundleFormat");
+  });
+
+  it("rejects an unrecognized bundleFormat version in the runner inventory declaration", () => {
+    expect(
+      parseNodeRunnerInventoryDeclaration({
+        protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+        workerHost: {
+          enabled: true,
+          capacity: { total: 2, available: 2 },
+          bundleFormat: 99,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      parseNodeRunnerInventoryDeclaration({
+        protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+        workerHost: {
+          enabled: true,
+          capacity: { total: 2, available: 2 },
+          bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+        },
+      }),
+    ).toEqual({
+      protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+      workerHost: {
+        enabled: true,
+        capacity: { total: 2, available: 2 },
+        bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+      },
+    });
   });
 
   it("publishes current-runner edges once across disconnect, reconnect, and replacement", () => {

@@ -1,5 +1,6 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { WORKER_BUNDLE_PREWARM_VERSION } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { WORKER_BUNDLE_FORMAT_VERSION } from "../shared/worker-bundle-hash.js";
 
 export const NODE_RUNNER_INVENTORY_UPDATE_METHOD = "node.runnerInventory.update";
 export const NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE = "node-worker-supervisor-v6";
@@ -32,6 +33,7 @@ export type NodeWorkerHostDeclaration =
   | {
       enabled: true;
       capacity: NodeWorkerCapacitySnapshot;
+      bundleFormat?: typeof WORKER_BUNDLE_FORMAT_VERSION;
       bundlePrewarm?: typeof WORKER_BUNDLE_PREWARM_VERSION;
       bundleRetention?: typeof NODE_WORKER_BUNDLE_RETENTION_VERSION;
       bundleStatus?: typeof NODE_WORKER_BUNDLE_STATUS_VERSION;
@@ -83,17 +85,19 @@ function parseWorkerHostDeclaration(value: unknown): NodeWorkerHostDeclaration |
   if (
     !capacity ||
     keys.length < 2 ||
-    keys.length > 5 ||
+    keys.length > 6 ||
     !keys.includes("enabled") ||
     !keys.includes("capacity") ||
     keys.some(
       (key) =>
         key !== "enabled" &&
         key !== "capacity" &&
+        key !== "bundleFormat" &&
         key !== "bundlePrewarm" &&
         key !== "bundleRetention" &&
         key !== "bundleStatus",
     ) ||
+    (value.bundleFormat !== undefined && value.bundleFormat !== WORKER_BUNDLE_FORMAT_VERSION) ||
     (value.bundlePrewarm !== undefined && value.bundlePrewarm !== WORKER_BUNDLE_PREWARM_VERSION) ||
     (value.bundleRetention !== undefined &&
       value.bundleRetention !== NODE_WORKER_BUNDLE_RETENTION_VERSION) ||
@@ -106,6 +110,9 @@ function parseWorkerHostDeclaration(value: unknown): NodeWorkerHostDeclaration |
   return {
     enabled: true,
     capacity,
+    ...(value.bundleFormat === WORKER_BUNDLE_FORMAT_VERSION
+      ? { bundleFormat: WORKER_BUNDLE_FORMAT_VERSION }
+      : {}),
     ...(value.bundlePrewarm === WORKER_BUNDLE_PREWARM_VERSION
       ? { bundlePrewarm: WORKER_BUNDLE_PREWARM_VERSION }
       : {}),

@@ -23,6 +23,7 @@ import {
   NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE,
   type NodeWorkerCapacitySnapshot,
 } from "../infra/node-runner-inventory.js";
+import { WORKER_BUNDLE_FORMAT_VERSION } from "../shared/worker-bundle-hash.js";
 import { VERSION } from "../version.js";
 import { configureNodeHost, type NodeHostGatewayConfig } from "./config.js";
 import { createNodeHostGatewayCandidateConnection } from "./gateway-candidate-connection.js";
@@ -507,6 +508,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
             ? {
                 enabled: true,
                 capacity: workerCapacity,
+                bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
                 bundlePrewarm: WORKER_BUNDLE_PREWARM_VERSION,
                 ...(gatewaySupportsBundleRetention
                   ? { bundleRetention: NODE_WORKER_BUNDLE_RETENTION_VERSION }

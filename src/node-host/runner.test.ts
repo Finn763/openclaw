@@ -212,6 +212,12 @@ function lastCapturedOptions(): GatewayClientOptions | undefined {
   return mocks.capturedGatewayClientOptions.at(-1);
 }
 
+async function expectNodeHostEventLoopTimeout(): Promise<void> {
+  await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
+    "event loop readiness timeout",
+  );
+}
+
 describe("runNodeHost", () => {
   beforeEach(() => {
     mocks.capturedGatewayClientOptions.length = 0;
@@ -248,9 +254,7 @@ describe("runNodeHost", () => {
   });
 
   it("runs startup state migrations before constructing node-host state", async () => {
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
 
     expect(mocks.runStartupMigrations).toHaveBeenCalledTimes(1);
     expect(mocks.runStartupMigrations.mock.invocationCallOrder[0]).toBeLessThan(
@@ -268,9 +272,7 @@ describe("runNodeHost", () => {
     async ({ runtime, platform, deviceFamily }) => {
       const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue(runtime);
       try {
-        await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-          "event loop readiness timeout",
-        );
+        await expectNodeHostEventLoopTimeout();
       } finally {
         platformSpy.mockRestore();
       }
@@ -392,9 +394,7 @@ describe("runNodeHost", () => {
 
   it("routes invoke input, cancellation, and connection close to the runtime", async () => {
     mocks.useFakeRuntime = true;
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     const options = lastCapturedOptions();
 
     options?.onEvent?.({
@@ -445,9 +445,7 @@ describe("runNodeHost", () => {
     );
     mocks.getRuntimeConfig.mockReturnValue(config);
 
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
 
     expect(mocks.resolveGatewayCredentialsWithSecretInputs).toHaveBeenCalledWith({
       config: {
@@ -635,9 +633,7 @@ describe("runNodeHost", () => {
     mocks.fakeRuntimeWorkerHostingDisabledReason = "Docker or Podman is unavailable";
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
 
     expect(lastCapturedOptions()?.workerRuns).toBeUndefined();
     expect(stderr).toHaveBeenCalledWith(
@@ -653,9 +649,7 @@ describe("runNodeHost", () => {
       nodeHost: { agentRuns: { claude: { enabled: true } } },
     } as never);
 
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
 
     expect(lastCapturedOptions()?.commands).toContain("agent.cli.claude.run.v1");
   });
@@ -702,9 +696,7 @@ describe("runNodeHost", () => {
       gateway: { handshakeTimeoutMs: 1_000 },
       nodeHost: { workerRuns: { enabled: true, capacity: 5 } },
     } as never);
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     const options = mocks.capturedGatewayClientOptions[0];
     const client = mocks.capturedGatewayClients[0];
 
@@ -718,6 +710,7 @@ describe("runNodeHost", () => {
       workerHost: {
         enabled: true,
         capacity: { total: 5, available: 5 },
+        bundleFormat: 2,
         bundlePrewarm: 1,
       },
     });
@@ -726,9 +719,7 @@ describe("runNodeHost", () => {
   it("publishes each exact worker slot transition without reconnecting", async () => {
     mocks.useFakeRuntime = true;
     mocks.fakeRuntimeWorkerHosting = true;
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     const options = mocks.capturedGatewayClientOptions[0];
     const client = mocks.capturedGatewayClients[0];
     expect(options?.workerRuns).toBeUndefined();
@@ -748,6 +739,7 @@ describe("runNodeHost", () => {
         workerHost: {
           enabled: true,
           capacity: { total: 2, available: 2 },
+          bundleFormat: 2,
           bundlePrewarm: 1,
           bundleRetention: 1,
         },
@@ -771,6 +763,7 @@ describe("runNodeHost", () => {
         workerHost: {
           enabled: true,
           capacity: { total: 2, available: 2 },
+          bundleFormat: 2,
           bundlePrewarm: 1,
           bundleRetention: 1,
           bundleStatus: 1,
@@ -786,6 +779,7 @@ describe("runNodeHost", () => {
           workerHost: {
             enabled: true,
             capacity: { total: 2, available },
+            bundleFormat: 2,
             bundlePrewarm: 1,
             bundleRetention: 1,
             bundleStatus: 1,
@@ -848,9 +842,7 @@ describe("runNodeHost", () => {
       },
     ];
 
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
 
     const options = lastCapturedOptions();
     expect(mocks.capturedGatewayClients[0]?.request).not.toHaveBeenCalledWith(
@@ -872,9 +864,7 @@ describe("runNodeHost", () => {
       nodeHost: { skills: { enabled: false } },
     } as never);
 
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     lastCapturedOptions()?.onHelloOk?.({
       protocol: 1,
       features: { methods: [NODE_SKILLS_UPDATE_METHOD], events: [] },
@@ -960,9 +950,7 @@ describe("runNodeHost", () => {
     ConnectErrorDetailCodes.CLIENT_VERSION_MISMATCH,
     ConnectErrorDetailCodes.AUTH_IDENTITY_HEADER_REQUIRED,
   ])("closes MCP clients before exiting on terminal reconnect pause %s", async (detailCode) => {
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     try {
       lastCapturedOptions()?.onReconnectPaused?.({
@@ -981,9 +969,7 @@ describe("runNodeHost", () => {
   });
 
   it("keeps pairing reconnect pauses visible without stopping the foreground host", async () => {
-    await expect(runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 })).rejects.toThrow(
-      "event loop readiness timeout",
-    );
+    await expectNodeHostEventLoopTimeout();
     mocks.closeMcpManager.mockClear();
     mocks.capturedGatewayClients[0]?.stop.mockClear();
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
