@@ -22,10 +22,12 @@ const mocks = vi.hoisted(() => ({
       diagnostics: [],
     }),
   ),
-  loadPluginManifestRegistryForPluginRegistry: vi.fn(() => ({
-    plugins: [],
-    diagnostics: [],
-  })),
+  loadPluginManifestRegistryForPluginRegistry: vi.fn(
+    (): PluginManifestRegistry => ({
+      plugins: [],
+      diagnostics: [],
+    }),
+  ),
   registerCuaDriverDoctorChecks: vi.fn(),
   registerMemoryCoreDoctorChecks: vi.fn(),
   registerPolicyDoctorChecks: vi.fn(),
@@ -444,7 +446,10 @@ describe("registerBundledHealthChecks", () => {
     });
   });
 
-  it.each([
+  const failingRegistryCases: Array<{
+    title: string;
+    registry: PluginManifestRegistry;
+  }> = [
     {
       title: "no installed codex plugin record",
       registry: { plugins: [], diagnostics: [] },
@@ -471,7 +476,8 @@ describe("registerBundledHealthChecks", () => {
         diagnostics: [],
       },
     },
-  ] as const)(
+  ];
+  it.each(failingRegistryCases)(
     "throws instead of silently dropping managed Codex health when the bundled surface is absent and $title",
     ({ registry }) => {
       mocks.loadBundledPluginPublicArtifactModuleSync.mockImplementation(({ dirName }) => {
