@@ -6,6 +6,7 @@ import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { createOpenClawReadTool } from "./agent-tools.read.js";
+import { buildExecForegroundResult } from "./bash-tools.exec-support.js";
 import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 import { redactTranscriptMessage } from "./transcript-redact.js";
@@ -191,6 +192,88 @@ describe("installSessionToolResultGuard", () => {
     expect(text).toMatch(
       /\[\.\.\. \d+ more characters truncated; rerun with narrower args if needed\]$/,
     );
+  });
+
+  it("keeps the exec retention-loss disclosure when the session cap truncates the result", () => {
+    const sm = SessionManager.inMemory();
+    installSessionToolResultGuard(sm, {
+      maxToolResultChars: 4_000,
+    });
+
+    // An oversized foreground exec result that already lost output at its own
+    // aggregate retention cap: the producer-owned disclosure must survive the
+    // session-cap head-preserving truncation alongside the cap's own suffix.
+    const execResult = buildExecForegroundResult({
+      outcome: {
+        status: "completed",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        aggregated: "x".repeat(80_000),
+        timedOut: false,
+        noOutputTimedOut: false,
+      },
+      aggregateOutputDropped: true,
+    });
+    sm.appendMessage(toolCallMessage);
+    sm.appendMessage(
+      asAppendMessage({
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "exec",
+        content: execResult.content,
+        isError: false,
+        timestamp: Date.now(),
+      }),
+    );
+
+    const text = getToolResultText(getPersistedMessages(sm));
+    expect(text).toContain("discarded at the retention cap and cannot be recovered");
+    expect(text).toMatch(/\[\s*\.\.\.\s*\d+ more characters truncated/);
+    // The producer disclosure opens the retained head and therefore survives
+    // the session-cap head-preserving truncation.
+    expect(text.startsWith("[earlier output was discarded at the retention cap")).toBe(true);
+  });
+
+  it("keeps the exec retention-loss disclosure ahead of an oversized approval warning when the session cap truncates", () => {
+    const sm = SessionManager.inMemory();
+    installSessionToolResultGuard(sm, {
+      maxToolResultChars: 4_000,
+    });
+
+    // approvalWarningText is unbounded: an oversized warning must not bury the
+    // front-loaded retention-cap disclosure outside the head-preserving window.
+    const execResult = buildExecForegroundResult({
+      outcome: {
+        status: "completed",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        aggregated: "x".repeat(80_000),
+        timedOut: false,
+        noOutputTimedOut: false,
+      },
+      warningText: "w".repeat(80_000),
+      aggregateOutputDropped: true,
+    });
+    sm.appendMessage(toolCallMessage);
+    sm.appendMessage(
+      asAppendMessage({
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "exec",
+        content: execResult.content,
+        isError: false,
+        timestamp: Date.now(),
+      }),
+    );
+
+    const text = getToolResultText(getPersistedMessages(sm));
+    // The disclosure must still open the retained head, ahead of the warning,
+    // so the session-cap head-preserving truncation cannot silently drop it.
+    expect(text.startsWith("[earlier output was discarded at the retention cap")).toBe(true);
+    expect(text).toContain("discarded at the retention cap and cannot be recovered");
+    expect(text).toMatch(/\[\s*\.\.\.\s*\d+ more characters truncated/);
   });
 
   it("honors tiny configured tool-result caps truthfully", () => {

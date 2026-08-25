@@ -711,6 +711,10 @@ test.each([
     expect(text).not.toContain(latestMarker);
     expect(text).toContain("no new output");
     expect(text).toContain("discarded at the retention cap and cannot be recovered");
+    // Front-loaded so downstream head-preserving caps keep the disclosure.
+    expect(text.indexOf("discarded at the retention cap")).toBeLessThan(
+      text.indexOf("no new output"),
+    );
     expect(runningLogText).toContain("discarded at the retention cap and cannot be recovered");
     expect(runningPollText).toContain("discarded at the retention cap and cannot be recovered");
     expect(finishedLogText).toContain("discarded at the retention cap and cannot be recovered");
