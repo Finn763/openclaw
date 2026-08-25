@@ -41,13 +41,17 @@ function matchesProgressOnlyPrefix(value: string): boolean {
 }
 
 function hasNonProgressFollowupSentence(value: string): boolean {
-  const boundary = /(?:[.!?:]|\s[-\u2013\u2014])\s+\S/.exec(value);
+  // Some harness outputs glue sentences together without a space after the
+  // terminator (e.g. "done.Next I'll..."); insert the missing space so the
+  // boundary below still finds the first sentence boundary.
+  const spaced = value.replace(/([.!?:])(?=[A-Z])/g, "$1 ");
+  const boundary = /(?:[.!?:]|\s[-\u2013\u2014])\s+\S/.exec(spaced);
   if (!boundary) {
     return false;
   }
   const separatorEnd = boundary.index + boundary[0].length - 1;
-  const firstSentence = value.slice(0, separatorEnd).trim();
-  const rest = value.slice(separatorEnd).trim();
+  const firstSentence = spaced.slice(0, separatorEnd).trim();
+  const rest = spaced.slice(separatorEnd).trim();
   return matchesProgressOnlyPrefix(firstSentence) && !isProgressOnlyCompletionText(rest);
 }
 
