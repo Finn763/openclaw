@@ -165,7 +165,9 @@ describe("createSandboxBridgeReadFile", () => {
 
 describe("bare staged upload handle fallback", () => {
   const hostBridge = (
-    stat: (params: { filePath: string }) => Promise<{ type: string; size: number; mtimeMs: number } | null>,
+    stat: (params: {
+      filePath: string;
+    }) => Promise<{ type: string; size: number; mtimeMs: number } | null>,
   ) => ({
     stat,
     resolvePath: vi.fn(({ filePath }: { filePath: string }) => ({
@@ -177,9 +179,7 @@ describe("bare staged upload handle fallback", () => {
 
   it("resolves a bare upload handle to its verified staged inbound asset", async () => {
     const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
-      filePath === "media/inbound/file_upload-1.png"
-        ? { type: "file", size: 1, mtimeMs: 1 }
-        : null,
+      filePath === "media/inbound/file_upload-1.png" ? { type: "file", size: 1, mtimeMs: 1 } : null,
     );
     const bridge = hostBridge(stat);
 
@@ -205,6 +205,115 @@ describe("bare staged upload handle fallback", () => {
       filePath: "media/inbound/file_upload-1.png",
       cwd: "/tmp/sandbox-root",
     });
+  });
+
+  it("resolves an extensionless bare handle to its staged twin with a preserved upload extension", async () => {
+    // A JPG upload stages as media/inbound/file_upload-1.jpg while the agent
+    // references the bare handle file_upload-1 (issue #129084): the verbatim
+    // probe misses and the extension variants resolve the staged twin.
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_upload-1.jpg" ? { type: "file", size: 1, mtimeMs: 1 } : null,
+    );
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_upload-1",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({
+      resolved: "/tmp/sandbox-root/media/inbound/file_upload-1.jpg",
+      rewrittenFrom: "file_upload-1",
+    });
+    expect(stat).toHaveBeenNthCalledWith(1, {
+      filePath: "file_upload-1",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(stat).toHaveBeenNthCalledWith(2, {
+      filePath: "media/inbound/file_upload-1",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(stat).toHaveBeenNthCalledWith(3, {
+      filePath: "media/inbound/file_upload-1.jpg",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(bridge.resolvePath).toHaveBeenLastCalledWith({
+      filePath: "media/inbound/file_upload-1.jpg",
+      cwd: "/tmp/sandbox-root",
+    });
+  });
+
+  it("prefers the verbatim staged name over extension variants", async () => {
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_upload-2" || filePath === "media/inbound/file_upload-2.jpg"
+        ? { type: "file", size: 1, mtimeMs: 1 }
+        : null,
+    );
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_upload-2",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({
+      resolved: "/tmp/sandbox-root/media/inbound/file_upload-2",
+      rewrittenFrom: "file_upload-2",
+    });
+    // A verbatim hit means no extension variants are probed.
+    expect(stat).toHaveBeenCalledTimes(2);
+    expect(bridge.resolvePath).toHaveBeenLastCalledWith({
+      filePath: "media/inbound/file_upload-2",
+      cwd: "/tmp/sandbox-root",
+    });
+  });
+
+  it("leaves an extensionless bare handle workspace-relative when no staged variant matches", async () => {
+    const stat = vi.fn(async () => null);
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_ghost",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/file_ghost" });
+    expect(stat).toHaveBeenNthCalledWith(1, {
+      filePath: "file_ghost",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(stat).toHaveBeenNthCalledWith(2, {
+      filePath: "media/inbound/file_ghost",
+      cwd: "/tmp/sandbox-root",
+    });
+    const probed = stat.mock.calls.map((call) => (call[0] as { filePath: string }).filePath);
+    expect(probed.slice(2).every((p) => p.startsWith("media/inbound/file_ghost."))).toBe(true);
+    expect(probed).toContain("media/inbound/file_ghost.jpg");
+    expect(bridge.resolvePath).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips extension variants that are not regular files", async () => {
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_dir.jpg" ? { type: "directory", size: 0, mtimeMs: 1 } : null,
+    );
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_dir",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/file_dir" });
+    const probed = stat.mock.calls.map((call) => (call[0] as { filePath: string }).filePath);
+    expect(probed[0]).toBe("file_dir");
+    expect(probed[1]).toBe("media/inbound/file_dir");
+    expect(probed.slice(2).every((p) => p.startsWith("media/inbound/file_dir."))).toBe(true);
+    expect(probed.length).toBeGreaterThan(2);
+    expect(bridge.resolvePath).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an existing workspace file authoritative over a staged inbound twin", async () => {
@@ -277,9 +386,7 @@ describe("bare staged upload handle fallback", () => {
 
   it("does not rewrite a bare handle when the staged twin is not a regular file", async () => {
     const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
-      filePath === "media/inbound/file_dir.png"
-        ? { type: "directory", size: 0, mtimeMs: 1 }
-        : null,
+      filePath === "media/inbound/file_dir.png" ? { type: "directory", size: 0, mtimeMs: 1 } : null,
     );
     const bridge = hostBridge(stat);
 

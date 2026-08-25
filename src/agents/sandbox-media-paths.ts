@@ -51,16 +51,99 @@ function isBareUploadHandleCandidate(filePath: string): boolean {
 }
 
 /**
+ * Candidate extensions probed for extensionless bare upload handles, most
+ * common first. Inbound staging preserves the uploaded basename including its
+ * extension, so a bare `file_<id>` handle whose staged asset landed as
+ * `file_<id>.<ext>` (for example a JPG upload staged as `file_<id>.jpg`) is
+ * found through these probes. The verbatim staged name is always tried first;
+ * these probes only run when the handle itself carries no extension.
+ */
+const BARE_HANDLE_EXTENSION_PROBES = [
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+  "avif",
+  "tif",
+  "tiff",
+  "heic",
+  "heif",
+  "ico",
+  "mp4",
+  "mov",
+  "webm",
+  "mkv",
+  "mp3",
+  "wav",
+  "m4a",
+  "ogg",
+  "flac",
+  "pdf",
+  "txt",
+  "md",
+  "csv",
+  "json",
+  "zip",
+] as const;
+
+/**
+ * Ordered staged-name candidates for a bare upload handle: the verbatim name
+ * first, then its extension variants. Extension variants only apply when the
+ * handle itself has no extension, matching the reported `file_<id>` shape.
+ */
+function stagedUploadHandleCandidateNames(handle: string): string[] {
+  if (path.posix.extname(handle) !== "") {
+    return [handle];
+  }
+  return [handle, ...BARE_HANDLE_EXTENSION_PROBES.map((ext) => `${handle}.${ext}`)];
+}
+
+/**
+ * Finds a verified staged inbound twin for a bare handle under the sandbox
+ * inbound dir. Candidates are tried in order (verbatim first, then extension
+ * variants); each must stat as a regular file. Returns the resolved staged
+ * path, or null when no candidate matches.
+ */
+async function findVerifiedStagedInboundFile(params: {
+  sandbox: SandboxedBridgeMediaPathConfig;
+  fallbackDir: string;
+  handleName: string;
+}): Promise<SandboxResolvedPath | null> {
+  const fallbackDirNormalized = params.fallbackDir.replace(/\\/g, "/");
+  for (const stagedName of stagedUploadHandleCandidateNames(params.handleName)) {
+    const stagedPath = path.posix.join(fallbackDirNormalized, stagedName);
+    const stagedStat = await params.sandbox.bridge
+      .stat({ filePath: stagedPath, cwd: params.sandbox.root })
+      .catch(() => null);
+    if (!stagedStat || stagedStat.type !== "file") {
+      continue;
+    }
+    return params.sandbox.bridge.resolvePath({
+      filePath: stagedPath,
+      cwd: params.sandbox.root,
+    });
+  }
+  return null;
+}
+
+/**
  * Maps a bare upload handle to its verified staged inbound asset when the
  * workspace-relative target is absent.
  *
  * Upload staging copies inbound media into `media/inbound/*` inside the
  * sandbox workspace; canonical `media://inbound/<id>` references are rewritten
  * upstream, but bare handles (e.g. `file_<id>`) previously resolved against
- * the sandbox root and read ENOENT. Resolution stays bounded: only
- * single-segment, scheme-less relative references qualify, the staged asset
- * must be a regular file under the sandbox inbound dir, and the resulting path
- * still passes the workspace boundary guard.
+ * the sandbox root and read ENOENT. Staging preserves the uploaded basename
+ * including its extension, so a bare handle may land as `file_<id>.<ext>`
+ * (e.g. a JPG upload staged as `file_<id>.jpg`); resolution therefore matches
+ * the verbatim staged name first and falls back to same-handle extension
+ * variants. Resolution stays bounded: only single-segment, scheme-less
+ * relative references qualify, the staged asset must be a regular file under
+ * the sandbox inbound dir, and the resulting path still passes the workspace
+ * boundary guard.
  *
  * The direct target stays authoritative. The fallback engages only when the
  * bridge stat reports it absent (null); an existing-but-unreadable direct file
@@ -88,17 +171,14 @@ async function resolveBareStagedUploadHandle(params: {
   if (directStat) {
     return null;
   }
-  const stagedPath = path.posix.join(fallbackDir.replace(/\\/g, "/"), handle);
-  const stagedStat = await params.sandbox.bridge
-    .stat({ filePath: stagedPath, cwd: params.sandbox.root })
-    .catch(() => null);
-  if (!stagedStat || stagedStat.type !== "file") {
+  const resolvedFallback = await findVerifiedStagedInboundFile({
+    sandbox: params.sandbox,
+    fallbackDir,
+    handleName: handle,
+  });
+  if (!resolvedFallback) {
     return null;
   }
-  const resolvedFallback = params.sandbox.bridge.resolvePath({
-    filePath: stagedPath,
-    cwd: params.sandbox.root,
-  });
   await params.enforceWorkspaceBoundary(resolvedFallback);
   return {
     resolved: resolvedFallback.hostPath ?? resolvedFallback.containerPath,
@@ -184,9 +264,11 @@ export async function resolveSandboxedBridgeMediaPath(params: {
     if (!fallbackDir) {
       throw err;
     }
-    // Substitute the staged basename twin only when the direct target is
-    // absent. A present-but-unreadable direct target (or a failed direct
-    // stat) keeps its original error instead of being silently replaced.
+    // Substitute a verified staged basename twin only when the direct target
+    // is absent. The verbatim staged name is tried first, then same-handle
+    // extension variants (e.g. a JPG upload staged with its extension). A
+    // present-but-unreadable direct target (or a failed direct stat) keeps its
+    // original error instead of being silently replaced.
     let directStat: Awaited<ReturnType<SandboxFsBridge["stat"]>>;
     try {
       directStat = await params.sandbox.bridge.stat({
@@ -199,22 +281,14 @@ export async function resolveSandboxedBridgeMediaPath(params: {
     if (directStat) {
       throw err;
     }
-    const fallbackPath = path.join(fallbackDir, path.basename(filePath));
-    try {
-      const stat = await params.sandbox.bridge.stat({
-        filePath: fallbackPath,
-        cwd: params.sandbox.root,
-      });
-      if (!stat || stat.type !== "file") {
-        throw err;
-      }
-    } catch {
+    const resolvedFallback = await findVerifiedStagedInboundFile({
+      sandbox: params.sandbox,
+      fallbackDir,
+      handleName: path.basename(filePath),
+    });
+    if (!resolvedFallback) {
       throw err;
     }
-    const resolvedFallback = params.sandbox.bridge.resolvePath({
-      filePath: fallbackPath,
-      cwd: params.sandbox.root,
-    });
     await enforceWorkspaceBoundary(resolvedFallback);
     return {
       resolved: resolvedFallback.hostPath ?? resolvedFallback.containerPath,
