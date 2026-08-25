@@ -189,15 +189,19 @@ function loadCodexManagedHealthApi(params: {
   cwd?: string;
   env: NodeJS.ProcessEnv;
 }): BundledHealthApi {
-  try {
-    return loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
+  // Only a direct absence of the bundled codex/api.js surface (null result)
+  // triggers the external plugin fallback. Errors raised while loading an
+  // already-resolved bundled artifact — including nested
+  // MissingPublicSurfaceError — propagate unchanged instead of being
+  // misdiagnosed as a missing bundle.
+  const bundledCodexApi = loadBundledPluginPublicArtifactModuleFromCandidatesSync<BundledHealthApi>(
+    {
       dirName: "codex",
-      artifactBasename: "api.js",
-    });
-  } catch (error) {
-    if (!(error instanceof MissingPublicSurfaceError)) {
-      throw error;
-    }
+      artifactCandidates: ["api.js"],
+    },
+  );
+  if (bundledCodexApi) {
+    return bundledCodexApi;
   }
   const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({
     config: params.cfg,

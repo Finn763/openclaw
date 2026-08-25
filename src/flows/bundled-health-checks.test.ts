@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => ({
   registerPolicyDoctorChecks: vi.fn(),
   registerWorkerProviderDoctorChecks: vi.fn(),
   loadBundledPluginPublicArtifactModuleFromCandidatesSync: vi.fn(
-    ({ dirName }: { dirName: string }) =>
+    ({ dirName }: { dirName: string }): Record<string, unknown> | null =>
       dirName === "crabbox"
         ? { registerWorkerProviderDoctorChecks: mocks.registerWorkerProviderDoctorChecks }
         : null,
@@ -365,6 +365,15 @@ describe("registerBundledHealthChecks", () => {
   });
 
   it("loads managed Codex health when an effective model route selects Codex", () => {
+    mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync.mockImplementation(
+      ({ dirName }: { dirName: string }) =>
+        dirName === "codex"
+          ? {
+              registerCodexManagedAppServerDoctorChecks:
+                mocks.registerCodexManagedAppServerDoctorChecks,
+            }
+          : null,
+    );
     registerBundledHealthChecks({
       cfg: {
         agents: {
@@ -379,9 +388,9 @@ describe("registerBundledHealthChecks", () => {
       cwd: workspaceDir,
     });
 
-    expect(mocks.loadBundledPluginPublicArtifactModuleSync).toHaveBeenCalledWith({
+    expect(mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync).toHaveBeenCalledWith({
       dirName: "codex",
-      artifactBasename: "api.js",
+      artifactCandidates: ["api.js"],
     });
     expect(mocks.registerCodexManagedAppServerDoctorChecks).toHaveBeenCalledWith({
       registerHealthCheck: expect.any(Function),
@@ -389,14 +398,7 @@ describe("registerBundledHealthChecks", () => {
   });
 
   it("loads managed Codex health from a trusted official external install when the bundled surface is absent", () => {
-    mocks.loadBundledPluginPublicArtifactModuleSync.mockImplementation(({ dirName }) => {
-      if (dirName === "codex") {
-        throw new MissingPublicSurfaceError(
-          "Unable to resolve bundled plugin public surface codex/api.js",
-        );
-      }
-      return bundledHealthSurfaceFor(dirName);
-    });
+    mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync.mockReturnValue(null);
     mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce({
       plugins: [
         {
@@ -446,6 +448,37 @@ describe("registerBundledHealthChecks", () => {
     });
   });
 
+  it("re-throws a nested missing-surface error raised by a resolved bundled Codex artifact instead of falling back", () => {
+    const nestedError = new MissingPublicSurfaceError("nested codex api.js surface load failure");
+    mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync.mockImplementation(
+      ({ dirName }: { dirName: string }) => {
+        if (dirName === "codex") {
+          throw nestedError;
+        }
+        return null;
+      },
+    );
+
+    expect(() =>
+      registerBundledHealthChecks({
+        cfg: {
+          agents: {
+            defaults: {
+              model: { primary: "openai/gpt-5.6-sol" },
+              models: {
+                "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+              },
+            },
+          },
+        },
+        cwd: workspaceDir,
+      }),
+    ).toThrow(nestedError);
+    expect(mocks.loadPluginManifestRegistryForPluginRegistry).not.toHaveBeenCalled();
+    expect(mocks.loadPluginPublicArtifactModuleSync).not.toHaveBeenCalled();
+    expect(mocks.registerCodexManagedAppServerDoctorChecks).not.toHaveBeenCalled();
+  });
+
   const failingRegistryCases: Array<{
     title: string;
     registry: PluginManifestRegistry;
@@ -480,14 +513,7 @@ describe("registerBundledHealthChecks", () => {
   it.each(failingRegistryCases)(
     "throws instead of silently dropping managed Codex health when the bundled surface is absent and $title",
     ({ registry }) => {
-      mocks.loadBundledPluginPublicArtifactModuleSync.mockImplementation(({ dirName }) => {
-        if (dirName === "codex") {
-          throw new MissingPublicSurfaceError(
-            "Unable to resolve bundled plugin public surface codex/api.js",
-          );
-        }
-        return bundledHealthSurfaceFor(dirName);
-      });
+      mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync.mockReturnValue(null);
       mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce(registry);
 
       expect(() =>
