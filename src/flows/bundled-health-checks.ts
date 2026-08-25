@@ -2,6 +2,7 @@
 import { asOptionalObjectRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
 import { collectConfiguredAgentHarnessRuntimes } from "../agents/harness-runtimes.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { MissingPublicSurfaceError } from "../plugin-sdk/facade-loader.js";
 import { normalizePluginId, normalizePluginsConfig } from "../plugins/config-state.js";
 import { passesManifestOwnerBasePolicy } from "../plugins/manifest-owner-policy.js";
 import {
@@ -14,6 +15,7 @@ import { resolveProviderPolicySurface } from "../plugins/provider-public-artifac
 import {
   loadBundledPluginPublicArtifactModuleFromCandidatesSync,
   loadBundledPluginPublicArtifactModuleSync,
+  loadPluginPublicArtifactModuleSync,
 } from "../plugins/public-surface-loader.js";
 import { collectConfiguredWorkerProviderIds } from "../plugins/worker-provider-config.js";
 import { listBundledWorkerProviderOwners } from "../plugins/worker-provider-manifest.js";
@@ -124,9 +126,10 @@ export function registerBundledHealthChecks(params: {
     memoryCoreActive: isMemoryCoreActive(params.cfg),
   });
   if (shouldRegisterCodexManagedHealth(params.cfg)) {
-    loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
-      dirName: "codex",
-      artifactBasename: "api.js",
+    loadCodexManagedHealthApi({
+      cfg: params.cfg,
+      cwd: params.cwd,
+      env,
     }).registerCodexManagedAppServerDoctorChecks?.({ registerHealthCheck });
   }
   if (shouldRegisterPolicyHealth(params)) {
@@ -175,6 +178,45 @@ function shouldRegisterCodexManagedHealth(cfg: OpenClawConfig): boolean {
     plugin: { id: "codex" },
     normalizedConfig: normalizePluginsConfig(cfg.plugins),
   });
+}
+
+// Codex is distributed as an official external plugin: the published core
+// package excludes its bundled surface (package.json "files"), so a configured
+// Codex runtime must fall back to the trusted official install root instead of
+// aborting doctor registration when the bundled artifact is absent (#128826).
+function loadCodexManagedHealthApi(params: {
+  cfg: OpenClawConfig;
+  cwd?: string;
+  env: NodeJS.ProcessEnv;
+}): BundledHealthApi {
+  try {
+    return loadBundledPluginPublicArtifactModuleSync<BundledHealthApi>({
+      dirName: "codex",
+      artifactBasename: "api.js",
+    });
+  } catch (error) {
+    if (!(error instanceof MissingPublicSurfaceError)) {
+      throw error;
+    }
+  }
+  const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({
+    config: params.cfg,
+    workspaceDir: params.cwd,
+    env: params.env,
+    pluginIds: ["codex"],
+  });
+  const codexRecord = manifestRegistry.plugins.find((plugin) => plugin.id === "codex");
+  if (codexRecord?.trustedOfficialInstall === true) {
+    return loadPluginPublicArtifactModuleSync<BundledHealthApi>({
+      pluginRoot: codexRecord.rootDir,
+      artifactBasename: "api.js",
+    });
+  }
+  // Do not silently drop Codex diagnostics for a configured runtime; fail
+  // loudly so the operator learns the health surface could not be resolved.
+  throw new MissingPublicSurfaceError(
+    "Unable to resolve Codex doctor health API: no bundled codex/api.js surface and no trusted official codex plugin install",
+  );
 }
 
 function isMemoryCoreActive(cfg: OpenClawConfig): boolean {

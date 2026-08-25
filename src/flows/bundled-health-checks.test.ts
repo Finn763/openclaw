@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MissingPublicSurfaceError } from "../plugin-sdk/facade-loader.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { ProviderPolicySurface } from "../plugins/provider-policy-surface.js";
 import {
@@ -36,24 +37,31 @@ const mocks = vi.hoisted(() => ({
         : null,
   ),
   loadBundledPluginPublicArtifactModuleSync: vi.fn(({ dirName }: { dirName: string }) =>
-    dirName === "memory-core"
-      ? {
-          pluginStateIsolatedDoctorCheckIds: [STATE_DEFERRED_CHECK_ID],
-          registerMemoryCoreDoctorChecks: mocks.registerMemoryCoreDoctorChecks,
-        }
-      : dirName === "cua-computer"
-        ? { registerCuaDriverDoctorChecks: mocks.registerCuaDriverDoctorChecks }
-        : dirName === "codex"
-          ? {
-              registerCodexManagedAppServerDoctorChecks:
-                mocks.registerCodexManagedAppServerDoctorChecks,
-            }
-          : { registerPolicyDoctorChecks: mocks.registerPolicyDoctorChecks },
+    bundledHealthSurfaceFor(dirName),
   ),
+  loadPluginPublicArtifactModuleSync: vi.fn(() => ({
+    registerCodexManagedAppServerDoctorChecks: mocks.registerCodexManagedAppServerDoctorChecks,
+  })),
   resolveProviderPolicySurface: vi.fn((): ProviderPolicySurface | null => ({
     inspectEmbeddingProviderSetup: mocks.inspectEmbeddingProviderSetup,
   })),
 }));
+
+function bundledHealthSurfaceFor(dirName: string): Record<string, unknown> {
+  return dirName === "memory-core"
+    ? {
+        pluginStateIsolatedDoctorCheckIds: [STATE_DEFERRED_CHECK_ID],
+        registerMemoryCoreDoctorChecks: mocks.registerMemoryCoreDoctorChecks,
+      }
+    : dirName === "cua-computer"
+      ? { registerCuaDriverDoctorChecks: mocks.registerCuaDriverDoctorChecks }
+      : dirName === "codex"
+        ? {
+            registerCodexManagedAppServerDoctorChecks:
+              mocks.registerCodexManagedAppServerDoctorChecks,
+          }
+        : { registerPolicyDoctorChecks: mocks.registerPolicyDoctorChecks };
+}
 
 vi.mock("../plugins/plugin-registry.js", () => ({
   loadPluginManifestRegistryForPluginRegistry: mocks.loadPluginManifestRegistryForPluginRegistry,
@@ -69,6 +77,7 @@ vi.mock("../plugins/public-surface-loader.js", () => ({
   loadBundledPluginPublicArtifactModuleFromCandidatesSync:
     mocks.loadBundledPluginPublicArtifactModuleFromCandidatesSync,
   loadBundledPluginPublicArtifactModuleSync: mocks.loadBundledPluginPublicArtifactModuleSync,
+  loadPluginPublicArtifactModuleSync: mocks.loadPluginPublicArtifactModuleSync,
 }));
 
 let workspaceDir: string;
@@ -376,6 +385,124 @@ describe("registerBundledHealthChecks", () => {
       registerHealthCheck: expect.any(Function),
     });
   });
+
+  it("loads managed Codex health from a trusted official external install when the bundled surface is absent", () => {
+    mocks.loadBundledPluginPublicArtifactModuleSync.mockImplementation(({ dirName }) => {
+      if (dirName === "codex") {
+        throw new MissingPublicSurfaceError(
+          "Unable to resolve bundled plugin public surface codex/api.js",
+        );
+      }
+      return bundledHealthSurfaceFor(dirName);
+    });
+    mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce({
+      plugins: [
+        {
+          id: "codex",
+          origin: "global",
+          trustedOfficialInstall: true,
+          contracts: {},
+          channels: [],
+          providers: [],
+          cliBackends: [],
+          skills: [],
+          hooks: [],
+          rootDir: "/official/codex",
+          source: "/official/codex/index.js",
+          manifestPath: "/official/codex/openclaw.plugin.json",
+        },
+      ],
+      diagnostics: [],
+    });
+
+    registerBundledHealthChecks({
+      cfg: {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-5.6-sol" },
+            models: {
+              "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+            },
+          },
+        },
+      },
+      cwd: workspaceDir,
+    });
+
+    expect(mocks.loadPluginManifestRegistryForPluginRegistry).toHaveBeenCalledWith({
+      config: expect.any(Object),
+      workspaceDir,
+      env: process.env,
+      pluginIds: ["codex"],
+    });
+    expect(mocks.loadPluginPublicArtifactModuleSync).toHaveBeenCalledWith({
+      pluginRoot: "/official/codex",
+      artifactBasename: "api.js",
+    });
+    expect(mocks.registerCodexManagedAppServerDoctorChecks).toHaveBeenCalledWith({
+      registerHealthCheck: expect.any(Function),
+    });
+  });
+
+  it.each([
+    {
+      title: "no installed codex plugin record",
+      registry: { plugins: [], diagnostics: [] },
+    },
+    {
+      title: "an untrusted external codex install",
+      registry: {
+        plugins: [
+          {
+            id: "codex",
+            origin: "global",
+            trustedOfficialInstall: undefined,
+            contracts: {},
+            channels: [],
+            providers: [],
+            cliBackends: [],
+            skills: [],
+            hooks: [],
+            rootDir: "/local/codex",
+            source: "/local/codex/index.js",
+            manifestPath: "/local/codex/openclaw.plugin.json",
+          },
+        ],
+        diagnostics: [],
+      },
+    },
+  ] as const)(
+    "throws instead of silently dropping managed Codex health when the bundled surface is absent and $title",
+    ({ registry }) => {
+      mocks.loadBundledPluginPublicArtifactModuleSync.mockImplementation(({ dirName }) => {
+        if (dirName === "codex") {
+          throw new MissingPublicSurfaceError(
+            "Unable to resolve bundled plugin public surface codex/api.js",
+          );
+        }
+        return bundledHealthSurfaceFor(dirName);
+      });
+      mocks.loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce(registry);
+
+      expect(() =>
+        registerBundledHealthChecks({
+          cfg: {
+            agents: {
+              defaults: {
+                model: { primary: "openai/gpt-5.6-sol" },
+                models: {
+                  "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+                },
+              },
+            },
+          },
+          cwd: workspaceDir,
+        }),
+      ).toThrow(MissingPublicSurfaceError);
+      expect(mocks.loadPluginPublicArtifactModuleSync).not.toHaveBeenCalled();
+      expect(mocks.registerCodexManagedAppServerDoctorChecks).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not load managed Codex health for OpenClaw routes or disabled Codex", () => {
     for (const cfg of [
