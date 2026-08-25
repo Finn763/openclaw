@@ -34,17 +34,20 @@ export function formatConfigNestingDepthMessage(label: string, depth: number): s
 /**
  * Scans raw JSON/JSON5 text and returns the maximum bracket nesting depth.
  *
- * Iterative and string-aware: string contents (single/double-quoted, escaped
- * quotes included) are skipped so bracket-like characters inside values never
- * skew the count. Runs before any parser so a native parser overflow on
- * deeply-nested input can never happen.
+ * Iterative and string/comment-aware: string contents (single/double-quoted,
+ * escaped quotes included) and JSON5 comments (line and block forms) are
+ * skipped so bracket-like characters inside values or comments never skew the
+ * count. Runs before any parser so a native parser overflow on deeply-nested
+ * input can never happen.
  */
 function measureRawJsonNestingDepth(raw: string): number {
   let depth = 0;
   let maxDepth = 0;
   let quote: '"' | "'" | null = null;
   let escaped = false;
-  for (const char of raw) {
+  let index = 0;
+  while (index < raw.length) {
+    const char = raw[index];
     if (quote !== null) {
       if (escaped) {
         escaped = false;
@@ -53,10 +56,31 @@ function measureRawJsonNestingDepth(raw: string): number {
       } else if (char === quote) {
         quote = null;
       }
+      index += 1;
       continue;
     }
     if (char === '"' || char === "'") {
       quote = char;
+      index += 1;
+      continue;
+    }
+    // JSON5 comments are not structural: skip both forms so bracket-like
+    // characters inside comments never skew the measured depth.
+    if (char === "/" && raw[index + 1] === "/") {
+      index += 2;
+      while (index < raw.length && raw[index] !== "\n") {
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "/" && raw[index + 1] === "*") {
+      index += 2;
+      while (index < raw.length && !(raw[index] === "*" && raw[index + 1] === "/")) {
+        index += 1;
+      }
+      if (index < raw.length) {
+        index += 2;
+      }
       continue;
     }
     if (char === "{" || char === "[") {
@@ -69,6 +93,7 @@ function measureRawJsonNestingDepth(raw: string): number {
         depth -= 1;
       }
     }
+    index += 1;
   }
   return maxDepth;
 }
@@ -119,4 +144,22 @@ export function assertBoundedJsonNesting(value: unknown, label: string): void {
   if (depth > MAX_CONFIG_JSON_NESTING_DEPTH) {
     throw new ConfigNestingDepthError(formatConfigNestingDepthMessage(label, depth));
   }
+}
+
+/**
+ * Shared parser boundary for JSON/JSON5 inputs: asserts raw nesting before the
+ * parser runs (so a native parser overflow can never happen) and re-asserts on
+ * the parsed value (covering parsers or producers that arrive in-process).
+ * Every config-adjacent parse site should go through this entry instead of
+ * repeating the raw/parse/parsed triple.
+ */
+export function parseJsonWithNestingGuard(
+  raw: string,
+  label: string,
+  parse: (text: string) => unknown,
+): unknown {
+  assertBoundedRawJsonNesting(raw, label);
+  const parsed = parse(raw);
+  assertBoundedJsonNesting(parsed, label);
+  return parsed;
 }

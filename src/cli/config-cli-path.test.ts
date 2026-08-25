@@ -1,5 +1,8 @@
+// Covers config set value parsing against the bounded JSON nesting contract.
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { describe, expect, it } from "vitest";
+import JSON5 from "json5";
+import { describe, expect, it, vi } from "vitest";
+import { ConfigNestingDepthError, MAX_CONFIG_JSON_NESTING_DEPTH } from "../config/nesting-limit.js";
 import { mergeAtPath, parseConfigSetValue } from "./config-cli-path.js";
 
 function nestedRecord(depth: number, leaf: Record<string, unknown>): Record<string, unknown> {
@@ -9,6 +12,9 @@ function nestedRecord(depth: number, leaf: Record<string, unknown>): Record<stri
   }
   return value;
 }
+
+const OVER_LIMIT_DEPTH = MAX_CONFIG_JSON_NESTING_DEPTH + 1;
+const overLimitArrayText = "[".repeat(OVER_LIMIT_DEPTH) + "]".repeat(OVER_LIMIT_DEPTH);
 
 describe("parseConfigSetValue", () => {
   it.each([
@@ -74,5 +80,32 @@ describe("parseConfigSetValue", () => {
       cursor = cursor.nested;
     }
     expect(cursor).toEqual({ retained: true, added: true });
+  it("rejects an over-limit --strict-json value before the parser runs", () => {
+    const parseSpy = vi.spyOn(JSON, "parse");
+    try {
+      expect(() => parseConfigSetValue(overLimitArrayText, true)).toThrow(
+        /Could not parse .* as JSON for --strict-json/,
+      );
+      expect(() => parseConfigSetValue(overLimitArrayText, true)).toThrow(/nesting depth/);
+      expect(parseSpy).not.toHaveBeenCalled();
+    } finally {
+      parseSpy.mockRestore();
+  });
+  it("rejects an over-limit JSON5 value before the parser runs instead of falling back to raw", () => {
+    const parseSpy = vi.spyOn(JSON5, "parse");
+      expect(() => parseConfigSetValue(overLimitArrayText, false)).toThrowError(
+        ConfigNestingDepthError,
+      expect(() => parseConfigSetValue(overLimitArrayText, false)).toThrow(
+        /maximum supported nesting depth/,
+  it("keeps shallow values and plain-string fallback unchanged", () => {
+    expect(parseConfigSetValue("42", false)).toBe(42);
+    expect(parseConfigSetValue('{"a": [1, 2]}', false)).toEqual({ a: [1, 2] });
+    expect(parseConfigSetValue('[1, "x"]', true)).toEqual([1, "x"]);
+    expect(parseConfigSetValue("plain text", false)).toBe("plain text");
+    expect(parseConfigSetValue("{bad", false)).toBe("{bad");
+  it("accepts values at the supported maximum depth", () => {
+    const atLimit =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH);
+    expect(Array.isArray(parseConfigSetValue(atLimit, true))).toBe(true);
   });
 });
