@@ -39,7 +39,7 @@ export function formatConfigNestingDepthMessage(label: string, depth: number): s
  * skew the count. Runs before any parser so a native parser overflow on
  * deeply-nested input can never happen.
  */
-export function measureRawJsonNestingDepth(raw: string): number {
+function measureRawJsonNestingDepth(raw: string): number {
   let depth = 0;
   let maxDepth = 0;
   let quote: '"' | "'" | null = null;
@@ -80,7 +80,7 @@ export function measureRawJsonNestingDepth(raw: string): number {
  * Runs after parsing as a second layer: parsed values can also arrive from
  * in-process producers that never went through a raw-text boundary.
  */
-export function measureJsonNestingDepth(value: unknown): number {
+function measureJsonNestingDepth(value: unknown): number {
   let maxDepth = 0;
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 1 }];
   while (stack.length > 0) {
