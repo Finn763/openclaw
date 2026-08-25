@@ -107,4 +107,27 @@ describe("finalizeAcceptedChatSendMessageInjection", () => {
       }),
     );
   });
+
+  it("rejects acceptance when the session entry fail-closes terminal source-reply delivery", async () => {
+    // A terminal receipt means a steer accepted into this turn would reuse a
+    // fail-closed source-reply claim and lose the inbound's reply (#128971).
+    // The acceptance must be refused so the inbound falls back to next-turn
+    // admission instead of being injected into the live run.
+    const params = makeParams();
+    params.session.entry = {
+      sessionId: "session-1",
+      status: "running",
+      restartRecoveryDeliveryRunId: "recovery-1",
+      restartRecoveryDeliverySourceRunId: "source-1",
+      restartRecoveryDeliveryReceiptState: "terminal-pending",
+      restartRecoveryDeliveryToolCallId: "message-call-1",
+      updatedAt: 1,
+    } as never;
+
+    await expect(finalizeAcceptedChatSendMessageInjection(params)).resolves.toBe(false);
+
+    expect(vi.mocked(finalizeReplyMessageInjectionAttempt)).not.toHaveBeenCalled();
+    expect(updateSessionEntry).not.toHaveBeenCalled();
+    expect(params.context.logGateway.warn).toHaveBeenCalled();
+  });
 });

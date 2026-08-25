@@ -1,9 +1,7 @@
 import { resolveDefaultAgentId } from "../../agents/agent-scope-config.js";
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
-import {
-  hasRestartRecoverySourceClaim,
-  hasTerminalRestartRecoveryDeliveryReceipt,
-} from "../../config/sessions/restart-recovery-state.js";
+import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
+import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
@@ -181,21 +179,29 @@ export async function runReplyAgent(
           hydrateSkillPromptRefs: false,
         }) ?? activeSessionEntry)
       : activeSessionEntry;
-  // A terminal source-reply receipt means the active run's message-tool final
-  // already started or completed on its source turn. A steered inbound reuses
-  // that run's delivery claim, so its own terminal send would be fail-closed to
-  // `delivery_ambiguous` / `already_delivered` and the user would see no reply
-  // (#128971). Fence steering and drain the inbound as the next ordered turn,
-  // which mints a fresh source-turn identity and its own receipt.
+  // A terminal source-reply delivery state means the active run's message-tool
+  // final already began (`terminal-pending`), completed (`delivered-terminal`),
+  // tombstoned after claim cleanup, or was left with an unresolved terminal
+  // tool-call id / stale claim — in every such state the receipt owner
+  // fail-closes any further terminal send on the source turn. A steered
+  // inbound reuses that run's delivery claim, so its own terminal send would be
+  // refused and the user would see no reply (#128971). Fence steering (and
+  // accepted-as-steer injections) and drain the inbound as the next ordered
+  // turn, which mints a fresh source-turn identity and its own receipt. The
+  // classification is the same one beginTerminalSourceReplyDelivery uses.
+  const terminalDeliveryFailClosed = isRestartRecoveryTerminalDeliveryFailClosed(
+    restartRecoveryEntry,
+    activeReplyOperation?.sessionId ?? followupRun.run.sessionId,
+  );
   const shouldQueueTerminalReceiptSteer =
     effectiveShouldSteer &&
     isActive &&
     !shouldQueueAuthorityMismatch &&
     messageInjectionDisposition === "none" &&
-    hasTerminalRestartRecoveryDeliveryReceipt(restartRecoveryEntry);
+    terminalDeliveryFailClosed;
   if (shouldQueueTerminalReceiptSteer) {
     logVerbose(
-      `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} holds a terminal source-reply receipt; queuing instead of steering`,
+      `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} is fail-closed for terminal source-reply delivery; queuing instead of steering`,
     );
   }
   if (
@@ -273,12 +279,21 @@ export async function runReplyAgent(
   });
 
   if (messageInjectionDisposition === "accepted") {
-    if (replyOperationRunState) {
-      replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+    if (!terminalDeliveryFailClosed) {
+      if (replyOperationRunState) {
+        replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+      }
+      releaseAdmissionTicket();
+      typing.cleanup();
+      return undefined;
     }
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return undefined;
+    // The active turn is fail-closed for terminal source-reply delivery but
+    // the gateway accepted this inbound as a steer into it. Recording the
+    // accepted steer would still lose the reply on the steered terminal send
+    // (#128971); promote the inbound to the next ordered turn instead.
+    logVerbose(
+      `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} is fail-closed for terminal source-reply delivery; promoting the accepted-as-steer inbound to the next ordered turn`,
+    );
   }
 
   if (

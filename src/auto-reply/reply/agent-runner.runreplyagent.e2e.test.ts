@@ -681,6 +681,181 @@ describe("runReplyAgent active steering", () => {
     });
   }
 
+  it("queues instead of steering while the active turn holds a terminal-source tombstone", async () => {
+    // The claim was cleaned after the terminal send; the source turn stays
+    // tombstoned so a steered send resolves to already-delivered (#128971).
+    const sessionEntry = makeSessionEntry({
+      status: "running",
+      restartRecoveryTerminalRunIds: ["source-turn-1"],
+    });
+    const sessionStore = { main: sessionEntry };
+    const active = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
+    const runState: ReplyOperationRunState = {};
+    const { run } = createMinimalRun({
+      opts: { [REPLY_OPERATION_RUN_STATE]: runState },
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      sessionKey: "main",
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingChannel: "telegram",
+        OriginatingTo: "123",
+        MessageSid: "steer-terminal-tombstone",
+      },
+      runOverrides: { agentId: "main", messageProvider: "telegram" },
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
+    expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+    expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+    active.complete();
+  });
+
+  it("queues instead of steering while the active turn holds an unresolved terminal tool-call id", async () => {
+    // beginTerminalSourceReplyDelivery fail-closes any send while a terminal
+    // tool-call id is armed, even without a receipt state (delivery-ambiguous).
+    const sessionEntry = makeSessionEntry({
+      status: "running",
+      restartRecoveryDeliveryRunId: "recovery-run-1",
+      restartRecoveryDeliverySourceRunId: "source-turn-1",
+      restartRecoveryDeliveryToolCallId: "message-call-2",
+    });
+    const sessionStore = { main: sessionEntry };
+    const active = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
+    const runState: ReplyOperationRunState = {};
+    const { run } = createMinimalRun({
+      opts: { [REPLY_OPERATION_RUN_STATE]: runState },
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      sessionKey: "main",
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingChannel: "telegram",
+        OriginatingTo: "123",
+        MessageSid: "steer-terminal-toolcall",
+      },
+      runOverrides: { agentId: "main", messageProvider: "telegram" },
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
+    expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+    expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+    active.complete();
+  });
+
+  it("queues instead of steering while the active turn holds a stale delivery claim", async () => {
+    // A non-running session entry keeps its claim fields but the owner is no
+    // longer "running", so beginTerminalSourceReplyDelivery resolves to stale.
+    const sessionEntry = makeSessionEntry({
+      status: "done",
+      restartRecoveryDeliveryRunId: "recovery-run-1",
+      restartRecoveryDeliverySourceRunId: "source-turn-1",
+    });
+    const sessionStore = { main: sessionEntry };
+    const active = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
+    const runState: ReplyOperationRunState = {};
+    const { run } = createMinimalRun({
+      opts: { [REPLY_OPERATION_RUN_STATE]: runState },
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      sessionKey: "main",
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingChannel: "telegram",
+        OriginatingTo: "123",
+        MessageSid: "steer-terminal-stale",
+      },
+      runOverrides: { agentId: "main", messageProvider: "telegram" },
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
+    expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+    expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+    active.complete();
+  });
+
+  it("promotes an accepted-as-steer injection to the next turn while the active turn holds a terminal receipt", async () => {
+    // The gateway accepted the inbound as a steer into a live turn whose
+    // terminal source-reply receipt is fail-closed. The inbound must be
+    // promoted to the next ordered turn instead of being recorded as an
+    // accepted steer that would lose its reply (#128971).
+    const sessionEntry = makeSessionEntry({
+      status: "running",
+      restartRecoveryDeliveryRunId: "recovery-run-1",
+      restartRecoveryDeliverySourceRunId: "source-turn-1",
+      restartRecoveryDeliveryReceiptState: "terminal-pending",
+      restartRecoveryDeliveryToolCallId: "message-call-1",
+    });
+    const sessionStore = { main: sessionEntry };
+    const runState: ReplyOperationRunState = {};
+    const { run } = createMinimalRun({
+      opts: {
+        messageInjectionDisposition: "accepted",
+        [REPLY_OPERATION_RUN_STATE]: runState,
+      },
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      sessionKey: "main",
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingChannel: "telegram",
+        OriginatingTo: "123",
+        MessageSid: "steer-accepted-terminal",
+      },
+      runOverrides: { agentId: "main", messageProvider: "telegram" },
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+    expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
+    expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+  });
+
   it("offers a route-only mismatch to the pending-input owner", async () => {
     state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
     const activeRoute = { provider: "openai", model: "gpt-fallback" };

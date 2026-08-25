@@ -14,6 +14,7 @@ import {
 } from "../../auto-reply/reply/reply-run-registry.js";
 import { resolveInboundReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-tool-authority.js";
 import type { RuntimeMsgContext } from "../../auto-reply/templating.js";
+import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { logMessageProcessed, logMessageReceived } from "../../logging/diagnostic.js";
@@ -124,6 +125,19 @@ export async function finalizeAcceptedChatSendMessageInjection(params: {
 }): Promise<boolean> {
   const { context, ctx, session } = params;
   const { agentId, cfg, clientRunId, entry, sessionKey, storePath } = session;
+  // A steer injection may only be accepted into an active run that can still
+  // own a terminal source-reply send (#128971). Once the session entry
+  // fail-closes terminal delivery (delivery receipt, unresolved terminal
+  // tool-call id, terminal tombstone, or stale claim) the accepted steer
+  // would reuse the fail-closed claim and lose the inbound's reply; report
+  // rejection so the inbound falls back to next-turn admission, where the
+  // runner's queue fence applies.
+  if (entry && isRestartRecoveryTerminalDeliveryFailClosed(entry, entry.sessionId)) {
+    context.logGateway.warn(
+      `active run ${clientRunId} cannot own another terminal source-reply send on session ${sessionKey}; rejecting accepted steer injection`,
+    );
+    return false;
+  }
   const finalizedCtx = finalizeInboundContext(ctx);
   const finalization = await finalizeReplyMessageInjectionAttempt({
     attempt: params.attempt,
