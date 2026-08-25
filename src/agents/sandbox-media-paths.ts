@@ -58,10 +58,14 @@ function isBareUploadHandleCandidate(filePath: string): boolean {
  * sandbox workspace; canonical `media://inbound/<id>` references are rewritten
  * upstream, but bare handles (e.g. `file_<id>`) previously resolved against
  * the sandbox root and read ENOENT. Resolution stays bounded: only
- * single-segment, scheme-less relative references qualify, the staged file
- * must exist under the sandbox inbound dir, and the resulting path still
- * passes the workspace boundary guard. Existing workspace files stay
- * authoritative, and anything else falls back to ordinary resolution.
+ * single-segment, scheme-less relative references qualify, the staged asset
+ * must be a regular file under the sandbox inbound dir, and the resulting path
+ * still passes the workspace boundary guard.
+ *
+ * The direct target stays authoritative. The fallback engages only when the
+ * bridge stat reports it absent (null); an existing-but-unreadable direct file
+ * surfaces its original stat error instead of being silently replaced by the
+ * inbound twin.
  */
 async function resolveBareStagedUploadHandle(params: {
   sandbox: SandboxedBridgeMediaPathConfig;
@@ -75,10 +79,12 @@ async function resolveBareStagedUploadHandle(params: {
   }
   const handle = params.filePath;
   // Keep existing workspace-relative references authoritative: only fall back
-  // when the direct target is absent and a staged inbound asset exists.
-  const directStat = await params.sandbox.bridge
-    .stat({ filePath: handle, cwd: params.sandbox.root })
-    .catch(() => null);
+  // when the direct target is absent (ENOENT -> null). Stat failures mean the
+  // target exists but cannot be inspected; they propagate as-is.
+  const directStat = await params.sandbox.bridge.stat({
+    filePath: handle,
+    cwd: params.sandbox.root,
+  });
   if (directStat) {
     return null;
   }
@@ -86,7 +92,7 @@ async function resolveBareStagedUploadHandle(params: {
   const stagedStat = await params.sandbox.bridge
     .stat({ filePath: stagedPath, cwd: params.sandbox.root })
     .catch(() => null);
-  if (!stagedStat) {
+  if (!stagedStat || stagedStat.type !== "file") {
     return null;
   }
   const resolvedFallback = params.sandbox.bridge.resolvePath({
@@ -152,28 +158,45 @@ export async function resolveSandboxedBridgeMediaPath(params: {
       filePath,
       cwd: params.sandbox.root,
     });
+  if (!rewrittenFrom) {
+    // Probe outside the direct-resolution try: a stat failure on an
+    // existing-but-unreadable direct target must surface its original error
+    // instead of reaching the staged-twin fallback below.
+    const stagedFallback = await resolveBareStagedUploadHandle({
+      sandbox: params.sandbox,
+      filePath,
+      inboundFallbackDir: params.inboundFallbackDir,
+      enforceWorkspaceBoundary,
+    });
+    if (stagedFallback) {
+      return stagedFallback;
+    }
+  }
   try {
     const resolved = resolveDirect();
     await enforceWorkspaceBoundary(resolved);
-    const resolvedPath = resolved.hostPath ?? resolved.containerPath;
-    if (!rewrittenFrom) {
-      const stagedFallback = await resolveBareStagedUploadHandle({
-        sandbox: params.sandbox,
-        filePath,
-        inboundFallbackDir: params.inboundFallbackDir,
-        enforceWorkspaceBoundary,
-      });
-      if (stagedFallback) {
-        return stagedFallback;
-      }
-    }
     return {
-      resolved: resolvedPath,
+      resolved: resolved.hostPath ?? resolved.containerPath,
       ...(rewrittenFrom ? { rewrittenFrom } : {}),
     };
   } catch (err) {
     const fallbackDir = params.inboundFallbackDir?.trim();
     if (!fallbackDir) {
+      throw err;
+    }
+    // Substitute the staged basename twin only when the direct target is
+    // absent. A present-but-unreadable direct target (or a failed direct
+    // stat) keeps its original error instead of being silently replaced.
+    let directStat: Awaited<ReturnType<SandboxFsBridge["stat"]>>;
+    try {
+      directStat = await params.sandbox.bridge.stat({
+        filePath,
+        cwd: params.sandbox.root,
+      });
+    } catch {
+      throw err;
+    }
+    if (directStat) {
       throw err;
     }
     const fallbackPath = path.join(fallbackDir, path.basename(filePath));
@@ -182,7 +205,7 @@ export async function resolveSandboxedBridgeMediaPath(params: {
         filePath: fallbackPath,
         cwd: params.sandbox.root,
       });
-      if (!stat) {
+      if (!stat || stat.type !== "file") {
         throw err;
       }
     } catch {

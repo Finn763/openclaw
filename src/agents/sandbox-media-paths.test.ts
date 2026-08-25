@@ -251,6 +251,79 @@ describe("bare staged upload handle fallback", () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
+  it("keeps the original stat error when the direct workspace file is unreadable", async () => {
+    // Exists-but-unreadable direct files must never be silently replaced by
+    // the staged inbound twin: the original stat error surfaces instead.
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) => {
+      if (filePath === "file_blocked.png") {
+        throw new Error("stat failed for /workspace/file_blocked.png: Permission denied");
+      }
+      return { type: "file", size: 1, mtimeMs: 1 };
+    });
+    const bridge = hostBridge(stat);
+
+    await expect(
+      resolveSandboxedBridgeMediaPath({
+        sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+        mediaPath: "file_blocked.png",
+        inboundFallbackDir: "media/inbound",
+      }),
+    ).rejects.toThrow("Permission denied");
+    // The staged twin must never be probed after the direct stat fails.
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith({ filePath: "file_blocked.png", cwd: "/tmp/sandbox-root" });
+    expect(bridge.resolvePath).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite a bare handle when the staged twin is not a regular file", async () => {
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_dir.png"
+        ? { type: "directory", size: 0, mtimeMs: 1 }
+        : null,
+    );
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_dir.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/file_dir.png" });
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves the original direct-resolution error when the direct target is present", async () => {
+    // When direct resolution fails for a present (non-absent) target, the
+    // inbound basename twin must not be substituted: keep the original error.
+    const resolveError = new Error("bridge resolve failed");
+    const stat = vi.fn(async () => ({ type: "file", size: 1, mtimeMs: 1 }));
+    const bridge = {
+      stat,
+      resolvePath: vi.fn(({ filePath }: { filePath: string }) => {
+        if (filePath === "sub/file_link.png") {
+          throw resolveError;
+        }
+        return {
+          hostPath: `/tmp/sandbox-root/${filePath}`,
+          relativePath: filePath,
+          containerPath: `/sandbox/${filePath}`,
+        };
+      }),
+    };
+
+    await expect(
+      resolveSandboxedBridgeMediaPath({
+        sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+        mediaPath: "sub/file_link.png",
+        inboundFallbackDir: "media/inbound",
+      }),
+    ).rejects.toBe(resolveError);
+    // Only the direct-absence probe ran; the staged twin was never resolved.
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith({ filePath: "sub/file_link.png", cwd: "/tmp/sandbox-root" });
+  });
+
   it("never rewrites scheme references through the staged fallback", async () => {
     const stat = vi.fn(async () => null);
     const bridge = hostBridge(stat);
