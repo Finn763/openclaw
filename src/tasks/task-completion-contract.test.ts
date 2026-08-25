@@ -40,4 +40,26 @@ describe("required completion terminal results", () => {
     expect(result.terminalOutcome).toBe("blocked");
     expect(result.terminalSummary).toContain("progress-only");
   });
+
+  it("still blocks progress-only narration ending in a structured colon token", () => {
+    const result = resolveRequiredCompletionTerminalResult("I'll inspect build:README");
+
+    expect(result.terminalOutcome).toBe("blocked");
+  });
+
+  it("still blocks mixed glued progress narration ending in a structured colon token", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll start by mapping the repo.I'll inspect build:README and run the tests.",
+    );
+
+    expect(result.terminalOutcome).toBe("blocked");
+  });
+
+  it("does not block a colon-glued summary when a real glued dot boundary exists", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll check the logs.Summary:Details are above.",
+    );
+
+    expect(result.terminalOutcome).toBeUndefined();
+  });
 });
