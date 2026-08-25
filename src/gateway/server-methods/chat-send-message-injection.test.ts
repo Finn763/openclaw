@@ -5,7 +5,7 @@ import {
   finalizeReplyMessageInjectionAttempt,
   type ReplyMessageInjectionTarget,
 } from "../../auto-reply/reply/reply-run-registry.js";
-import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
+import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logMessageProcessed } from "../../logging/diagnostic.js";
 import { finalizeAcceptedChatSendMessageInjection } from "./chat-send-message-injection.js";
 import type { GatewayRequestContext } from "./types.js";
@@ -21,6 +21,7 @@ vi.mock("../../auto-reply/reply/message-received-hooks.js", () => ({
   emitMessageReceivedHooks: vi.fn(),
 }));
 vi.mock("../../config/sessions/session-accessor.js", () => ({
+  loadSessionEntry: vi.fn(() => null),
   updateSessionEntry: vi.fn(async () => undefined),
 }));
 vi.mock("../../logging/diagnostic.js", () => ({
@@ -129,5 +130,63 @@ describe("finalizeAcceptedChatSendMessageInjection", () => {
     expect(vi.mocked(finalizeReplyMessageInjectionAttempt)).not.toHaveBeenCalled();
     expect(updateSessionEntry).not.toHaveBeenCalled();
     expect(params.context.logGateway.warn).toHaveBeenCalled();
+  });
+
+  it("revalidates the terminal receipt state immediately before finalizing", async () => {
+    // The entry captured during prepareChatSendSession predates asynchronous
+    // dispatch. A terminal receipt committed in between must still fence the
+    // steer: the captured snapshot is clean, but the latest persisted entry
+    // fail-closes terminal delivery, so acceptance must be refused (#128971).
+    const params = makeParams();
+    params.session.entry = {
+      sessionId: "session-1",
+      status: "running",
+      updatedAt: 1,
+    } as never;
+    vi.mocked(loadSessionEntry).mockReturnValueOnce({
+      sessionId: "session-1",
+      status: "running",
+      restartRecoveryDeliveryRunId: "recovery-1",
+      restartRecoveryDeliverySourceRunId: "source-1",
+      restartRecoveryDeliveryReceiptState: "delivered-terminal",
+      updatedAt: 2,
+    } as never);
+
+    await expect(finalizeAcceptedChatSendMessageInjection(params)).resolves.toBe(false);
+
+    expect(vi.mocked(finalizeReplyMessageInjectionAttempt)).not.toHaveBeenCalled();
+    expect(updateSessionEntry).not.toHaveBeenCalled();
+    expect(params.context.logGateway.warn).toHaveBeenCalled();
+  });
+
+  it("prefers the latest persisted entry over the stale dispatch snapshot", async () => {
+    // The opposite ordering: the captured snapshot fail-closed after dispatch,
+    // but the latest persisted entry is startable again (terminal intent
+    // cancelled). The fence must follow the latest state and accept the steer.
+    const params = makeParams();
+    params.session.entry = {
+      sessionId: "session-1",
+      status: "running",
+      restartRecoveryDeliveryRunId: "recovery-1",
+      restartRecoveryDeliverySourceRunId: "source-1",
+      restartRecoveryDeliveryReceiptState: "terminal-pending",
+      restartRecoveryDeliveryToolCallId: "message-call-1",
+      updatedAt: 1,
+    } as never;
+    vi.mocked(loadSessionEntry).mockReturnValueOnce({
+      sessionId: "session-1",
+      status: "running",
+      updatedAt: 2,
+    } as never);
+    vi.mocked(finalizeReplyMessageInjectionAttempt).mockResolvedValueOnce({
+      status: "accepted",
+      outcome: { status: "accepted" },
+      targetRunId: "run-1",
+      aborted: false,
+    });
+
+    await expect(finalizeAcceptedChatSendMessageInjection(params)).resolves.toBe(true);
+
+    expect(vi.mocked(finalizeReplyMessageInjectionAttempt)).toHaveBeenCalledOnce();
   });
 });

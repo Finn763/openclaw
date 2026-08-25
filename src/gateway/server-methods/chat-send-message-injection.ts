@@ -15,7 +15,7 @@ import {
 import { resolveInboundReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-tool-authority.js";
 import type { RuntimeMsgContext } from "../../auto-reply/templating.js";
 import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
-import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
+import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { logMessageProcessed, logMessageReceived } from "../../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -132,7 +132,28 @@ export async function finalizeAcceptedChatSendMessageInjection(params: {
   // would reuse the fail-closed claim and lose the inbound's reply; report
   // rejection so the inbound falls back to next-turn admission, where the
   // runner's queue fence applies.
-  if (entry && isRestartRecoveryTerminalDeliveryFailClosed(entry, entry.sessionId)) {
+  //
+  // The captured `entry` predates asynchronous dispatch, so a terminal
+  // receipt committed between dispatch and finalization would be missed and
+  // the stale snapshot would silently accept the steer. Revalidate against
+  // the latest persisted entry immediately before finalizing; only fall back
+  // to the captured entry when the reload fails or nothing is persisted yet.
+  let fenceEntry = entry;
+  if (sessionKey) {
+    try {
+      fenceEntry =
+        loadSessionEntry({
+          sessionKey,
+          storePath,
+          readConsistency: "latest",
+        }) ?? entry;
+    } catch (error: unknown) {
+      context.logGateway.warn(
+        `failed to reload session entry before steering fence on ${sessionKey}: ${String(error)}`,
+      );
+    }
+  }
+  if (fenceEntry && isRestartRecoveryTerminalDeliveryFailClosed(fenceEntry, fenceEntry.sessionId)) {
     context.logGateway.warn(
       `active run ${clientRunId} cannot own another terminal source-reply send on session ${sessionKey}; rejecting accepted steer injection`,
     );
