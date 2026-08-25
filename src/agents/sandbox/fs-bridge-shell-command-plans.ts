@@ -27,3 +27,21 @@ export function buildStatPlan(
     allowFailure: true,
   };
 }
+
+/**
+ * Builds a directory listing command that anchors the directory at its
+ * canonical parent before reading entry names. One name per line; a missing
+ * directory surfaces as a non-zero exit so callers can map it to an empty
+ * listing.
+ */
+export function buildListDirPlan(
+  target: SandboxResolvedFsPath,
+  anchoredTarget: AnchoredSandboxEntry,
+): SandboxFsCommandPlan {
+  return {
+    checks: [{ target, options: { action: "list directories", allowedType: "directory" } }],
+    script: 'set -eu\ncd -- "$1"\nLC_ALL=C ls -1A -- "$2"',
+    args: [anchoredTarget.canonicalParentPath, anchoredTarget.basename],
+    allowFailure: true,
+  };
+}

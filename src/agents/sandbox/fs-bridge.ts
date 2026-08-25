@@ -21,7 +21,11 @@ import {
   buildPinnedWritePlan,
 } from "./fs-bridge-mutation-helper.js";
 import { SandboxFsPathGuard } from "./fs-bridge-path-safety.js";
-import { buildStatPlan, type SandboxFsCommandPlan } from "./fs-bridge-shell-command-plans.js";
+import {
+  buildListDirPlan,
+  buildStatPlan,
+  type SandboxFsCommandPlan,
+} from "./fs-bridge-shell-command-plans.js";
 import { parseSandboxStatMtimeMs, parseSandboxStatSize } from "./fs-bridge-stat-parse.js";
 import type { SandboxFsBridge, SandboxFsStat, SandboxResolvedPath } from "./fs-bridge.types.js";
 import {
@@ -302,6 +306,34 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       size: parseSandboxStatSize(sizeRaw),
       mtimeMs: parseSandboxStatMtimeMs(mtimeRaw),
     };
+  }
+
+  async readdir(params: {
+    filePath: string;
+    cwd?: string;
+    signal?: AbortSignal;
+  }): Promise<string[]> {
+    const target = this.resolveResolvedPath(params);
+    const anchoredTarget = await this.pathGuard.resolveAnchoredSandboxEntry(
+      target,
+      "list directories",
+    );
+    const result = await this.runPlannedCommand(
+      buildListDirPlan(target, anchoredTarget),
+      params.signal,
+    );
+    if (result.code !== 0) {
+      const stderr = result.stderr.toString("utf8");
+      if (stderr.includes("No such file or directory")) {
+        return [];
+      }
+      const message = stderr.trim() || `list failed with code ${result.code}`;
+      throw new Error(`list failed for ${target.containerPath}: ${message}`);
+    }
+    return result.stdout
+      .toString("utf8")
+      .split("\n")
+      .filter((entry) => entry !== "");
   }
 
   private async runCommand(

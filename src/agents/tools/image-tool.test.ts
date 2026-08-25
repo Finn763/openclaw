@@ -15,6 +15,7 @@ import type {
   ImagesDescriptionRequest,
   MediaUnderstandingProvider,
 } from "../../plugin-sdk/media-understanding.js";
+import { createTinyJpegBuffer } from "../../plugin-sdk/test-helpers/image-fixtures.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { withFetchPreconnect } from "../../test-utils/fetch-mock.js";
 import type { AuthProfileCredential, AuthProfileStore } from "../auth-profiles/types.js";
@@ -2552,6 +2553,39 @@ describe("image tool implicit imageModel config", () => {
 
       expect(fetch).toHaveBeenCalledTimes(1);
       expect((res.details as { rewrittenFrom?: string }).rewrittenFrom).toBe("file_upload-1.png");
+    });
+  });
+
+  it("resolves an extensionless bare upload handle to a staged inbound asset with an uppercase extension", async () => {
+    await withTempSandboxState(async ({ agentDir, sandboxRoot }) => {
+      await fs.mkdir(path.join(sandboxRoot, "media", "inbound"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(sandboxRoot, "media", "inbound", "file_upload-1.JPG"),
+        createTinyJpegBuffer(),
+      );
+
+      const fetch = stubMinimaxOkFetch();
+
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "minimax/MiniMax-M2.7" },
+            imageModel: { primary: "minimax/MiniMax-VL-01" },
+          },
+        },
+      };
+      const sandbox = { root: sandboxRoot, bridge: createHostSandboxFsBridge(sandboxRoot) };
+      const tool = createRequiredImageTool({ config: cfg, agentDir, sandbox });
+
+      const res = await tool.execute("t1", {
+        prompt: "Describe the image.",
+        path: "file_upload-1",
+      });
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect((res.details as { rewrittenFrom?: string }).rewrittenFrom).toBe("file_upload-1");
     });
   });
 });

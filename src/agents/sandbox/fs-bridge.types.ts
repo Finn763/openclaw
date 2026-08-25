@@ -71,4 +71,10 @@ export type SandboxFsBridge = {
     cwd?: string;
     signal?: AbortSignal;
   }): Promise<SandboxFsStat | null>;
+  /**
+   * Lists entry names in a directory within the sandbox. Returns an empty
+   * array when the directory does not exist. Backends without this capability
+   * must omit it rather than emulate it with a check followed by guesses.
+   */
+  readdir?(params: { filePath: string; cwd?: string; signal?: AbortSignal }): Promise<string[]>;
 };

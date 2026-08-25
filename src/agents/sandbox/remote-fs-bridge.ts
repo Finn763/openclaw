@@ -373,6 +373,37 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
     };
   }
 
+  async readdir(params: {
+    filePath: string;
+    cwd?: string;
+    signal?: AbortSignal;
+  }): Promise<string[]> {
+    const target = this.resolveTarget(params);
+    const exists = await this.remotePathExists(target.containerPath, params.signal);
+    if (!exists) {
+      return [];
+    }
+    const { canonicalPath } = await this.resolveCanonicalPath({
+      containerPath: target.containerPath,
+      mountRootPath: target.mountRootPath,
+      action: "list directories",
+      signal: params.signal,
+    });
+    const result = await this.runtime.runRemoteShellScript({
+      script: 'set -eu\nLC_ALL=C ls -1A -- "$1"',
+      args: [canonicalPath],
+      signal: params.signal,
+      allowFailure: true,
+    });
+    if (result.code !== 0) {
+      return [];
+    }
+    return result.stdout
+      .toString("utf8")
+      .split("\n")
+      .filter((entry) => entry !== "");
+  }
+
   private getMounts(): RemoteMountInfo[] {
     const workspaceRoot = path.resolve(this.sandbox.workspaceDir);
     const agentRoot = path.resolve(this.sandbox.agentWorkspaceDir);

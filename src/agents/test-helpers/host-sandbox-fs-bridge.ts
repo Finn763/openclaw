@@ -111,6 +111,20 @@ export function createSandboxFsBridgeFromResolver(
         throw error;
       }
     },
+    readdir: async ({ filePath, cwd }) => {
+      const target = resolvePath(filePath, cwd);
+      if (!target.hostPath) {
+        throw new Error(`Expected hostPath for ${target.containerPath}`);
+      }
+      try {
+        return await fs.readdir(target.hostPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return [];
+        }
+        throw error;
+      }
+    },
   };
 }
 

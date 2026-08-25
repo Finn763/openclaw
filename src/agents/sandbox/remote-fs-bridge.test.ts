@@ -277,6 +277,36 @@ describe("remote sandbox fs bridge", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "lists directory entries and maps missing directories to empty listings",
+    async () => {
+      await withTempDir("openclaw-remote-fs-readdir-", async (stateDir) => {
+        const workspacePath = path.join(stateDir, "workspace");
+        await fs.mkdir(path.join(workspacePath, "media", "inbound"), { recursive: true });
+        const workspaceDir = await fs.realpath(workspacePath);
+        await fs.writeFile(path.join(workspaceDir, "media", "inbound", "a.txt"), "a", "utf8");
+        await fs.writeFile(path.join(workspaceDir, "media", "inbound", "b.JPG"), "b", "utf8");
+
+        const { runtime } = createLocalRemoteRuntime({
+          remoteWorkspaceDir: workspaceDir,
+          remoteAgentWorkspaceDir: workspaceDir,
+        });
+        const bridge = createRemoteShellSandboxFsBridge({
+          sandbox: createSandbox({
+            workspaceDir,
+            agentWorkspaceDir: workspaceDir,
+          }),
+          runtime,
+        });
+
+        const readdir = bridge.readdir?.bind(bridge);
+        expect(readdir).toBeTypeOf("function");
+        await expect(readdir!({ filePath: "media/inbound" })).resolves.toEqual(["a.txt", "b.JPG"]);
+        await expect(readdir!({ filePath: "media/missing" })).resolves.toEqual([]);
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "reads files with the pinned mutation helper",
     async () => {
       await withTempDir("openclaw-remote-fs-bridge-", async (stateDir) => {

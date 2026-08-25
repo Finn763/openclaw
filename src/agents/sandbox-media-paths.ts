@@ -51,61 +51,78 @@ function isBareUploadHandleCandidate(filePath: string): boolean {
 }
 
 /**
- * Candidate extensions probed for extensionless bare upload handles, most
- * common first. Inbound staging preserves the uploaded basename including its
- * extension, so a bare `file_<id>` handle whose staged asset landed as
- * `file_<id>.<ext>` (for example a JPG upload staged as `file_<id>.jpg`) is
- * found through these probes. The verbatim staged name is always tried first;
- * these probes only run when the handle itself carries no extension.
+ * A staged-name candidate from the inbound directory listing must stay a
+ * single segment: multi-segment or parent-traversal names from a bridge are
+ * dropped before any path is built or statted.
  */
-const BARE_HANDLE_EXTENSION_PROBES = [
-  "jpg",
-  "jpeg",
-  "png",
-  "gif",
-  "webp",
-  "bmp",
-  "svg",
-  "avif",
-  "tif",
-  "tiff",
-  "heic",
-  "heif",
-  "ico",
-  "mp4",
-  "mov",
-  "webm",
-  "mkv",
-  "mp3",
-  "wav",
-  "m4a",
-  "ogg",
-  "flac",
-  "pdf",
-  "txt",
-  "md",
-  "csv",
-  "json",
-  "zip",
-] as const;
+function isSafeStagedListingName(name: string): boolean {
+  return (
+    name !== "" &&
+    name !== "." &&
+    name !== ".." &&
+    !name.includes("/") &&
+    !name.includes("\\") &&
+    !name.includes("\0")
+  );
+}
 
 /**
- * Ordered staged-name candidates for a bare upload handle: the verbatim name
- * first, then its extension variants. Extension variants only apply when the
- * handle itself has no extension, matching the reported `file_<id>` shape.
+ * Staged-name candidates for a bare upload handle, derived from the producer
+ * contract: the names staging actually wrote into the inbound dir, observed
+ * through a directory listing. There is no fixed extension list to keep in
+ * sync — any extension and any casing the staging owner preserved is covered.
+ *
+ * Matching is case-insensitive on the full name (`.JPG`/`.jpg` equivalent, and
+ * differently-cased stems included). For an extension-bearing handle only the
+ * same name modulo case matches; for an extensionless handle any entry with a
+ * `<handle>.<ext>` shape matches. The verbatim handle name is always probed
+ * first by the caller and is excluded here. Candidates are ordered
+ * deterministically: exact-case stem twins first, then case-insensitive twins,
+ * each sorted by lowercased name.
  */
-function stagedUploadHandleCandidateNames(handle: string): string[] {
-  if (path.posix.extname(handle) !== "") {
-    return [handle];
+function stagedUploadHandleCandidateNames(params: {
+  handle: string;
+  stagedEntries: readonly string[];
+}): string[] {
+  const handle = params.handle;
+  const handleLower = handle.toLowerCase();
+  const handleHasExtension = path.posix.extname(handle) !== "";
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  for (const entry of params.stagedEntries) {
+    if (seen.has(entry) || !isSafeStagedListingName(entry)) {
+      continue;
+    }
+    seen.add(entry);
+    const entryLower = entry.toLowerCase();
+    if (entryLower === handleLower) {
+      if (entry !== handle) {
+        matches.push(entry);
+      }
+      continue;
+    }
+    if (!handleHasExtension && entryLower.startsWith(`${handleLower}.`)) {
+      matches.push(entry);
+    }
   }
-  return [handle, ...BARE_HANDLE_EXTENSION_PROBES.map((ext) => `${handle}.${ext}`)];
+  return matches.toSorted((a, b) => {
+    const aExactStem = a.startsWith(`${handle}.`);
+    const bExactStem = b.startsWith(`${handle}.`);
+    if (aExactStem !== bExactStem) {
+      return aExactStem ? -1 : 1;
+    }
+    return a.toLowerCase().localeCompare(b.toLowerCase());
+  });
 }
 
 /**
  * Finds a verified staged inbound twin for a bare handle under the sandbox
- * inbound dir. Candidates are tried in order (verbatim first, then extension
- * variants); each must stat as a regular file. Returns the resolved staged
- * path, or null when no candidate matches.
+ * inbound dir. The verbatim staged name is probed first, then the inbound
+ * directory is listed and entry names matching the handle (case-insensitive,
+ * any preserved extension) are probed in deterministic order. Each candidate
+ * must stat as a regular file. Returns the resolved staged path, or null when
+ * no candidate matches. Bridges without a directory-listing capability keep
+ * verbatim-only resolution.
  */
 async function findVerifiedStagedInboundFile(params: {
   sandbox: SandboxedBridgeMediaPathConfig;
@@ -113,18 +130,48 @@ async function findVerifiedStagedInboundFile(params: {
   handleName: string;
 }): Promise<SandboxResolvedPath | null> {
   const fallbackDirNormalized = params.fallbackDir.replace(/\\/g, "/");
-  for (const stagedName of stagedUploadHandleCandidateNames(params.handleName)) {
+  const bridge = params.sandbox.bridge;
+  const resolveVerifiedStagedFile = async (
+    stagedName: string,
+  ): Promise<SandboxResolvedPath | null> => {
     const stagedPath = path.posix.join(fallbackDirNormalized, stagedName);
-    const stagedStat = await params.sandbox.bridge
+    const stagedStat = await bridge
       .stat({ filePath: stagedPath, cwd: params.sandbox.root })
       .catch(() => null);
     if (!stagedStat || stagedStat.type !== "file") {
-      continue;
+      return null;
     }
-    return params.sandbox.bridge.resolvePath({
+    return bridge.resolvePath({
       filePath: stagedPath,
       cwd: params.sandbox.root,
     });
+  };
+  // The verbatim staged name is always tried first.
+  const verbatim = await resolveVerifiedStagedFile(params.handleName);
+  if (verbatim) {
+    return verbatim;
+  }
+  // Staged extensions come from the producer contract: the names staging
+  // actually wrote into the inbound dir. Matching is case-insensitive and
+  // covers any preserved extension, so no fixed extension list exists to fall
+  // out of sync with the staging owner.
+  if (typeof bridge.readdir !== "function") {
+    return null;
+  }
+  const stagedEntries = await bridge
+    .readdir({ filePath: fallbackDirNormalized, cwd: params.sandbox.root })
+    .catch(() => null);
+  if (!stagedEntries || stagedEntries.length === 0) {
+    return null;
+  }
+  for (const stagedName of stagedUploadHandleCandidateNames({
+    handle: params.handleName,
+    stagedEntries,
+  })) {
+    const resolved = await resolveVerifiedStagedFile(stagedName);
+    if (resolved) {
+      return resolved;
+    }
   }
   return null;
 }
@@ -137,13 +184,14 @@ async function findVerifiedStagedInboundFile(params: {
  * sandbox workspace; canonical `media://inbound/<id>` references are rewritten
  * upstream, but bare handles (e.g. `file_<id>`) previously resolved against
  * the sandbox root and read ENOENT. Staging preserves the uploaded basename
- * including its extension, so a bare handle may land as `file_<id>.<ext>`
- * (e.g. a JPG upload staged as `file_<id>.jpg`); resolution therefore matches
- * the verbatim staged name first and falls back to same-handle extension
- * variants. Resolution stays bounded: only single-segment, scheme-less
- * relative references qualify, the staged asset must be a regular file under
- * the sandbox inbound dir, and the resulting path still passes the workspace
- * boundary guard.
+ * including its extension and casing, so a bare handle may land as
+ * `file_<id>.<ext>` (e.g. a JPG upload staged as `file_<id>.JPG`); resolution
+ * therefore matches the verbatim staged name first and then resolves staged
+ * twins from the inbound directory listing, case-insensitively and for any
+ * preserved extension. Resolution stays bounded: only single-segment,
+ * scheme-less relative references qualify, the staged asset must be a regular
+ * file under the sandbox inbound dir, and the resulting path still passes the
+ * workspace boundary guard.
  *
  * The direct target stays authoritative. The fallback engages only when the
  * bridge stat reports it absent (null); an existing-but-unreadable direct file
@@ -265,8 +313,9 @@ export async function resolveSandboxedBridgeMediaPath(params: {
       throw err;
     }
     // Substitute a verified staged basename twin only when the direct target
-    // is absent. The verbatim staged name is tried first, then same-handle
-    // extension variants (e.g. a JPG upload staged with its extension). A
+    // is absent. The verbatim staged name is tried first, then staged twins
+    // from the inbound directory listing (case-insensitive, any preserved
+    // extension — e.g. a JPG upload staged as `handle.JPG`). A
     // present-but-unreadable direct target (or a failed direct stat) keeps its
     // original error instead of being silently replaced.
     let directStat: Awaited<ReturnType<SandboxFsBridge["stat"]>>;

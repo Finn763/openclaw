@@ -7,6 +7,9 @@ import {
   createSandbox,
   createSandboxFsBridge,
   createSeededSandboxFsBridge,
+  dockerExecResult,
+  getDockerArg,
+  getDockerScript,
   getScriptsFromCalls,
   installFsBridgeTestHarness,
   mockedExecDockerRaw,
@@ -196,5 +199,47 @@ describe("sandbox fs bridge shell compatibility", () => {
 
     const scripts = getScriptsFromCalls();
     expectNoScriptsContaining(scripts, "os.replace(");
+  });
+
+  it("lists directory entries through an anchored ls plan", async () => {
+    const bridge = createSandboxFsBridge({ sandbox: createSandbox() });
+    mockedExecDockerRaw.mockImplementation(async (args) => {
+      const script = getDockerScript(args);
+      if (script.includes('ls -1A -- "$2"')) {
+        return dockerExecResult("a.txt\nB.JPG\n");
+      }
+      if (script.includes('readlink -f -- "$cursor"')) {
+        return dockerExecResult(`${getDockerArg(args, 1)}\n`);
+      }
+      return dockerExecResult("");
+    });
+
+    await expect(bridge.readdir?.({ filePath: "media/inbound" })).resolves.toEqual([
+      "a.txt",
+      "B.JPG",
+    ]);
+
+    const scripts = getScriptsFromCalls();
+    expectSomeScriptContaining(scripts, 'LC_ALL=C ls -1A -- "$2"');
+  });
+
+  it("treats a missing directory as an empty readdir listing", async () => {
+    const bridge = createSandboxFsBridge({ sandbox: createSandbox() });
+    mockedExecDockerRaw.mockImplementation(async (args) => {
+      const script = getDockerScript(args);
+      if (script.includes('ls -1A -- "$2"')) {
+        return {
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.from("ls: cannot access 'inbound': No such file or directory\n"),
+          code: 2,
+        };
+      }
+      if (script.includes('readlink -f -- "$cursor"')) {
+        return dockerExecResult(`${getDockerArg(args, 1)}\n`);
+      }
+      return dockerExecResult("");
+    });
+
+    await expect(bridge.readdir?.({ filePath: "media/inbound" })).resolves.toEqual([]);
   });
 });
