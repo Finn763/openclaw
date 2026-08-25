@@ -12,7 +12,11 @@ import type { WorkerSshEndpoint } from "../../plugins/types.js";
 import { runCommandWithTimeout, type SpawnResult } from "../../process/exec.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { bootstrapWorker as bootstrapWorkerCore } from "./bootstrap.js";
-import { createWorkerBundleProducer, type WorkerInstallationArtifact } from "./bundle.js";
+import {
+  createWorkerBundleProducer,
+  WORKER_BUNDLE_MANIFEST_VERSION,
+  type WorkerInstallationArtifact,
+} from "./bundle.js";
 
 type WorkerBootstrapRequest = Parameters<typeof bootstrapWorkerCore>[0];
 type WorkerBootstrapDependencies = Parameters<typeof bootstrapWorkerCore>[1];
@@ -138,7 +142,7 @@ describe("bootstrapWorker", () => {
     expect(runner.calls[0]?.argv[0]).toBe("ssh");
     expect(runner.calls[0]?.argv).toContain("StrictHostKeyChecking=yes");
     expect(runner.calls[0]?.options.input).toContain("actual.openclawVersion");
-    expect(runner.calls[0]?.options.input).toContain("openclaw-worker-bundle-v1");
+    expect(runner.calls[0]?.options.input).toContain(WORKER_BUNDLE_MANIFEST_VERSION);
     expect(runner.calls[0]?.options.input).not.toContain("$root/current");
     expect(knownHosts).toBe(`[worker.example.com]:2222 ${HOST_KEY}\n`);
   });

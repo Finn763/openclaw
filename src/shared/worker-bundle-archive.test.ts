@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import * as tar from "tar";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -94,4 +95,78 @@ describe("worker bundle archive", () => {
       }),
     ).rejects.toThrow("archive manifest does not match");
   });
+
+  it("installs a bundle whose tar header modes a platform cannot preserve after extraction", async () => {
+    // A Linux Gateway archives its staging tree with Unix permission bits (e.g. 0o700).
+    // Windows extraction cannot preserve those bits: lstat reports 0o666 for the same file,
+    // so the bundle identity must not include them (issue #128889).
+    const archive = path.join(root, "unix-mode-bundle.tgz");
+    const destination = path.join(root, "destination");
+    await fs.writeFile(
+      archive,
+      buildTarGzip([
+        { path: "worker.mjs", mode: 0o700, contents: "export const worker = true;\n" },
+        {
+          path: "workspace-rsync-receiver.mjs",
+          mode: 0o700,
+          contents: "export const receiver = true;\n",
+        },
+      ]),
+    );
+    const bundleHash = hashWorkerBundleManifest(
+      await readWorkerBundleArchiveManifest(archive, DEFAULT_WORKER_BUNDLE_ARCHIVE_LIMITS),
+    );
+
+    await expect(
+      extractWorkerBundleArchive({
+        tarballPath: archive,
+        destination,
+        expectedBundleHash: bundleHash,
+        limits: DEFAULT_WORKER_BUNDLE_ARCHIVE_LIMITS,
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      hashWorkerBundleManifest(
+        await readWorkerBundleDirectoryManifest({
+          root: destination,
+          limits: DEFAULT_WORKER_BUNDLE_ARCHIVE_LIMITS,
+        }),
+      ),
+    ).toBe(bundleHash);
+  });
 });
+
+/** Builds a gzip'd ustar archive carrying explicit Unix modes (a Linux Gateway-style bundle). */
+function buildTarGzip(
+  entries: ReadonlyArray<{ path: string; mode: number; contents: string }>,
+): Buffer {
+  const blocks: Buffer[] = [];
+  for (const entry of entries) {
+    const content = Buffer.from(entry.contents, "utf8");
+    const header = Buffer.alloc(512);
+    Buffer.from(entry.path, "utf8").copy(header, 0, 0, 100);
+    header.write(`${entry.mode.toString(8).padStart(7, "0")}\0`, 100, 8, "ascii");
+    header.write("0000000\0", 108, 8, "ascii");
+    header.write("0000000\0", 116, 8, "ascii");
+    header.write(`${content.length.toString(8).padStart(11, "0")}\0`, 124, 12, "ascii");
+    header.write("00000000000\0", 136, 12, "ascii");
+    header.write("        ", 148, 8, "ascii");
+    header.write("0", 156, 1, "ascii");
+    header.write("ustar\0", 257, 6, "ascii");
+    header.write("00", 263, 2, "ascii");
+    header.write("root\0", 265, 8, "ascii");
+    header.write("root\0", 297, 8, "ascii");
+    let checksum = 0;
+    for (const byte of header) {
+      checksum += byte;
+    }
+    header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+    blocks.push(header, content);
+    const remainder = content.length % 512;
+    if (remainder > 0) {
+      blocks.push(Buffer.alloc(512 - remainder));
+    }
+  }
+  blocks.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(blocks));
+}

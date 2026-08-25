@@ -182,7 +182,6 @@ function addFile(relative) {
   fs.chmodSync(absolute, mode);
   entries.push({
     path: relative,
-    mode,
     size: contents.byteLength,
     sha256: crypto.createHash("sha256").update(contents).digest("hex"),
   });
@@ -205,7 +204,7 @@ try {
   const hash = crypto.createHash("sha256");
   hash.update("${WORKER_BUNDLE_MANIFEST_VERSION}" + separator);
   for (const entry of entries) {
-    hash.update(entry.path + separator + entry.mode.toString(8) + separator + entry.size + separator + entry.sha256 + separator);
+    hash.update(entry.path + separator + entry.size + separator + entry.sha256 + separator);
   }
   process.exit(hash.digest("hex") === expected ? 0 : 1);
 } catch (error) {

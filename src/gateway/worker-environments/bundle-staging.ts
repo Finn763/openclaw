@@ -14,7 +14,6 @@ const WORKER_DEPLOY_ARTIFACT_PATHS = [
 
 export type WorkerBundleManifestEntry = {
   path: string;
-  mode: number;
   size: number;
   sha256: string;
 };
@@ -68,7 +67,6 @@ async function stageWorkerDeployArtifact(params: {
   await fs.chmod(stagedPath, 0o700);
   return {
     path: params.artifactPath,
-    mode: 0o700,
     size: contents.byteLength,
     sha256: createHash("sha256").update(contents).digest("hex"),
   };

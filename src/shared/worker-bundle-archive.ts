@@ -120,7 +120,6 @@ export async function readWorkerBundleArchiveManifest(
       }
       return {
         path: entry.path,
-        mode: entry.mode,
         size: entry.actualSize,
         sha256: entry.sha256,
       };
@@ -167,7 +166,6 @@ export async function readWorkerBundleDirectoryManifest(params: {
       }
       entries.push({
         path: relative,
-        mode: stats.mode & 0o777,
         size: stats.size,
         sha256: await hashFile(absolute),
       });

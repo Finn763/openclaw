@@ -300,7 +300,6 @@ function manifestsMatch(
       return (
         other !== undefined &&
         entry.path === other.path &&
-        entry.mode === other.mode &&
         entry.size === other.size &&
         entry.sha256 === other.sha256
       );
