@@ -43,12 +43,14 @@ function matchesProgressOnlyPrefix(value: string): boolean {
 const KNOWN_FILE_EXTENSION_PATTERN =
   /^(?:Kt|py|js|ts|json|yaml|toml|sh|mjs|cjs|go|rs|java|cs|h|cpp)(?![A-Za-z0-9_])/;
 
-const DOTTED_IDENTIFIER_TOKEN_PATTERN = /^[A-Za-z0-9_./-]+$/;
+const LOWERCASE_WORD_PATTERN = /^[a-z]+$/;
 
-function insertMissingSentenceSpaces(value: string): string {
-  // Glued sentence boundaries ("done.Next...") get the missing space so the
-  // boundary below can find them; dotted references (`API.Client`, `main.Kt`)
-  // and colons are structured tokens and are left untouched.
+const PLANNING_CONTINUATION_PATTERN =
+  /^(?:then|next|after|afterwards|once|before|while|when|and|or|but|so|to|for|with|as|like|plus|also|unless|until|since|because|however|meanwhile|whereas)\b/i;
+
+export function insertMissingSentenceSpaces(value: string): string {
+  // A terminator glued to a Capitalized word is a sentence boundary unless
+  // the dot belongs to a structured dotted reference (see helper below).
   return value.replace(/([.!?])(?=[A-Z])/g, (match, terminator, offset) => {
     const charBeforeDot = offset > 0 ? value[offset - 1] : undefined;
     if (terminator === "." && charBeforeDot !== undefined && /[A-Za-z0-9_]/.test(charBeforeDot)) {
@@ -61,16 +63,30 @@ function insertMissingSentenceSpaces(value: string): string {
         end += 1;
       }
       const token = value.slice(start, end);
-      const afterDot = token.slice(offset - start + 1);
-      if (
-        DOTTED_IDENTIFIER_TOKEN_PATTERN.test(token) ||
-        KNOWN_FILE_EXTENSION_PATTERN.test(afterDot)
-      ) {
+      if (isStructuredDottedToken(token, offset - start, value.slice(end))) {
         return match;
       }
     }
     return `${terminator} `;
   });
+}
+
+// Only lowercase-word.Prose splits ("hooks.Targets", "suite.PinPoints");
+// acronyms, camelCase, paths, known extensions and punctuated/planning
+// continuations stay glued so dotted references never fabricate a boundary.
+function isStructuredDottedToken(token: string, dotIndex: number, continuation: string): boolean {
+  const beforeDot = token.slice(0, dotIndex);
+  const afterDot = token.slice(dotIndex + 1);
+  if (
+    KNOWN_FILE_EXTENSION_PATTERN.test(afterDot) ||
+    /[/_-]/.test(token) ||
+    token.split(".").length > 2 ||
+    !LOWERCASE_WORD_PATTERN.test(beforeDot)
+  ) {
+    return true;
+  }
+  const rest = continuation.trimStart();
+  return rest.length === 0 || PLANNING_CONTINUATION_PATTERN.test(rest) || /^[,;)]/.test(rest);
 }
 
 function hasNonProgressFollowupSentence(value: string): boolean {
