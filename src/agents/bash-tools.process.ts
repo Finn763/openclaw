@@ -79,7 +79,7 @@ function defaultTailNote(totalLines: number, usingDefaultTail: boolean) {
   if (!usingDefaultTail || totalLines <= DEFAULT_LOG_TAIL_LINES) {
     return "";
   }
-  return `[showing last ${DEFAULT_LOG_TAIL_LINES} of ${totalLines} lines; pass offset/limit to page]\n\n`;
+  return `\n\n[showing last ${DEFAULT_LOG_TAIL_LINES} of ${totalLines} lines; pass offset/limit to page]`;
 }
 
 function retentionCapNote(session: Pick<ProcessSession, "totalOutputChars" | "aggregated">) {
@@ -520,8 +520,8 @@ export function createProcessTool(
                   type: "text",
                   text:
                     retentionCapNote(scopedSession) +
-                    logDefaultTailNote +
                     (slice || "(no output yet)") +
+                    logDefaultTailNote +
                     buildInputWaitHint(runtime),
                 },
               ],
@@ -550,8 +550,8 @@ export function createProcessTool(
                   type: "text",
                   text: appendExecTimeoutRetryGuidance(
                     retentionCapNote(scopedFinished) +
-                      defaultTailNote(totalLines, window.usingDefaultTail) +
-                      (slice || "(no output recorded)"),
+                      (slice || "(no output recorded)") +
+                      defaultTailNote(totalLines, window.usingDefaultTail),
                     scopedFinished.exitReason,
                   ),
                 },
