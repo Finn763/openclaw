@@ -267,7 +267,7 @@ class IncludeProcessor {
         key !== INCLUDE_KEY &&
         (logicalPath.length > 0 || !this.rootProjectionKeys || this.rootProjectionKeys.has(key)),
     );
-    const resolved = this.resolveInclude(includeValue, logicalPath, hasArrayAncestor);
+    const resolved = this.resolveInclude(includeValue, logicalPath, hasArrayAncestor, structuralDepth);
     const included = resolved.value;
     this.resolver.onIncludeResolved?.({
       path: [...logicalPath],
@@ -302,9 +302,10 @@ class IncludeProcessor {
     value: unknown,
     logicalPath: readonly string[],
     hasArrayAncestor: boolean,
+    structuralDepth: number,
   ): { value: unknown; targetPath?: string; targetPaths?: string[] } {
     if (typeof value === "string") {
-      return this.loadFile(value, logicalPath, hasArrayAncestor);
+      return this.loadFile(value, logicalPath, hasArrayAncestor, structuralDepth);
     }
 
     if (Array.isArray(value)) {
@@ -315,7 +316,7 @@ class IncludeProcessor {
             String(item),
           );
         }
-        return this.loadFile(item, logicalPath, hasArrayAncestor);
+        return this.loadFile(item, logicalPath, hasArrayAncestor, structuralDepth);
       });
       const merged = resolvedEntries.reduce<unknown>(
         (current, entry) => deepMerge(current, entry.value),
@@ -337,6 +338,7 @@ class IncludeProcessor {
     includePath: string,
     logicalPath: readonly string[],
     hasArrayAncestor: boolean,
+    structuralDepth: number,
   ): { value: unknown; targetPath: string } {
     const { resolvedPath, root } = this.resolvePath(includePath);
 
@@ -347,7 +349,7 @@ class IncludeProcessor {
     const parsed = this.parseFile(includePath, resolvedPath, raw);
 
     return {
-      value: this.processNested(resolvedPath, parsed, logicalPath, hasArrayAncestor),
+      value: this.processNested(resolvedPath, parsed, logicalPath, hasArrayAncestor, structuralDepth),
       targetPath: resolvedPath,
     };
   }
@@ -493,6 +495,7 @@ class IncludeProcessor {
     parsed: unknown,
     logicalPath: readonly string[],
     hasArrayAncestor: boolean,
+    structuralDepth: number,
   ): unknown {
     const nested = new IncludeProcessor(
       resolvedPath,
@@ -502,7 +505,7 @@ class IncludeProcessor {
     );
     nested.visited = new Set([...this.visited, resolvedPath]);
     nested.depth = this.depth + 1;
-    return nested.process(parsed, logicalPath, hasArrayAncestor);
+    return nested.process(parsed, logicalPath, hasArrayAncestor, structuralDepth);
   }
 }
 
