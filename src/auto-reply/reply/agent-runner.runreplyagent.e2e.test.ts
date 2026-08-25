@@ -630,6 +630,57 @@ describe("runReplyAgent active steering", () => {
     active.complete();
   });
 
+  for (const receiptState of ["terminal-pending", "delivered-terminal"] as const) {
+    it(`queues instead of steering while the active turn holds a ${receiptState} source-reply receipt`, async () => {
+      const sessionEntry = makeSessionEntry({
+        status: "running",
+        restartRecoveryDeliveryRunId: "recovery-run-1",
+        restartRecoveryDeliverySourceRunId: "source-turn-1",
+        restartRecoveryDeliveryReceiptState: receiptState,
+        restartRecoveryDeliveryToolCallId: "message-call-1",
+      });
+      const sessionStore = { main: sessionEntry };
+      const active = createReplyOperation({
+        sessionKey: "main",
+        sessionId: "session",
+        resetTriggered: false,
+      });
+      active.setPhase("running");
+      // The active turn's backend would accept the steer; the failure mode is
+      // that the steered message-tool final then gets fail-closed and lost.
+      state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
+      const runState: ReplyOperationRunState = {};
+      const { run } = createMinimalRun({
+        opts: { [REPLY_OPERATION_RUN_STATE]: runState },
+        isActive: true,
+        shouldSteer: true,
+        shouldFollowup: true,
+        resolvedQueueMode: "steer",
+        sessionEntry,
+        sessionStore,
+        sessionKey: "main",
+        sessionCtx: {
+          Provider: "telegram",
+          OriginatingChannel: "telegram",
+          OriginatingTo: "123",
+          MessageSid: "steer-terminal-receipt",
+        },
+        runOverrides: { agentId: "main", messageProvider: "telegram" },
+      });
+
+      await expect(run()).resolves.toBeUndefined();
+
+      // A terminal source-reply receipt fail-closes any second terminal send
+      // on the same source turn. Steering the new inbound into that turn would
+      // reuse the same delivery claim and silently lose its reply (#128971).
+      expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
+      expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+      expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+      expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+      active.complete();
+    });
+  }
+
   it("offers a route-only mismatch to the pending-input owner", async () => {
     state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
     const activeRoute = { provider: "openai", model: "gpt-fallback" };

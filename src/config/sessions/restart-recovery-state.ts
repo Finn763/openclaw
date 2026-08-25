@@ -462,6 +462,21 @@ export function hasActiveRestartRecoverySourceClaim(
   return entry?.status === "running" && hasRestartRecoverySourceClaim(entry, sourceTurnId);
 }
 
+/**
+ * A terminal source-reply delivery receipt means the active run's message-tool
+ * final already began (`terminal-pending`) or completed (`delivered-terminal`).
+ * The receipt owner fail-closes any further terminal send on the same source
+ * turn, so an inbound admitted into that turn cannot produce a visible reply.
+ */
+export function hasTerminalRestartRecoveryDeliveryReceipt(
+  entry: SessionEntry | null | undefined,
+): boolean {
+  return (
+    entry?.restartRecoveryDeliveryReceiptState === "terminal-pending" ||
+    entry?.restartRecoveryDeliveryReceiptState === "delivered-terminal"
+  );
+}
+
 /** Clears exact active ownership and optionally records its client source as terminal. */
 export function buildRestartRecoveryClaimCleanupPatch(params: {
   entry: SessionEntry;
