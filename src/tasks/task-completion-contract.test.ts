@@ -62,4 +62,29 @@ describe("required completion terminal results", () => {
 
     expect(result.terminalOutcome).toBeUndefined();
   });
+
+  it("still blocks progress-only text with a dotted structured reference", () => {
+    const result = resolveRequiredCompletionTerminalResult("I'll inspect API.Client");
+
+    expect(result.terminalOutcome).toBe("blocked");
+    expect(result.terminalSummary).toContain("progress-only");
+  });
+
+  it("still blocks progress-only text with a camelCase dotted identifier", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll map foo.Bar then trace the calls.",
+    );
+
+    expect(result.terminalOutcome).toBe("blocked");
+    expect(result.terminalSummary).toContain("progress-only");
+  });
+
+  it("still blocks progress-only text referencing a dotted path with known extensions", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll inspect src/main.Kt and config.py next.",
+    );
+
+    expect(result.terminalOutcome).toBe("blocked");
+    expect(result.terminalSummary).toContain("progress-only");
+  });
 });

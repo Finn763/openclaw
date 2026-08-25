@@ -40,18 +40,41 @@ function matchesProgressOnlyPrefix(value: string): boolean {
   );
 }
 
+const KNOWN_FILE_EXTENSION_PATTERN =
+  /^(?:Kt|py|js|ts|json|yaml|toml|sh|mjs|cjs|go|rs|java|cs|h|cpp)(?![A-Za-z0-9_])/;
+
+const DOTTED_IDENTIFIER_TOKEN_PATTERN = /^[A-Za-z0-9_./-]+$/;
+
+function insertMissingSentenceSpaces(value: string): string {
+  // Glued sentence boundaries ("done.Next...") get the missing space so the
+  // boundary below can find them; dotted references (`API.Client`, `main.Kt`)
+  // and colons are structured tokens and are left untouched.
+  return value.replace(/([.!?])(?=[A-Z])/g, (match, terminator, offset) => {
+    const charBeforeDot = offset > 0 ? value[offset - 1] : undefined;
+    if (terminator === "." && charBeforeDot !== undefined && /[A-Za-z0-9_]/.test(charBeforeDot)) {
+      let start = offset;
+      while (start > 0 && !/\s/.test(value[start - 1]!)) {
+        start -= 1;
+      }
+      let end = offset + 1;
+      while (end < value.length && !/\s/.test(value[end]!)) {
+        end += 1;
+      }
+      const token = value.slice(start, end);
+      const afterDot = token.slice(offset - start + 1);
+      if (
+        DOTTED_IDENTIFIER_TOKEN_PATTERN.test(token) ||
+        KNOWN_FILE_EXTENSION_PATTERN.test(afterDot)
+      ) {
+        return match;
+      }
+    }
+    return `${terminator} `;
+  });
+}
+
 function hasNonProgressFollowupSentence(value: string): boolean {
-  // Some harness outputs glue sentences together without a space after the
-  // terminator (e.g. "done.Next I'll..."); insert the missing space so the
-  // boundary below still finds the first sentence boundary.
-  //
-  // `:` is deliberately excluded: a colon followed by an uppercase character
-  // is far more often a structured token (paths/refs like `build:README`,
-  // `file:References`) than a sentence boundary. Inserting a space there
-  // fabricates a boundary and can turn progress-only text into a false
-  // "completed" verdict. Spaced colons (`: `) are still recognized by the
-  // boundary regex below, matching pre-PR behavior for glued colons.
-  const spaced = value.replace(/([.!?])(?=[A-Z])/g, "$1 ");
+  const spaced = insertMissingSentenceSpaces(value);
   const boundary = /(?:[.!?:]|\s[-\u2013\u2014])\s+\S/.exec(spaced);
   if (!boundary) {
     return false;
