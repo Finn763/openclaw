@@ -15,7 +15,7 @@ export type RestartRecoveryTerminalDeliveryScope = {
   toolCallId: string;
 };
 
-export type RestartRecoveryTerminalDeliveryDisposition =
+type RestartRecoveryTerminalDeliveryDisposition =
   | "startable"
   | "already-delivered"
   | "delivery-ambiguous"
@@ -61,7 +61,7 @@ function hasClaimlessLiveDeliveryState(
  * classify every entry through this single decision surface so they can
  * never drift apart.
  */
-export function resolveRestartRecoveryTerminalDeliveryDisposition(
+function resolveRestartRecoveryTerminalDeliveryDisposition(
   entry: SessionEntry | null | undefined,
   scope: Pick<RestartRecoveryTerminalDeliveryScope, "sessionId" | "sourceTurnId">,
 ): RestartRecoveryTerminalDeliveryDisposition {
