@@ -29,11 +29,7 @@ import {
   resolveConfigIncludes,
 } from "./includes.js";
 import type { ConfigIoDeps, NormalizedConfigIoDeps, ParseConfigJson5Result } from "./io.types.js";
-import {
-  assertBoundedJsonNesting,
-  assertBoundedRawJsonNesting,
-  MAX_CONFIG_JSON_NESTING_DEPTH,
-} from "./nesting-limit.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH, parseJsonWithNestingGuard } from "./nesting-limit.js";
 import { resolveConfigPath, resolveIncludeRoots, resolveStateDir } from "./paths.js";
 import { createConfigResolutionFacts, type ConfigResolutionFacts } from "./resolution-facts.js";
 import { getRuntimeConfigSourceSnapshot } from "./runtime-snapshot.js";
@@ -189,9 +185,9 @@ export function parseConfigJson5(
   json5: { parse: (value: string) => unknown } = JSON5,
 ): ParseConfigJson5Result {
   try {
-    assertBoundedRawJsonNesting(raw, "Config JSON");
-    const parsed = parseJsonWithJson5Fallback(raw, json5);
-    assertBoundedJsonNesting(parsed, "Config JSON");
+    const parsed = parseJsonWithNestingGuard(raw, "Config JSON", (text) =>
+      parseJsonWithJson5Fallback(text, json5),
+    );
     return { ok: true, parsed };
   } catch (err) {
     return { ok: false, error: String(err) };

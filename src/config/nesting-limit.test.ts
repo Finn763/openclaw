@@ -1,5 +1,5 @@
 // Covers the bounded JSON nesting contract for config and config-adjacent inputs.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseConfigJson5 } from "./io.read-helpers.js";
 import {
   assertBoundedJsonNesting,
@@ -7,6 +7,7 @@ import {
   ConfigNestingDepthError,
   formatConfigNestingDepthMessage,
   MAX_CONFIG_JSON_NESTING_DEPTH,
+  parseJsonWithNestingGuard,
 } from "./nesting-limit.js";
 
 function buildDeepArray(depth: number): unknown {
@@ -38,6 +39,37 @@ describe("assertBoundedRawJsonNesting", () => {
     // count them, or this would be misreported as an over-limit document.
     const bracketSoup = `{"a": "${"[".repeat(2_000)}${"]".repeat(2_000)}"}`;
     expect(() => assertBoundedRawJsonNesting(bracketSoup, "Test JSON")).not.toThrow();
+  });
+
+  it("ignores JSON5 line and block comments when measuring nesting depth", () => {
+    // 513 brackets inside comments must not count toward the limit: the
+    // document below is a legal, shallow JSON5 config.
+    const manyOpen = "[".repeat(513);
+    const manyClose = "]".repeat(513);
+    const withLineComment = `{\n  // ${manyOpen}${manyClose}\n  "a": 1\n}`;
+    expect(() => assertBoundedRawJsonNesting(withLineComment, "Test JSON")).not.toThrow();
+    const withBlockComment = `{\n  /* ${manyOpen}${manyClose} */\n  "a": 1\n}`;
+    expect(() => assertBoundedRawJsonNesting(withBlockComment, "Test JSON")).not.toThrow();
+    const blockWithInnerStars = `{ /* ${manyOpen} * ${manyClose} */ "a": 1 }`;
+    expect(() => assertBoundedRawJsonNesting(blockWithInnerStars, "Test JSON")).not.toThrow();
+    const trailingLineComment = `{"a": 1} // ${manyOpen}`;
+    expect(() => assertBoundedRawJsonNesting(trailingLineComment, "Test JSON")).not.toThrow();
+    // Comment markers inside strings are string content, not comments.
+    expect(() =>
+      assertBoundedRawJsonNesting(`{"u": "https://example.com/[x]//[y]", "a": 1}`, "Test JSON"),
+    ).not.toThrow();
+    // An unterminated block comment must terminate the scan, not hang or leak.
+    expect(() =>
+      assertBoundedRawJsonNesting(`{"a": 1} /* ${manyOpen}${manyClose}`, "Test JSON"),
+    ).not.toThrow();
+  });
+
+  it("still measures real nesting that appears after a comment", () => {
+    // The comment brackets are skipped; the 514 real brackets are counted.
+    const raw = `/* ${"]".repeat(10)} */ ${"[".repeat(514)}${"]".repeat(514)}`;
+    expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
+      formatConfigNestingDepthMessage("Test JSON", 514),
+    );
   });
 
   it("rejects pathological 100k-deep input iteratively with an exact measured depth", () => {
@@ -116,5 +148,39 @@ describe("parseConfigJson5", () => {
       ok: true,
       parsed: { gateway: { mode: "local" } },
     });
+  });
+});
+
+describe("parseJsonWithNestingGuard", () => {
+  it("parses shallow input and passes it back unchanged", () => {
+    const parse = vi.fn((text: string) => JSON.parse(text));
+    expect(parseJsonWithNestingGuard('{"a": [1, 2]}', "Test JSON", parse)).toEqual({
+      a: [1, 2],
+    });
+    expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  it("asserts raw nesting before the parser runs, so over-limit input never reaches it", () => {
+    const parse = vi.fn((text: string) => JSON.parse(text));
+    const raw =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+    expect(() => parseJsonWithNestingGuard(raw, "Test JSON", parse)).toThrowError(
+      ConfigNestingDepthError,
+    );
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it("re-asserts nesting on the parsed value for in-process parser quirks", () => {
+    // A parser that inflates shallow raw text into a deep value still trips the guard.
+    const parse = () => {
+      let value: unknown = 0;
+      for (let i = 0; i < MAX_CONFIG_JSON_NESTING_DEPTH + 2; i += 1) {
+        value = [value];
+      }
+      return value;
+    };
+    expect(() => parseJsonWithNestingGuard("{}", "Test JSON", parse)).toThrowError(
+      ConfigNestingDepthError,
+    );
   });
 });

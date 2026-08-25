@@ -22,10 +22,10 @@ import { isPathInside } from "../security/scan-paths.js";
 import { isPlainObject } from "../utils.js";
 import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
 import {
-  assertBoundedRawJsonNesting,
   ConfigNestingDepthError,
   formatConfigNestingDepthMessage,
   MAX_CONFIG_JSON_NESTING_DEPTH,
+  parseJsonWithNestingGuard,
 } from "./nesting-limit.js";
 
 export const INCLUDE_KEY = "$include";
@@ -445,10 +445,10 @@ class IncludeProcessor {
 
   private parseFile(includePath: string, resolvedPath: string, raw: string): unknown {
     try {
-      // Pre-scan raw nesting before the parser so a deeply-nested include file is
-      // rejected as an include error instead of overflowing the native stack.
-      assertBoundedRawJsonNesting(raw, `Include file ${includePath}`);
-      return this.resolver.parseJson(raw);
+      // Shared parser boundary: pre-scans raw nesting before the parser so a
+      // deeply-nested include file is rejected as an include error instead of
+      // overflowing the native stack.
+      return parseJsonWithNestingGuard(raw, `Include file ${includePath}`, this.resolver.parseJson);
     } catch (err) {
       throw new ConfigIncludeError(
         `Failed to parse include file: ${includePath} (resolved: ${resolvedPath})`,
