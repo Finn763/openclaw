@@ -2521,6 +2521,39 @@ describe("image tool implicit imageModel config", () => {
       expect((res.details as { rewrittenFrom?: string }).rewrittenFrom).toContain("photo.png");
     });
   });
+
+  it("resolves a bare upload handle to the staged sandbox inbound asset", async () => {
+    await withTempSandboxState(async ({ agentDir, sandboxRoot }) => {
+      await fs.mkdir(path.join(sandboxRoot, "media", "inbound"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(sandboxRoot, "media", "inbound", "file_upload-1.png"),
+        Buffer.from(ONE_PIXEL_PNG_B64, "base64"),
+      );
+
+      const fetch = stubMinimaxOkFetch();
+
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "minimax/MiniMax-M2.7" },
+            imageModel: { primary: "minimax/MiniMax-VL-01" },
+          },
+        },
+      };
+      const sandbox = { root: sandboxRoot, bridge: createHostSandboxFsBridge(sandboxRoot) };
+      const tool = createRequiredImageTool({ config: cfg, agentDir, sandbox });
+
+      const res = await tool.execute("t1", {
+        prompt: "Describe the image.",
+        path: "file_upload-1.png",
+      });
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect((res.details as { rewrittenFrom?: string }).rewrittenFrom).toBe("file_upload-1.png");
+    });
+  });
 });
 
 describe("image tool data URL support", () => {

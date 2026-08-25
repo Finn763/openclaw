@@ -163,6 +163,109 @@ describe("createSandboxBridgeReadFile", () => {
   });
 });
 
+describe("bare staged upload handle fallback", () => {
+  const hostBridge = (
+    stat: (params: { filePath: string }) => Promise<{ type: string; size: number; mtimeMs: number } | null>,
+  ) => ({
+    stat,
+    resolvePath: vi.fn(({ filePath }: { filePath: string }) => ({
+      hostPath: `/tmp/sandbox-root/${filePath}`,
+      relativePath: filePath,
+      containerPath: `/sandbox/${filePath}`,
+    })),
+  });
+
+  it("resolves a bare upload handle to its verified staged inbound asset", async () => {
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/file_upload-1.png"
+        ? { type: "file", size: 1, mtimeMs: 1 }
+        : null,
+    );
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_upload-1.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({
+      resolved: "/tmp/sandbox-root/media/inbound/file_upload-1.png",
+      rewrittenFrom: "file_upload-1.png",
+    });
+    expect(stat).toHaveBeenNthCalledWith(1, {
+      filePath: "file_upload-1.png",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(stat).toHaveBeenNthCalledWith(2, {
+      filePath: "media/inbound/file_upload-1.png",
+      cwd: "/tmp/sandbox-root",
+    });
+    expect(bridge.resolvePath).toHaveBeenLastCalledWith({
+      filePath: "media/inbound/file_upload-1.png",
+      cwd: "/tmp/sandbox-root",
+    });
+  });
+
+  it("keeps an existing workspace file authoritative over a staged inbound twin", async () => {
+    const stat = vi.fn(async () => ({ type: "file", size: 1, mtimeMs: 1 }));
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "img.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/img.png" });
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith({ filePath: "img.png", cwd: "/tmp/sandbox-root" });
+    expect(bridge.resolvePath).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a bare handle workspace-relative when no staged asset exists", async () => {
+    const stat = vi.fn(async () => null);
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "file_ghost.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/file_ghost.png" });
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it("never rewrites multi-segment relative paths through the staged fallback", async () => {
+    const stat = vi.fn(async () => null);
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "sub/img.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/sub/img.png" });
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it("never rewrites scheme references through the staged fallback", async () => {
+    const stat = vi.fn(async () => null);
+    const bridge = hostBridge(stat);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "http://example.test/a.png",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/http://example.test/a.png" });
+    expect(stat).not.toHaveBeenCalled();
+  });
+});
+
 describe("sandbox media container file URLs", () => {
   let tempRoot = "";
   let workspace = "";

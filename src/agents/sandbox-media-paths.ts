@@ -31,6 +31,75 @@ export function createSandboxBridgeReadFile(params: {
   );
 }
 
+const BARE_HANDLE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+
+/** Returns true for a single-segment, scheme-less relative reference (e.g. `file_<id>`). */
+function isBareUploadHandleCandidate(filePath: string): boolean {
+  const trimmed = filePath.trim();
+  return (
+    Boolean(trimmed) &&
+    trimmed !== "." &&
+    trimmed !== ".." &&
+    !trimmed.includes("/") &&
+    !trimmed.includes("\\") &&
+    !trimmed.includes("\0") &&
+    !path.isAbsolute(trimmed) &&
+    !path.posix.isAbsolute(trimmed) &&
+    !path.win32.isAbsolute(trimmed) &&
+    !BARE_HANDLE_SCHEME_PATTERN.test(trimmed)
+  );
+}
+
+/**
+ * Maps a bare upload handle to its verified staged inbound asset when the
+ * workspace-relative target is absent.
+ *
+ * Upload staging copies inbound media into `media/inbound/*` inside the
+ * sandbox workspace; canonical `media://inbound/<id>` references are rewritten
+ * upstream, but bare handles (e.g. `file_<id>`) previously resolved against
+ * the sandbox root and read ENOENT. Resolution stays bounded: only
+ * single-segment, scheme-less relative references qualify, the staged file
+ * must exist under the sandbox inbound dir, and the resulting path still
+ * passes the workspace boundary guard. Existing workspace files stay
+ * authoritative, and anything else falls back to ordinary resolution.
+ */
+async function resolveBareStagedUploadHandle(params: {
+  sandbox: SandboxedBridgeMediaPathConfig;
+  filePath: string;
+  inboundFallbackDir?: string;
+  enforceWorkspaceBoundary: (resolved: SandboxResolvedPath) => Promise<void>;
+}): Promise<{ resolved: string; rewrittenFrom?: string } | null> {
+  const fallbackDir = params.inboundFallbackDir?.trim();
+  if (!fallbackDir || !isBareUploadHandleCandidate(params.filePath)) {
+    return null;
+  }
+  const handle = params.filePath;
+  // Keep existing workspace-relative references authoritative: only fall back
+  // when the direct target is absent and a staged inbound asset exists.
+  const directStat = await params.sandbox.bridge
+    .stat({ filePath: handle, cwd: params.sandbox.root })
+    .catch(() => null);
+  if (directStat) {
+    return null;
+  }
+  const stagedPath = path.posix.join(fallbackDir.replace(/\\/g, "/"), handle);
+  const stagedStat = await params.sandbox.bridge
+    .stat({ filePath: stagedPath, cwd: params.sandbox.root })
+    .catch(() => null);
+  if (!stagedStat) {
+    return null;
+  }
+  const resolvedFallback = params.sandbox.bridge.resolvePath({
+    filePath: stagedPath,
+    cwd: params.sandbox.root,
+  });
+  await params.enforceWorkspaceBoundary(resolvedFallback);
+  return {
+    resolved: resolvedFallback.hostPath ?? resolvedFallback.containerPath,
+    rewrittenFrom: handle,
+  };
+}
+
 export async function resolveSandboxedBridgeMediaPath(params: {
   sandbox: SandboxedBridgeMediaPathConfig;
   mediaPath: string;
@@ -86,8 +155,20 @@ export async function resolveSandboxedBridgeMediaPath(params: {
   try {
     const resolved = resolveDirect();
     await enforceWorkspaceBoundary(resolved);
+    const resolvedPath = resolved.hostPath ?? resolved.containerPath;
+    if (!rewrittenFrom) {
+      const stagedFallback = await resolveBareStagedUploadHandle({
+        sandbox: params.sandbox,
+        filePath,
+        inboundFallbackDir: params.inboundFallbackDir,
+        enforceWorkspaceBoundary,
+      });
+      if (stagedFallback) {
+        return stagedFallback;
+      }
+    }
     return {
-      resolved: resolved.hostPath ?? resolved.containerPath,
+      resolved: resolvedPath,
       ...(rewrittenFrom ? { rewrittenFrom } : {}),
     };
   } catch (err) {
