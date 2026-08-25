@@ -194,7 +194,6 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       }),
     onMessage: options.onMessage,
     shouldDebounce: options.shouldDebounce,
-    markRead: maybeMarkInboundAsRead,
     onPendingWorkChanged: publishPendingWorkState,
     onError: (error) => {
       inboundLogger.error({ error: String(error) }, "failed handling inbound web message");
@@ -229,7 +228,6 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     inbound: WhatsAppNormalizedInboundMessage,
     enriched: WhatsAppEnrichedInboundMessage,
     durable: {
-      readReceipt?: WhatsAppReadReceiptTarget;
       receiveOrder?: number;
       turnAdoptionLifecycle?: WhatsAppIngressLifecycle;
     },
@@ -384,7 +382,6 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         : undefined,
       group,
       turnAdoptionLifecycle: durable.turnAdoptionLifecycle,
-      readReceipt: durable.readReceipt,
       receiveOrder: durable.receiveOrder,
     };
     if (inboundMessage.event.id) {
@@ -463,10 +460,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     ) {
       return "completed";
     }
-    const readReceipt = buildReadReceiptTarget(inbound);
-    const deliveryReadReceipt = inbound.access.isSelfChat ? undefined : readReceipt;
     if (context.skipStaleAppend === true) {
-      await maybeMarkNonSelfChatReadReceipt(inbound, readReceipt);
       return "completed";
     }
 
@@ -477,13 +471,11 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       logVerbose: (message) => logWhatsAppVerbose(options.verbose, message),
     });
     if (!enriched) {
-      await maybeMarkNonSelfChatReadReceipt(inbound, deliveryReadReceipt);
       return "completed";
     }
 
     recordAcceptedInboundActivity(options.accountId);
     await enqueueInboundMessage(msg, inbound, enriched, {
-      readReceipt: deliveryReadReceipt,
       receiveOrder: context.receiveOrder ?? context.receivedAt,
       turnAdoptionLifecycle: lifecycle,
     });
@@ -607,13 +599,27 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         if (skipRecentOutboundEcho) {
           finishPreparation(null);
         } else {
+          let acceptedInbound: PreparedInbound | null | undefined;
           try {
-            finishPreparation(await normalizeInboundMessage(msg), true);
+            acceptedInbound = await normalizeInboundMessage(msg);
+            // Publish the prepared identity first so the durable drain never
+            // waits on a stalled receipt ack, then fire the read receipt.
+            finishPreparation(acceptedInbound, true);
           } catch (error) {
             finishPreparation(undefined);
+            acceptedInbound = undefined;
             inboundLogger.warn(
               { error: formatError(error) },
               "failed preparing WhatsApp inbound identity; durable drain will normalize again",
+            );
+          }
+          if (acceptedInbound) {
+            // Read receipts (blue ticks) fire at receive time: the sender sees
+            // the message was read as soon as the gateway ingests it, before
+            // the agent turn starts (issue #128875).
+            await maybeMarkNonSelfChatReadReceipt(
+              acceptedInbound,
+              buildReadReceiptTarget(acceptedInbound),
             );
           }
         }
