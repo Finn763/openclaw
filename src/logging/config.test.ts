@@ -208,6 +208,15 @@ describe("readLoggingConfig", () => {
     });
   });
 
+  it("returns undefined for a deeply-nested config instead of recursing into the parser", () => {
+    // 600 levels exceeds the supported nesting contract; the raw pre-scan must
+    // reject it before JSON.parse can recurse natively.
+    const configPath = writeConfig("[".repeat(600) + "]".repeat(600));
+    withEnv({ OPENCLAW_CONFIG_PATH: configPath }, () => {
+      expect(readLoggingConfig()).toBeUndefined();
+    });
+  });
+
   it("caches a missing config until the path selector changes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-logging-config-missing-"));
     tempDirs.push(dir);

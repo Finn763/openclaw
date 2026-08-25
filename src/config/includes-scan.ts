@@ -9,18 +9,22 @@ import {
   readConfigIncludeFileWithGuards,
   type IncludeResolver,
 } from "./includes.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH } from "./nesting-limit.js";
 import { resolveIncludeRoots } from "./paths.js";
 
 // Include discovery walks nested config objects because include blocks may be embedded.
 function listDirectIncludes(parsed: unknown): string[] {
   const out: string[] = [];
-  const visit = (value: unknown) => {
+  const visit = (value: unknown, depth: number) => {
+    if (depth > MAX_CONFIG_JSON_NESTING_DEPTH) {
+      return;
+    }
     if (!value) {
       return;
     }
     if (Array.isArray(value)) {
       for (const item of value) {
-        visit(item);
+        visit(item, depth + 1);
       }
       return;
     }
@@ -39,10 +43,10 @@ function listDirectIncludes(parsed: unknown): string[] {
       }
     }
     for (const v of Object.values(rec)) {
-      visit(v);
+      visit(v, depth + 1);
     }
   };
-  visit(parsed);
+  visit(parsed, 0);
   return out;
 }
 
