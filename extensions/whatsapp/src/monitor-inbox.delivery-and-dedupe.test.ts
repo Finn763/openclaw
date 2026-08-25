@@ -223,14 +223,19 @@ describe("web monitor inbox delivery and dedupe", () => {
     sock.ev.emit("messages.upsert", upsert);
     await settleInboundWork();
     expect(onMessage).toHaveBeenCalledTimes(1);
+    // The pending redelivery must not re-send the receive-time receipt.
+    expect(sock.readMessages).toHaveBeenCalledTimes(1);
 
     finishMessage?.();
     await listener.close();
   });
 
-  it("delivery coordinator does not redispatch a completed transport-key duplicate", async () => {
+  it("delivery coordinator does not re-send the read receipt for a completed transport-key duplicate", async () => {
     const onMessage = vi.fn(async () => undefined);
-    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
+    const pendingWork = vi.fn<(count: number, at?: number) => void>();
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage, {
+      onPendingWorkChanged: pendingWork,
+    });
     const upsert = buildNotifyMessageUpsert({
       id: nextMessageId("durable-completed"),
       remoteJid: "999@s.whatsapp.net",
@@ -242,13 +247,47 @@ describe("web monitor inbox delivery and dedupe", () => {
     sock.ev.emit("messages.upsert", upsert);
     await waitForMessageCalls(onMessage, 1);
     await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(1));
-    sock.readMessages.mockClear();
 
+    // Redelivery of the completed transport key must not send a second
+    // receipt: the receive-time receipt already fired on acceptance.
+    const settledBefore = pendingWork.mock.calls.length;
     sock.ev.emit("messages.upsert", upsert);
-    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(pendingWork.mock.calls.length).toBeGreaterThan(settledBefore);
+      expect(pendingWork.mock.calls.at(-1)?.[0]).toBe(0);
+    });
 
+    expect(sock.readMessages).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledTimes(1);
     await listener.close();
+  });
+
+  it("delivery coordinator acknowledges a completed duplicate replayed after restart once", async () => {
+    const onMessage = vi.fn(async () => undefined);
+    const first = await startInboxMonitor(onMessage as InboxOnMessage);
+    const sock = first.sock;
+    const upsert = buildNotifyMessageUpsert({
+      id: nextMessageId("durable-replay"),
+      remoteJid: "999@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+
+    sock.ev.emit("messages.upsert", upsert);
+    await waitForMessageCalls(onMessage, 1);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(1));
+    await first.listener.close();
+
+    // A fresh coordinator (simulated process restart) has no in-memory receipt
+    // memo; the completed replay redelivery still acknowledges the message once.
+    const replayedOnMessage = vi.fn(async () => undefined);
+    const replay = await startInboxMonitor(replayedOnMessage as InboxOnMessage);
+    replay.sock.ev.emit("messages.upsert", upsert);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(2));
+    await settleInboundWork();
+    expect(replayedOnMessage).not.toHaveBeenCalled();
+    await replay.listener.close();
   });
 
   it("delivery coordinator lets a later same-key flush steer during an active turn", async () => {

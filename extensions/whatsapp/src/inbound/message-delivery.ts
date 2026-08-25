@@ -150,10 +150,35 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         }
       : undefined;
 
+  // One read receipt per transport message id: the receive-time accepted path
+  // fires it, and later redeliveries (pending or completed verdicts) must not
+  // re-send it. The memo is bounded like the prepared-inbound map and claims
+  // the id before awaiting markRead so concurrent duplicate deliveries cannot
+  // double-fire.
+  const READ_RECEIPT_MEMO_MAX = 1000;
+  const readReceiptsSent = new Set<string>();
+  const buildReadReceiptDedupeKey = (target: WhatsAppReadReceiptTarget): string =>
+    createHash("sha256").update(`${target.remoteJid}\n${target.id}`).digest("hex");
+
   const maybeMarkInboundAsRead = async (target: WhatsAppReadReceiptTarget | undefined) => {
     if (!target || options.sendReadReceipts === false) {
       return;
     }
+    const dedupeKey = buildReadReceiptDedupeKey(target);
+    if (readReceiptsSent.has(dedupeKey)) {
+      logWhatsAppVerbose(
+        options.verbose,
+        `Skipping read receipt for already-acknowledged message ${target.id}`,
+      );
+      return;
+    }
+    if (readReceiptsSent.size >= READ_RECEIPT_MEMO_MAX) {
+      const oldest = readReceiptsSent.keys().next().value;
+      if (oldest !== undefined) {
+        readReceiptsSent.delete(oldest);
+      }
+    }
+    readReceiptsSent.add(dedupeKey);
     const { id, remoteJid, participant } = target;
     try {
       await socketSession.markRead(target);
