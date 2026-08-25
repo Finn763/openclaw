@@ -7,8 +7,6 @@ import {
   ConfigNestingDepthError,
   formatConfigNestingDepthMessage,
   MAX_CONFIG_JSON_NESTING_DEPTH,
-  measureJsonNestingDepth,
-  measureRawJsonNestingDepth,
 } from "./nesting-limit.js";
 
 function buildDeepArray(depth: number): unknown {
@@ -19,32 +17,48 @@ function buildDeepArray(depth: number): unknown {
   return value;
 }
 
-describe("measureRawJsonNestingDepth", () => {
-  it("measures bracket nesting and ignores brackets inside strings", () => {
-    expect(measureRawJsonNestingDepth('{"a": "["}')).toBe(1);
-    expect(measureRawJsonNestingDepth('{"a": "[{["}')).toBe(1);
-    expect(measureRawJsonNestingDepth('{"a": "x]"}')).toBe(1);
-    expect(measureRawJsonNestingDepth("[1, [2, [3]]]")).toBe(3);
-    expect(measureRawJsonNestingDepth('{"a": {"b": [1, {"c": "]"}]}}')).toBe(4);
-    expect(measureRawJsonNestingDepth('"plain string [ ]"')).toBe(0);
-    expect(measureRawJsonNestingDepth("'single quoted [ ]'")).toBe(0);
-    expect(measureRawJsonNestingDepth(String.raw`{"escaped": "a\"b["}`)).toBe(1);
+describe("assertBoundedRawJsonNesting", () => {
+  it("accepts shallow bracket nesting and ignores brackets inside strings", () => {
+    expect(() => assertBoundedRawJsonNesting('{"a": "["}', "Test JSON")).not.toThrow();
+    expect(() => assertBoundedRawJsonNesting('{"a": "[{[\\"', "Test JSON")).not.toThrow();
+    expect(() => assertBoundedRawJsonNesting('{"a": "x]"}', "Test JSON")).not.toThrow();
+    expect(() => assertBoundedRawJsonNesting("[1, [2, [3]]]", "Test JSON")).not.toThrow();
+    expect(() =>
+      assertBoundedRawJsonNesting('{"a": {"b": [1, {"c": "]"}]}}', "Test JSON"),
+    ).not.toThrow();
+    expect(() => assertBoundedRawJsonNesting('"plain string [ ]"', "Test JSON")).not.toThrow();
+    expect(() => assertBoundedRawJsonNesting("'single quoted [ ]'", "Test JSON")).not.toThrow();
+    expect(() =>
+      assertBoundedRawJsonNesting(String.raw`{\"escaped\": \"a\\\"b[\"}`, "Test JSON"),
+    ).not.toThrow();
   });
 
-  it("measures pathological 100k-deep input without recursing", () => {
-    expect(measureRawJsonNestingDepth("[".repeat(100_000) + "]".repeat(100_000))).toBe(100_000);
+  it("ignores bracket-like characters that only appear inside string values", () => {
+    // Over 512 brackets, all inside a quoted string: the raw scan must not
+    // count them, or this would be misreported as an over-limit document.
+    const bracketSoup = `{"a": "${"[".repeat(2_000)}${"]".repeat(2_000)}"}`;
+    expect(() => assertBoundedRawJsonNesting(bracketSoup, "Test JSON")).not.toThrow();
+  });
+
+  it("rejects pathological 100k-deep input iteratively with an exact measured depth", () => {
+    const raw = "[".repeat(100_000) + "]".repeat(100_000);
+    expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
+      formatConfigNestingDepthMessage("Test JSON", 100_000),
+    );
   });
 });
 
-describe("measureJsonNestingDepth", () => {
-  it("measures parsed structures iteratively", () => {
-    expect(measureJsonNestingDepth([[[0]]])).toBe(4);
-    expect(measureJsonNestingDepth({ a: { b: [1, { c: 2 }] } })).toBe(5);
-    expect(measureJsonNestingDepth("leaf")).toBe(1);
+describe("assertBoundedJsonNesting", () => {
+  it("accepts shallow parsed structures iteratively", () => {
+    expect(() => assertBoundedJsonNesting([[[0]]], "Test JSON")).not.toThrow();
+    expect(() => assertBoundedJsonNesting({ a: { b: [1, { c: 2 }] } }, "Test JSON")).not.toThrow();
+    expect(() => assertBoundedJsonNesting("leaf", "Test JSON")).not.toThrow();
   });
 
-  it("measures pathological 100k-deep parsed values without recursing", () => {
-    expect(measureJsonNestingDepth(buildDeepArray(100_000))).toBe(100_001);
+  it("rejects pathological 100k-deep parsed values iteratively with an exact measured depth", () => {
+    expect(() => assertBoundedJsonNesting(buildDeepArray(100_000), "Test JSON")).toThrowError(
+      formatConfigNestingDepthMessage("Test JSON", 100_001),
+    );
   });
 });
 
@@ -70,13 +84,18 @@ describe("nesting depth assertions", () => {
     ).toThrow(/maximum supported nesting depth/);
   });
 
+  it("rejects raw text one level past the maximum with an exact measured depth", () => {
+    const raw =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+    expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
+      formatConfigNestingDepthMessage("Test JSON", MAX_CONFIG_JSON_NESTING_DEPTH + 1),
+    );
+  });
+
   it("rejects deep raw text before any parser runs", () => {
     const raw = "[".repeat(100_000) + "]".repeat(100_000);
     expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
       ConfigNestingDepthError,
-    );
-    expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
-      formatConfigNestingDepthMessage("Test JSON", 100_000),
     );
   });
 });
