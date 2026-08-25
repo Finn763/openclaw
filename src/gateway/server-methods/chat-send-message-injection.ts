@@ -31,18 +31,58 @@ import type { GatewayRequestContext } from "./types.js";
 export function createChatSendMessageInjectionStarter(params: {
   target: ReplyMessageInjectionTarget | undefined;
   request: Pick<NormalizedChatSendRequest, "p" | "rawMessage" | "supportsTaskSuggestions">;
-  session: Pick<PreparedChatSendSession, "cfg" | "entry">;
+  session: Pick<
+    PreparedChatSendSession,
+    "cfg" | "entry" | "sessionKey" | "storePath" | "clientRunId"
+  >;
   turn: ReturnType<typeof prepareChatSendUserTurn>;
   imageOrder: ReplyBackendQueueMessageOptions["imageOrder"];
   userTurnTranscriptRecorder: NonNullable<
     ReplyBackendQueueMessageOptions["userTurnTranscriptRecorder"]
   >;
+  logGateway: GatewayRequestContext["logGateway"];
 }) {
   const { p, rawMessage, supportsTaskSuggestions } = params.request;
-  const { cfg, entry } = params.session;
+  const { cfg, entry, sessionKey, storePath, clientRunId } = params.session;
   const { ctx, isInternalTextSlashCommandTurn, replyOptionImages, replyOptionMedia } = params.turn;
   return (): ReplyMessageInjectionAttempt | undefined => {
     if (!params.target || isInternalTextSlashCommandTurn) {
+      return undefined;
+    }
+    // Admission fence at the injection-start boundary (#128971): a steer
+    // injection may only be queued into a run that can still own a terminal
+    // source-reply send. Once the session entry fail-closes terminal
+    // delivery (delivery receipt, unresolved terminal tool-call id, terminal
+    // tombstone, or stale claim) the steer would reuse the fail-closed claim
+    // and lose the inbound's reply. Reject here — before
+    // beginReplyMessageInjectionTarget synchronously queues the message with
+    // the target runtime — so the inbound falls back to follow-up dispatch
+    // without ever enqueueing a doomed steer. The captured `entry` predates
+    // asynchronous dispatch, so revalidate against the latest persisted
+    // entry; only fall back to the captured entry when the reload fails or
+    // nothing is persisted yet.
+    let fenceEntry = entry;
+    if (sessionKey) {
+      try {
+        fenceEntry =
+          loadSessionEntry({
+            sessionKey,
+            storePath,
+            readConsistency: "latest",
+          }) ?? entry;
+      } catch (error: unknown) {
+        params.logGateway.warn(
+          `failed to reload session entry before steering fence on ${sessionKey}: ${String(error)}`,
+        );
+      }
+    }
+    if (
+      fenceEntry &&
+      isRestartRecoveryTerminalDeliveryFailClosed(fenceEntry, fenceEntry.sessionId)
+    ) {
+      params.logGateway.warn(
+        `active run ${clientRunId} cannot own another terminal source-reply send on session ${sessionKey}; rejecting steer injection before queueing`,
+      );
       return undefined;
     }
     const { debounceMs } = resolveQueueSettings({
@@ -125,40 +165,11 @@ export async function finalizeAcceptedChatSendMessageInjection(params: {
 }): Promise<boolean> {
   const { context, ctx, session } = params;
   const { agentId, cfg, clientRunId, entry, sessionKey, storePath } = session;
-  // A steer injection may only be accepted into an active run that can still
-  // own a terminal source-reply send (#128971). Once the session entry
-  // fail-closes terminal delivery (delivery receipt, unresolved terminal
-  // tool-call id, terminal tombstone, or stale claim) the accepted steer
-  // would reuse the fail-closed claim and lose the inbound's reply; report
-  // rejection so the inbound falls back to next-turn admission, where the
-  // runner's queue fence applies.
-  //
-  // The captured `entry` predates asynchronous dispatch, so a terminal
-  // receipt committed between dispatch and finalization would be missed and
-  // the stale snapshot would silently accept the steer. Revalidate against
-  // the latest persisted entry immediately before finalizing; only fall back
-  // to the captured entry when the reload fails or nothing is persisted yet.
-  let fenceEntry = entry;
-  if (sessionKey) {
-    try {
-      fenceEntry =
-        loadSessionEntry({
-          sessionKey,
-          storePath,
-          readConsistency: "latest",
-        }) ?? entry;
-    } catch (error: unknown) {
-      context.logGateway.warn(
-        `failed to reload session entry before steering fence on ${sessionKey}: ${String(error)}`,
-      );
-    }
-  }
-  if (fenceEntry && isRestartRecoveryTerminalDeliveryFailClosed(fenceEntry, fenceEntry.sessionId)) {
-    context.logGateway.warn(
-      `active run ${clientRunId} cannot own another terminal source-reply send on session ${sessionKey}; rejecting accepted steer injection`,
-    );
-    return false;
-  }
+  // Terminal-receipt admission is fenced at the injection-start boundary
+  // (createChatSendMessageInjectionStarter), before the steer is queued, so
+  // no attempt ever exists for a fail-closed session. The only rejection
+  // left here is the runtime refusing the queued steer, which also means
+  // nothing was enqueued — the fallback to follow-up dispatch is safe.
   const finalizedCtx = finalizeInboundContext(ctx);
   const finalization = await finalizeReplyMessageInjectionAttempt({
     attempt: params.attempt,
