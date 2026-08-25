@@ -8,6 +8,7 @@ import {
   containsConfigIncludeDirective,
   hashConfigRaw,
   maybeLoadDotEnvForConfig,
+  parseConfigJson5,
   resolveConfigForRead,
   resolveConfigIncludesForRead,
   restoreEnvChangesIfUnchanged,
@@ -54,7 +55,16 @@ export function loadConfigFromContext(
       );
     }
     const raw = deps.fs.readFileSync(configPath, "utf-8");
-    const parsed = deps.json5.parse(raw);
+    const parsedResult = parseConfigJson5(raw, deps.json5);
+    if (!parsedResult.ok) {
+      throwInvalidConfig({
+        configPath,
+        issues: [{ path: "", message: `JSON5 parse failed: ${parsedResult.error}` }],
+        logger: deps.logger,
+        loggedConfigPaths: loggedInvalidConfigs,
+      });
+    }
+    const parsed = parsedResult.parsed;
     const readResolution = resolveConfigForRead(
       resolveConfigIncludesForRead(parsed, configPath, deps),
       deps.env,

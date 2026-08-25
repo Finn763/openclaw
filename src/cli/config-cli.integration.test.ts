@@ -15,7 +15,8 @@ const { REDACTED_SENTINEL } = await import("../config/redact-snapshot.js");
 const runtimeSchema = await import("../config/runtime-schema.js");
 const { runConfigGet, runConfigPatch, runConfigSet, runConfigUnset } =
   await import("./config-cli.js");
-const { withConfigFileHarness } = useConfigCliIntegrationHarness();
+const { registeredRuntimeErrors, runRegisteredConfigCommand, withConfigFileHarness } =
+  useConfigCliIntegrationHarness();
 
 function installRuntimeSchemaReadHook(hook: () => void | Promise<void>): void {
   const readSchema = runtimeSchema.readBestEffortRuntimeConfigSchema;
@@ -375,5 +376,19 @@ describe("config cli integration", () => {
         });
       },
     );
+  });
+
+  it("rejects a deeply-nested config file with a clean validation error instead of overflowing the stack", async () => {
+    const deepRaw = `${"[".repeat(100_000)}${"]".repeat(100_000)}\n`;
+    await withConfigFileHarness("openclaw-config-cli-validate-deep-nesting-", deepRaw, async () => {
+      await expect(runRegisteredConfigCommand(["config", "validate"])).rejects.toThrow(
+        "__exit__:1",
+      );
+
+      const errors = registeredRuntimeErrors.join("\n");
+      expect(errors).toContain("OpenClaw config is invalid");
+      expect(errors).toContain("nesting depth");
+      expect(errors).not.toContain("RangeError");
+    });
   });
 });
