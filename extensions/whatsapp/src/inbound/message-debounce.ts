@@ -3,7 +3,7 @@ import { createInboundDebouncer } from "openclaw/plugin-sdk/channel-inbound-debo
 import { fanInChannelIngressLifecycles } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { getPrimaryIdentityId } from "../identity.js";
 import { requireWhatsAppInboundAdmission } from "./admission.js";
-import type { WhatsAppIngressLifecycle, WhatsAppReadReceiptTarget } from "./durable-receive.js";
+import type { WhatsAppIngressLifecycle } from "./durable-receive.js";
 import { attachWhatsAppIngressLifecycle } from "./ingress-lifecycle.js";
 import type { AdmittedWebInboundCallbackMessage } from "./types.js";
 
@@ -11,7 +11,6 @@ export type WhatsAppQueuedInboundMessage = AdmittedWebInboundCallbackMessage & {
   debounceKey?: string;
   debounceKeyTracked?: boolean;
   turnAdoptionLifecycle?: WhatsAppIngressLifecycle;
-  readReceipt?: WhatsAppReadReceiptTarget;
   receiveOrder?: number;
 };
 
@@ -19,7 +18,6 @@ export function createWhatsAppInboundMessageDebouncer(options: {
   debounceMs?: number;
   onMessage: (msg: AdmittedWebInboundCallbackMessage) => Promise<void>;
   shouldDebounce?: (msg: AdmittedWebInboundCallbackMessage) => boolean;
-  markRead: (target: WhatsAppReadReceiptTarget | undefined) => Promise<void>;
   onPendingWorkChanged: () => void;
   onError: (error: unknown) => void;
 }) {
@@ -94,7 +92,6 @@ export function createWhatsAppInboundMessageDebouncer(options: {
             if (orderedEntries.length === 1) {
               await options.onMessage(attachWhatsAppIngressLifecycle(last, admissionLifecycle));
               await settle();
-              await Promise.all(orderedEntries.map((entry) => options.markRead(entry.readReceipt)));
               return;
             }
             const mentioned = new Set<string>();
@@ -135,7 +132,6 @@ export function createWhatsAppInboundMessageDebouncer(options: {
             );
             await options.onMessage(combinedMessage);
             await settle();
-            await Promise.all(orderedEntries.map((entry) => options.markRead(entry.readReceipt)));
           } catch (error) {
             await abandon();
             throw error;

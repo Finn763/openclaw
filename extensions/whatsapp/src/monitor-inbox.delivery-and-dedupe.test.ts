@@ -79,17 +79,22 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
-  it("delivery coordinator delays read receipts until inbound handlers complete", async () => {
-    let finishMessage: (() => void) | undefined;
+  it("delivery coordinator sends read receipts when the message is received, not after the agent turn", async () => {
+    let releaseHandler: (() => void) | undefined;
     const handlerGate = new Promise<void>((resolve) => {
-      finishMessage = resolve;
+      releaseHandler = resolve;
+    });
+    let markHandlerFinished: (() => void) | undefined;
+    const handlerFinished = new Promise<void>((resolve) => {
+      markHandlerFinished = resolve;
     });
     const onMessage = vi.fn(async () => {
       await handlerGate;
+      markHandlerFinished?.();
     });
 
     const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
-    const messageId = nextMessageId("delayed-read");
+    const messageId = nextMessageId("immediate-read");
 
     sock.ev.emit(
       "messages.upsert",
@@ -103,18 +108,23 @@ describe("web monitor inbox delivery and dedupe", () => {
     );
     await waitForMessageCalls(onMessage, 1);
 
-    expect(sock.readMessages).not.toHaveBeenCalled();
-    finishMessage?.();
-    await vi.waitFor(() => {
-      expect(sock.readMessages).toHaveBeenCalledWith([
-        {
-          remoteJid: "999@s.whatsapp.net",
-          id: messageId,
-          participant: undefined,
-          fromMe: false,
-        },
-      ]);
-    });
+    // The read receipt (blue tick) must already be on the wire while the
+    // agent turn is still running — the handler gate is still closed.
+    expect(sock.readMessages).toHaveBeenCalledWith([
+      {
+        remoteJid: "999@s.whatsapp.net",
+        id: messageId,
+        participant: undefined,
+        fromMe: false,
+      },
+    ]);
+
+    releaseHandler?.();
+    await handlerFinished;
+    await settleInboundWork();
+
+    // Completing the turn must not send a second receipt.
+    expect(sock.readMessages).toHaveBeenCalledTimes(1);
 
     await listener.close();
   });
@@ -630,6 +640,12 @@ describe("web monitor inbox delivery and dedupe", () => {
       expect(sock.readMessages).toHaveBeenCalledTimes(1);
     });
 
+    sock.ev.emit("messages.upsert", upsert);
+    await waitForMessageCalls(onMessage, 2);
+    await settleInboundWork();
+    // Redelivery of the same message must not re-send the receipt.
+    expect(sock.readMessages).toHaveBeenCalledTimes(1);
+
     await listener.close();
   });
 
@@ -658,6 +674,12 @@ describe("web monitor inbox delivery and dedupe", () => {
     await vi.waitFor(() => {
       expect(sock.readMessages).toHaveBeenCalledTimes(1);
     });
+
+    sock.ev.emit("messages.upsert", upsert);
+    await waitForMessageCalls(onMessage, 2);
+    await settleInboundWork();
+    // Redelivery of the same message must not re-send the receipt.
+    expect(sock.readMessages).toHaveBeenCalledTimes(1);
 
     await listener.close();
   });
