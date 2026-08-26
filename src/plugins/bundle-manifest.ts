@@ -5,6 +5,8 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { normalizeUniqueSingleOrTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
+import JSON5 from "json5";
+import { parseJsonWithNestingGuard } from "../config/nesting-limit.js";
 import { matchRootFileOpenFailure } from "../infra/boundary-file-read.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -130,6 +132,23 @@ function loadBundleManifestFile(params: {
         manifestPath,
       }),
     });
+  }
+  // Shared parser boundary: manifest text is scanned for over-deep nesting before
+  // any parser runs, so a pathological bundle manifest fails as a controlled depth
+  // error instead of overflowing the native parser stack (agent manifests use
+  // strict JSON.parse).
+  try {
+    parseJsonWithNestingGuard(
+      file.contents.toString("utf8"),
+      `plugin manifest ${params.manifestRelativePath}`,
+      params.strictJson ? JSON.parse : JSON5.parse,
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      error: `failed to parse plugin manifest: ${formatErrorMessage(error)}`,
+      manifestPath,
+    };
   }
   const result = parsePluginCacheJson(file, { json5: !params.strictJson });
   if (!result.ok) {
