@@ -152,11 +152,15 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
 
   // One read receipt per transport message id: the receive-time accepted path
   // fires it, and later redeliveries (pending or completed verdicts) must not
-  // re-send it. The memo is bounded like the prepared-inbound map and claims
-  // the id before awaiting markRead so concurrent duplicate deliveries cannot
-  // double-fire.
+  // re-send it. Successful receipts and in-flight claims are tracked
+  // separately: a claim is only reserved while the markRead call is running
+  // and is released when it rejects or times out, so a later same-process
+  // redelivery can retry a lost receipt instead of being suppressed forever.
+  // The success memo is bounded like the prepared-inbound map; in-flight
+  // claims are transient and clear as soon as their call settles.
   const READ_RECEIPT_MEMO_MAX = 1000;
   const readReceiptsSent = new Set<string>();
+  const readReceiptsInFlight = new Set<string>();
   const buildReadReceiptDedupeKey = (target: WhatsAppReadReceiptTarget): string =>
     createHash("sha256").update(`${target.remoteJid}\n${target.id}`).digest("hex");
 
@@ -172,20 +176,34 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       );
       return;
     }
+    if (readReceiptsInFlight.has(dedupeKey)) {
+      // A concurrent duplicate delivery is already acknowledging this
+      // message; it must not double-fire.
+      logWhatsAppVerbose(
+        options.verbose,
+        `Skipping read receipt for in-flight acknowledgement of message ${target.id}`,
+      );
+      return;
+    }
     if (readReceiptsSent.size >= READ_RECEIPT_MEMO_MAX) {
       const oldest = readReceiptsSent.keys().next().value;
       if (oldest !== undefined) {
         readReceiptsSent.delete(oldest);
       }
     }
-    readReceiptsSent.add(dedupeKey);
+    readReceiptsInFlight.add(dedupeKey);
     const { id, remoteJid, participant } = target;
     try {
       await socketSession.markRead(target);
+      // Record success only after the call resolves: a rejected or timed-out
+      // attempt releases its reservation below and stays retryable.
+      readReceiptsSent.add(dedupeKey);
       const suffix = participant ? ` (participant ${participant})` : "";
       logWhatsAppVerbose(options.verbose, `Marked message ${id} as read for ${remoteJid}${suffix}`);
     } catch (err) {
       logWhatsAppVerbose(options.verbose, `Failed to mark message ${id} read: ${String(err)}`);
+    } finally {
+      readReceiptsInFlight.delete(dedupeKey);
     }
   };
 

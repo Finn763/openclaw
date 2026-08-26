@@ -262,6 +262,76 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
+  it("delivery coordinator retries a rejected read receipt when the message is redelivered", async () => {
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
+    const messageId = nextMessageId("receipt-rejection-retry");
+    const upsert = buildNotifyMessageUpsert({
+      id: messageId,
+      remoteJid: "999@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+
+    // The receive-time acknowledgement fails on the socket; the failed
+    // attempt must release its reservation instead of claiming the receipt
+    // permanently.
+    sock.readMessages.mockRejectedValueOnce(new Error("connection closed"));
+
+    sock.ev.emit("messages.upsert", upsert);
+    await waitForMessageCalls(onMessage, 1);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(1));
+
+    // A same-process redelivery of the completed transport key retries the
+    // missing receipt.
+    sock.ev.emit("messages.upsert", upsert);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(2));
+
+    // The message itself stays deduped; only the receipt is retried.
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    await listener.close();
+  });
+
+  it("delivery coordinator retries a timed-out read receipt when the message is redelivered", async () => {
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage, {
+      socketTiming: {
+        keepAliveIntervalMs: 25_000,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 100,
+      },
+    });
+    const messageId = nextMessageId("receipt-timeout-retry");
+    const upsert = buildNotifyMessageUpsert({
+      id: messageId,
+      remoteJid: "999@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+
+    // The receive-time acknowledgement stalls on the socket and trips the
+    // owned operation timeout.
+    sock.readMessages.mockImplementationOnce(() => new Promise<never>(() => {}));
+
+    sock.ev.emit("messages.upsert", upsert);
+    await waitForMessageCalls(onMessage, 1);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(1));
+    // Let the operation timeout fire and release the in-flight reservation.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 300);
+    });
+
+    // A same-process redelivery of the completed transport key retries the
+    // missing receipt.
+    sock.ev.emit("messages.upsert", upsert);
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(2));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    await listener.close();
+  });
+
   it("delivery coordinator acknowledges a completed duplicate replayed after restart once", async () => {
     const onMessage = vi.fn(async () => undefined);
     const first = await startInboxMonitor(onMessage as InboxOnMessage);
