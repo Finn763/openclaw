@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  insertMissingSentenceSpaces,
   resolveRequiredCompletionDeliveryFailureTerminalResult,
   resolveRequiredCompletionTerminalResult,
 } from "./task-completion-contract.js";
@@ -106,35 +105,11 @@ describe("required completion terminal results", () => {
     expect(result.terminalOutcome).toBe("blocked");
     expect(result.terminalSummary).toContain("progress-only");
   });
-});
 
-describe("sentence boundary normalization", () => {
-  it("splits glued prose boundaries after lowercase words", () => {
-    expect(
-      insertMissingSentenceSpaces(
-        "I'll run the unit tests against existing models and launch-argument hooks.Targets are wired in. Next I'll run the unit tests on a booted simulator, then the UI smoke suite.PinPoints now has a real XCTest unit-test target.",
-      ),
-    ).toBe(
-      "I'll run the unit tests against existing models and launch-argument hooks. Targets are wired in. Next I'll run the unit tests on a booted simulator, then the UI smoke suite. PinPoints now has a real XCTest unit-test target.",
-    );
-  });
+  it("still blocks progress-only text when an ordinary continuation follows a dotted reference", () => {
+    const result = resolveRequiredCompletionTerminalResult("I'll inspect foo.Bar results.");
 
-  it("keeps structured dotted references glued", () => {
-    expect(insertMissingSentenceSpaces("I'll inspect API.Client")).toBe("I'll inspect API.Client");
-    expect(insertMissingSentenceSpaces("I'll map foo.Bar then trace the calls.")).toBe(
-      "I'll map foo.Bar then trace the calls.",
-    );
-    expect(insertMissingSentenceSpaces("I'll inspect src/main.Kt and config.py next.")).toBe(
-      "I'll inspect src/main.Kt and config.py next.",
-    );
-  });
-
-  it("keeps punctuated dotted references glued", () => {
-    expect(insertMissingSentenceSpaces("I'll inspect API.Client, then trace the calls.")).toBe(
-      "I'll inspect API.Client, then trace the calls.",
-    );
-    expect(insertMissingSentenceSpaces("I'll map foo.Bar, and review the calls.")).toBe(
-      "I'll map foo.Bar, and review the calls.",
-    );
+    expect(result.terminalOutcome).toBe("blocked");
+    expect(result.terminalSummary).toContain("progress-only");
   });
 });

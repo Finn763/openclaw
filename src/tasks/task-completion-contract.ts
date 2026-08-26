@@ -45,10 +45,12 @@ const KNOWN_FILE_EXTENSION_PATTERN =
 
 const LOWERCASE_WORD_PATTERN = /^[a-z]+$/;
 
+const PLAIN_WORD_PATTERN = /^[a-zA-Z]+$/;
+
 const PLANNING_CONTINUATION_PATTERN =
   /^(?:then|next|after|afterwards|once|before|while|when|and|or|but|so|to|for|with|as|like|plus|also|unless|until|since|because|however|meanwhile|whereas)\b/i;
 
-export function insertMissingSentenceSpaces(value: string): string {
+function insertMissingSentenceSpaces(value: string): string {
   // A terminator glued to a Capitalized word is a sentence boundary unless
   // the dot belongs to a structured dotted reference (see helper below).
   return value.replace(/([.!?])(?=[A-Z])/g, (match, terminator, offset) => {
@@ -71,9 +73,10 @@ export function insertMissingSentenceSpaces(value: string): string {
   });
 }
 
-// Only lowercase-word.Prose splits ("hooks.Targets", "suite.PinPoints");
-// acronyms, camelCase, paths, known extensions and punctuated/planning
-// continuations stay glued so dotted references never fabricate a boundary.
+// Only lowercase-word.Prose splits ("hooks.Targets", "suite.PinPoints") when
+// the continuation starts a new sentence; acronyms, camelCase, paths, known
+// extensions and punctuated/planning/ordinary continuations stay glued so
+// dotted references never fabricate a boundary.
 function isStructuredDottedToken(token: string, dotIndex: number, continuation: string): boolean {
   const beforeDot = token.slice(0, dotIndex);
   const afterDot = token.slice(dotIndex + 1);
@@ -86,7 +89,15 @@ function isStructuredDottedToken(token: string, dotIndex: number, continuation: 
     return true;
   }
   const rest = continuation.trimStart();
-  return rest.length === 0 || PLANNING_CONTINUATION_PATTERN.test(rest) || /^[,;)]/.test(rest);
+  if (
+    rest.length === 0 ||
+    PLANNING_CONTINUATION_PATTERN.test(rest) ||
+    /^[,;)]/.test(rest) ||
+    (PLAIN_WORD_PATTERN.test(afterDot) && /^[a-z]/.test(rest))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function hasNonProgressFollowupSentence(value: string): boolean {
