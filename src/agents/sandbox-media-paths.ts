@@ -315,17 +315,19 @@ export async function resolveSandboxedBridgeMediaPath(params: {
     // Substitute a verified staged basename twin only when the direct target
     // is absent. The verbatim staged name is tried first, then staged twins
     // from the inbound directory listing (case-insensitive, any preserved
-    // extension — e.g. a JPG upload staged as `handle.JPG`). A
-    // present-but-unreadable direct target (or a failed direct stat) keeps its
-    // original error instead of being silently replaced.
-    let directStat: Awaited<ReturnType<SandboxFsBridge["stat"]>>;
+    // extension — e.g. a JPG upload staged as `handle.JPG`). A present but
+    // uninspectable direct target keeps its original error instead of being
+    // silently replaced; when the direct stat itself fails (e.g. a
+    // host-absolute media path outside the sandbox) the staged twin is still
+    // tried, and the original error is preserved when no twin exists.
+    let directStat: Awaited<ReturnType<SandboxFsBridge["stat"]>> | null = null;
     try {
       directStat = await params.sandbox.bridge.stat({
         filePath,
         cwd: params.sandbox.root,
       });
     } catch {
-      throw err;
+      // Treat an uninspectable direct target as absent for fallback purposes.
     }
     if (directStat) {
       throw err;
