@@ -284,4 +284,110 @@ describe("tool-search code-mode stream errors", () => {
     expect(caught?.message).toContain("short stderr note");
     expect(caught?.message).not.toMatch(/discarded at the 64 KiB retention cap/);
   });
+
+  it("resolves a clean exit whose stderr closed before the final IPC result arrives", async () => {
+    testing.setToolSearchCodeModeSupportedForTest(true);
+    testing.setToolSearchMinCodeTimeoutMsForTest(1000);
+
+    // Real-world ordering: the child exits cleanly, its stderr stream closes
+    // right after, and only then does the final IPC result land inside the
+    // parent's clean-exit grace window. The stderr close must not cut that
+    // window short and reject with "child exited with 0".
+    spawnMock.mockImplementationOnce(
+      (_command: string, _args: readonly string[], _options: SpawnOptions): ChildProcess => {
+        const { child, stderr } = createMockSpawnChild();
+        process.nextTick(() => {
+          child.emit("exit", 0, null);
+          process.nextTick(() => {
+            stderr?.emit("close");
+            process.nextTick(() => {
+              child.emit("message", { type: "result", ok: true, value: 42 });
+            });
+          });
+        });
+        return child as unknown as ChildProcess;
+      },
+    );
+
+    const runtime = new toolSearch.ToolSearchRuntime({}, toolSearch.resolveToolSearchConfig({}));
+
+    await expect(
+      testing.runCodeModeChild({
+        code: "return 42;",
+        config: toolSearch.resolveToolSearchConfig({}),
+        logs: [],
+        parentToolCallId: "call-clean-exit-stderr-close-late-result",
+        runtime,
+      }),
+    ).resolves.toBe(42);
+  });
+
+  it("resolves when stderr closes before a clean exit and the final IPC result arrives", async () => {
+    testing.setToolSearchCodeModeSupportedForTest(true);
+    testing.setToolSearchMinCodeTimeoutMsForTest(1000);
+
+    // Inverse ordering: stderr reaches 'close' while no exit status exists yet.
+    // Close-triggered rendering must stay inert until exit proves failure;
+    // a subsequent clean exit still resolves from its late IPC result.
+    spawnMock.mockImplementationOnce(
+      (_command: string, _args: readonly string[], _options: SpawnOptions): ChildProcess => {
+        const { child, stderr } = createMockSpawnChild();
+        process.nextTick(() => {
+          stderr?.emit("close");
+          process.nextTick(() => {
+            child.emit("exit", 0, null);
+            process.nextTick(() => {
+              child.emit("message", { type: "result", ok: true, value: 43 });
+            });
+          });
+        });
+        return child as unknown as ChildProcess;
+      },
+    );
+
+    const runtime = new toolSearch.ToolSearchRuntime({}, toolSearch.resolveToolSearchConfig({}));
+
+    await expect(
+      testing.runCodeModeChild({
+        code: "return 43;",
+        config: toolSearch.resolveToolSearchConfig({}),
+        logs: [],
+        parentToolCallId: "call-stderr-close-before-clean-exit-late-result",
+        runtime,
+      }),
+    ).resolves.toBe(43);
+  });
+
+  it("still rejects a clean exit after the IPC grace window when no result arrives", async () => {
+    testing.setToolSearchCodeModeSupportedForTest(true);
+    testing.setToolSearchMinCodeTimeoutMsForTest(1000);
+
+    // Gating close-triggered finalization to nonzero/signaled exits must not
+    // swallow genuinely result-less children: the clean-exit grace timer is
+    // still the last-resort race breaker that reports "exited with 0".
+    spawnMock.mockImplementationOnce(
+      (_command: string, _args: readonly string[], _options: SpawnOptions): ChildProcess => {
+        const { child, stderr } = createMockSpawnChild();
+        process.nextTick(() => {
+          child.emit("exit", 0, null);
+          process.nextTick(() => {
+            stderr?.emit("close");
+          });
+        });
+        return child as unknown as ChildProcess;
+      },
+    );
+
+    const runtime = new toolSearch.ToolSearchRuntime({}, toolSearch.resolveToolSearchConfig({}));
+
+    await expect(
+      testing.runCodeModeChild({
+        code: "return null;",
+        config: toolSearch.resolveToolSearchConfig({}),
+        logs: [],
+        parentToolCallId: "call-clean-exit-grace-expiry",
+        runtime,
+      }),
+    ).rejects.toThrow(/tool_search_code child exited with 0/);
+  });
 });

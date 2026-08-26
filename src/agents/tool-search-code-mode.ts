@@ -110,6 +110,12 @@ export function appendToolSearchCodeStderrTail(
   return appendBoundedTextTailTracked(current, chunk, SESSION_TOOL_STDERR_TAIL_BYTES);
 }
 
+function isCleanExit(
+  status: { code: number | null; signal: NodeJS.Signals | null } | undefined,
+): boolean {
+  return status !== undefined && status.code === 0 && status.signal === null;
+}
+
 export function runCodeModeChild(params: {
   code: string;
   config: ToolSearchConfig;
@@ -209,6 +215,13 @@ export function runCodeModeChild(params: {
     };
     child.stderr?.on("close", () => {
       stderrClosed = true;
+      if (isCleanExit(exitStatus)) {
+        // A clean exit keeps its own outcome path: closing stderr must not
+        // cut short the 250 ms post-exit grace window while its final IPC
+        // result may still be queued for parent-side delivery. The grace
+        // timer armed on exit stays the last-resort race breaker there.
+        return;
+      }
       finalizeExitFailure(true);
     });
     child.on("error", (error) => {
@@ -219,7 +232,7 @@ export function runCodeModeChild(params: {
         return;
       }
       exitStatus = { code, signal };
-      if (code === 0 && signal === null) {
+      if (isCleanExit(exitStatus)) {
         // A clean exit can race the final IPC result. This timer is a
         // last-resort race breaker: it does not wait for stderr close so a
         // stalled stream cannot hang resolution past this deadline.
