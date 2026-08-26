@@ -1,3 +1,4 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveDefaultAgentId } from "../../agents/agent-scope-config.js";
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
 import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
@@ -188,10 +189,20 @@ export async function runReplyAgent(
   // refused and the user would see no reply (#128971). Fence steering (and
   // accepted-as-steer injections) and drain the inbound as the next ordered
   // turn, which mints a fresh source-turn identity and its own receipt. The
-  // classification is the same one beginTerminalSourceReplyDelivery uses.
+  // classification is the same one beginTerminalSourceReplyDelivery uses. The
+  // fence compares against the active run's own source-turn identity (recorded
+  // by its registry owner at claim admission, falling back to the entry's
+  // claim source): terminal run ids are accumulated session history, so a
+  // tombstone from an unrelated earlier source must not force a safe steer
+  // into follow-up mode.
+  const activeSourceTurnId =
+    replyRunRegistry.getSourceTurnId(sessionKey ?? "") ??
+    normalizeOptionalString(restartRecoveryEntry?.restartRecoveryDeliverySourceRunId) ??
+    "";
   const terminalDeliveryFailClosed = isRestartRecoveryTerminalDeliveryFailClosed(
     restartRecoveryEntry,
     activeReplyOperation?.sessionId ?? followupRun.run.sessionId,
+    activeSourceTurnId,
   );
   const shouldQueueTerminalReceiptSteer =
     effectiveShouldSteer &&

@@ -152,6 +152,7 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryDeliveryToolCallId: "message-call-1",
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
   });
@@ -167,6 +168,7 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryDeliveryToolCallId: "message-call-1",
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
   });
@@ -181,17 +183,43 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryDeliveryToolCallId: "message-call-2",
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
   });
 
-  it("is fail-closed for a terminal-source tombstone after claim cleanup", () => {
+  it("is fail-closed for a terminal-source tombstone on the active source turn", () => {
     expect(
       isRestartRecoveryTerminalDeliveryFailClosed(
         entry({ status: "running", restartRecoveryTerminalRunIds: ["source-1"] }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
+  });
+
+  it("is not fail-closed for a claimless entry whose tombstone belongs to a different source turn", () => {
+    // Terminal run ids are accumulated session history; an unrelated prior
+    // source must not fence a safe active source into follow-up mode.
+    expect(
+      isRestartRecoveryTerminalDeliveryFailClosed(
+        entry({ status: "running", restartRecoveryTerminalRunIds: ["source-old"] }),
+        "session-1",
+        "source-1",
+      ),
+    ).toBe(false);
+  });
+
+  it("is not fail-closed for a claimless entry with historical tombstones when the active source is unknown", () => {
+    // The send path resolves an unknown source as "not-applicable" and arms a
+    // fresh claim; the fence must mirror that classification.
+    expect(
+      isRestartRecoveryTerminalDeliveryFailClosed(
+        entry({ status: "running", restartRecoveryTerminalRunIds: ["source-old"] }),
+        "session-1",
+        "",
+      ),
+    ).toBe(false);
   });
 
   it("is fail-closed for a stale claim", () => {
@@ -203,6 +231,7 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryDeliverySourceRunId: "source-1",
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
   });
@@ -216,13 +245,14 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryTerminalRunIds: ["source-1"],
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(true);
   });
 
   it("is not fail-closed for a claimless fresh entry", () => {
     expect(
-      isRestartRecoveryTerminalDeliveryFailClosed(entry({ status: "running" }), "session-1"),
+      isRestartRecoveryTerminalDeliveryFailClosed(entry({ status: "running" }), "session-1", ""),
     ).toBe(false);
   });
 
@@ -235,11 +265,14 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
           restartRecoveryDeliverySourceRunId: "source-1",
         }),
         "session-1",
+        "source-1",
       ),
     ).toBe(false);
   });
 
   it("is not fail-closed without a session entry", () => {
-    expect(isRestartRecoveryTerminalDeliveryFailClosed(undefined, "session-1")).toBe(false);
+    expect(isRestartRecoveryTerminalDeliveryFailClosed(undefined, "session-1", "source-1")).toBe(
+      false,
+    );
   });
 });

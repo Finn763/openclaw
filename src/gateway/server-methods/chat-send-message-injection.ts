@@ -1,4 +1,7 @@
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { resolveCommandAuthorization } from "../../auto-reply/command-auth.js";
 import { emitInboundMessageAuditTerminal } from "../../auto-reply/reply/dispatch-from-config.audit.js";
 import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
@@ -76,9 +79,22 @@ export function createChatSendMessageInjectionStarter(params: {
         );
       }
     }
+    // Terminal run ids are accumulated session history; compare the fence
+    // against the active source-turn identity (carried on the injection target
+    // by the owning registry, falling back to the entry's own claim source) so
+    // an unrelated earlier tombstone does not force a safe steer into
+    // follow-up mode.
+    const activeSourceTurnId =
+      normalizeOptionalString(params.target?.sourceTurnId) ??
+      normalizeOptionalString(fenceEntry?.restartRecoveryDeliverySourceRunId) ??
+      "";
     if (
       fenceEntry &&
-      isRestartRecoveryTerminalDeliveryFailClosed(fenceEntry, fenceEntry.sessionId)
+      isRestartRecoveryTerminalDeliveryFailClosed(
+        fenceEntry,
+        fenceEntry.sessionId,
+        activeSourceTurnId,
+      )
     ) {
       params.logGateway.warn(
         `active run ${clientRunId} cannot own another terminal source-reply send on session ${sessionKey}; rejecting steer injection before queueing`,

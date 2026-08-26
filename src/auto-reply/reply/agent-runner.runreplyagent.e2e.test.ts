@@ -694,6 +694,9 @@ describe("runReplyAgent active steering", () => {
       sessionId: "session",
       resetTriggered: false,
     });
+    // The owning registry records the active source turn when the run admits
+    // its delivery claim; this tombstone belongs to that exact source.
+    replyRunRegistry.bindSourceTurnId("main", "source-turn-1");
     active.setPhase("running");
     state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
     const runState: ReplyOperationRunState = {};
@@ -721,6 +724,52 @@ describe("runReplyAgent active steering", () => {
     expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
     expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
     expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+    active.complete();
+  });
+
+  it("steers while the retained terminal-source tombstone belongs to an unrelated prior source turn", async () => {
+    // Terminal run ids are accumulated session history. A tombstone left by a
+    // finished earlier source must not fence a safe steer into the active run:
+    // only the active source turn's own tombstone fail-closes delivery.
+    const sessionEntry = makeSessionEntry({
+      status: "running",
+      restartRecoveryTerminalRunIds: ["source-turn-1"],
+    });
+    const sessionStore = { main: sessionEntry };
+    const active = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    // The active run owns a different source turn ("source-turn-2"); the
+    // retained tombstone belongs to an unrelated earlier turn.
+    replyRunRegistry.bindSourceTurnId("main", "source-turn-2");
+    active.setPhase("running");
+    state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
+    const runState: ReplyOperationRunState = {};
+    const { run } = createMinimalRun({
+      opts: { [REPLY_OPERATION_RUN_STATE]: runState },
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      sessionKey: "main",
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingChannel: "telegram",
+        OriginatingTo: "123",
+        MessageSid: "steer-unrelated-tombstone",
+      },
+      runOverrides: { agentId: "main", messageProvider: "telegram" },
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(state.queueEmbeddedAgentMessageMock).toHaveBeenCalledOnce();
+    expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
+    expect(vi.mocked(enqueueFollowupRun)).not.toHaveBeenCalled();
     active.complete();
   });
 
