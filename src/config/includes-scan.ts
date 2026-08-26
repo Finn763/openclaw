@@ -9,7 +9,7 @@ import {
   readConfigIncludeFileWithGuards,
   type IncludeResolver,
 } from "./includes.js";
-import { MAX_CONFIG_JSON_NESTING_DEPTH } from "./nesting-limit.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH, parseJsonWithNestingGuard } from "./nesting-limit.js";
 import { resolveIncludeRoots } from "./paths.js";
 
 // Include discovery walks nested config objects because include blocks may be embedded.
@@ -90,7 +90,15 @@ export async function collectIncludePathsRecursive(params: {
           });
         },
         parseJson: (raw) => {
-          const nestedParsed = parseJsonWithJson5Fallback(raw);
+          // Shared parser boundary: the include-permission scanner must not
+          // hand pathological include text to the native parser. Over-limit
+          // raw input is rejected by the nesting guard before any parse, and
+          // the surrounding try/catch reports it via config validation.
+          const nestedParsed = parseJsonWithNestingGuard(
+            raw,
+            `Include file ${openedBasePath ?? "(include)"}`,
+            (text) => parseJsonWithJson5Fallback(text),
+          );
           if (openedBasePath) {
             nestedInclude = { basePath: openedBasePath, parsed: nestedParsed };
           }
