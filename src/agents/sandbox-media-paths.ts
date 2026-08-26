@@ -116,6 +116,14 @@ function stagedUploadHandleCandidateNames(params: {
 }
 
 /**
+ * Producer contract for staged upload handles: upload staging writes inbound
+ * assets as `file_<id>`-style basenames (e.g. `file_upload-1.png`,
+ * `file_1095---<uuid>.ogg`) and agents reference those bare names when they do
+ * not carry the full staged path. Plain workspace names are not handles.
+ */
+const UPLOAD_HANDLE_PREFIX_PATTERN = /^file_/iu;
+
+/**
  * Finds a verified staged inbound twin for a bare handle under the sandbox
  * inbound dir. The verbatim staged name is probed first, then the inbound
  * directory is listed and entry names matching the handle (case-insensitive,
@@ -129,6 +137,17 @@ async function findVerifiedStagedInboundFile(params: {
   fallbackDir: string;
   handleName: string;
 }): Promise<SandboxResolvedPath | null> {
+  // Staged-inbound substitution is reserved for producer-defined upload
+  // handles. Some callers derive the name from arbitrary references (e.g. the
+  // basename of a host-absolute path whose direct stat failed), so enforce the
+  // full candidacy shape plus the producer's `file_<id>` marker here; plain
+  // names like `report` keep their ordinary missing-file semantics.
+  if (
+    !isBareUploadHandleCandidate(params.handleName) ||
+    !UPLOAD_HANDLE_PREFIX_PATTERN.test(params.handleName)
+  ) {
+    return null;
+  }
   const fallbackDirNormalized = params.fallbackDir.replace(/\\/g, "/");
   const bridge = params.sandbox.bridge;
   const resolveVerifiedStagedFile = async (

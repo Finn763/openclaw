@@ -666,6 +666,65 @@ describe("bare staged upload handle fallback", () => {
     expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/http://example.test/a.png" });
     expect(stat).not.toHaveBeenCalled();
   });
+
+  it("does not rewrite a missing plain workspace-relative name through the staged fallback", async () => {
+    // ClawSweeper [P1] regression: the staged inbound fallback is reserved for
+    // producer-defined upload handles (`file_<id>`-style). A missing plain
+    // relative name like `report` must keep its ordinary workspace semantics —
+    // absent stays absent, even when a same-stem staged asset exists.
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) =>
+      filePath === "media/inbound/report.jpg" ? { type: "file", size: 1, mtimeMs: 1 } : null,
+    );
+    const bridge = hostBridge(stat, ["report.jpg"]);
+
+    const resolved = await resolveSandboxedBridgeMediaPath({
+      sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+      mediaPath: "report",
+      inboundFallbackDir: "media/inbound",
+    });
+
+    expect(resolved).toEqual({ resolved: "/tmp/sandbox-root/report" });
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith({ filePath: "report", cwd: "/tmp/sandbox-root" });
+    expect(bridge.readdir).not.toHaveBeenCalled();
+  });
+
+  it("keeps plain basenames out of the staged fallback when direct resolution fails", async () => {
+    // Same producer-contract gate applies to the catch-path fallback for
+    // uninspectable targets: a plain basename (e.g. from a host-absolute path)
+    // must keep its original resolution error, never adopt a staged inbound
+    // twin from the listing.
+    const resolveError = new Error("bridge resolve failed");
+    const stat = vi.fn(async ({ filePath }: { filePath: string }) => {
+      if (filePath === "media/inbound/report.jpg") {
+        return { type: "file", size: 1, mtimeMs: 1 };
+      }
+      throw new Error("stat failed for /host/tmp/report.jpg: Permission denied");
+    });
+    const bridge = {
+      stat,
+      readdir: vi.fn(async () => ["report.jpg"]),
+      resolvePath: vi.fn(({ filePath }: { filePath: string }) => {
+        if (filePath === "/host/tmp/report.jpg") {
+          throw resolveError;
+        }
+        return {
+          hostPath: `/tmp/sandbox-root/${filePath}`,
+          relativePath: filePath,
+          containerPath: `/sandbox/${filePath}`,
+        };
+      }),
+    };
+
+    await expect(
+      resolveSandboxedBridgeMediaPath({
+        sandbox: { root: "/tmp/sandbox-root", bridge: bridge as unknown as SandboxFsBridge },
+        mediaPath: "/host/tmp/report.jpg",
+        inboundFallbackDir: "media/inbound",
+      }),
+    ).rejects.toBe(resolveError);
+    expect(bridge.readdir).not.toHaveBeenCalled();
+  });
 });
 
 describe("sandbox media container file URLs", () => {
