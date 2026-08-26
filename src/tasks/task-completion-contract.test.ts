@@ -32,6 +32,22 @@ describe("required completion terminal results", () => {
     expect(result.terminalOutcome).toBeUndefined();
   });
 
+  it("does not block a report whose only glued boundary continues with a copula (issue #129222)", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll run the unit tests against existing models and launch-argument hooks.Targets are wired in.",
+    );
+
+    expect(result.terminalOutcome).toBeUndefined();
+  });
+
+  it("does not block a report whose only glued boundary opens with a sentence adverb (issue #129222)", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll run the unit tests on a booted simulator, then the UI smoke suite.PinPoints now has a real XCTest unit-test target and a deterministic UI smoke suite.",
+    );
+
+    expect(result.terminalOutcome).toBeUndefined();
+  });
+
   it("still blocks progress-only narration with glued sentence terminators", () => {
     const result = resolveRequiredCompletionTerminalResult(
       "I'll start by mapping the repo.I'll check the dependencies.I'll run the tests next.",

@@ -50,6 +50,15 @@ const PLAIN_WORD_PATTERN = /^[a-zA-Z]+$/;
 const PLANNING_CONTINUATION_PATTERN =
   /^(?:then|next|after|afterwards|once|before|while|when|and|or|but|so|to|for|with|as|like|plus|also|unless|until|since|because|however|meanwhile|whereas)\b/i;
 
+// A lowercase continuation that opens a fresh clause (copulas, auxiliaries,
+// or the sentence adverb "now" before a finite verb) marks a glued prose
+// boundary, e.g. "hooks.Targets are wired" or "suite.PinPoints now has ...".
+// Ordinary noun-phrase continuations ("foo.Bar results") keep the dotted
+// reference glued so progress narration is never split into a fake
+// deliverable.
+const SENTENCE_OPENING_CONTINUATION_PATTERN =
+  /^(?:am\b|is\b|are\b|was\b|were\b|be\b|been\b|being\b|has\b|have\b|had\b|do\b|does\b|did\b|will\b|would\b|shall\b|should\b|can\b|could\b|may\b|might\b|must\b|now\s+(?:has|have|had|is|are|was|were|will|would|can|could|may|might|must|does|do|did)\b)/i;
+
 function insertMissingSentenceSpaces(value: string): string {
   // A terminator glued to a Capitalized word is a sentence boundary unless
   // the dot belongs to a structured dotted reference (see helper below).
@@ -89,13 +98,14 @@ function isStructuredDottedToken(token: string, dotIndex: number, continuation: 
     return true;
   }
   const rest = continuation.trimStart();
-  if (
-    rest.length === 0 ||
-    PLANNING_CONTINUATION_PATTERN.test(rest) ||
-    /^[,;)]/.test(rest) ||
-    (PLAIN_WORD_PATTERN.test(afterDot) && /^[a-z]/.test(rest))
-  ) {
+  if (rest.length === 0 || PLANNING_CONTINUATION_PATTERN.test(rest) || /^[,;)]/.test(rest)) {
     return true;
+  }
+  if (PLAIN_WORD_PATTERN.test(afterDot) && /^[a-z]/.test(rest)) {
+    // Ordinary continuations belong to the dotted reference ("foo.Bar
+    // results"); clause-opening continuations start a glued prose sentence
+    // ("hooks.Targets are wired", "suite.PinPoints now has ...").
+    return !SENTENCE_OPENING_CONTINUATION_PATTERN.test(rest);
   }
   return false;
 }
