@@ -6,7 +6,10 @@ type ToolSearchTestApi = {
   maxToolSchemaDirectoryPromptChars: number;
   setToolSearchCodeModeSupportedForTest(value: boolean | undefined): void;
   setToolSearchMinCodeTimeoutMsForTest(value: number | undefined): void;
-  appendToolSearchCodeStderrTail(current: string, chunk: string): string;
+  appendToolSearchCodeStderrTail(
+    current: string,
+    chunk: string,
+  ): { tail: string; droppedBytes: number };
   runCodeModeChild(params: {
     code: string;
     config: ToolSearchConfig;

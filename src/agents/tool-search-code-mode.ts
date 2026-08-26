@@ -3,7 +3,11 @@ import os from "node:os";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { AgentToolUpdateCallback } from "./runtime/index.js";
-import { appendBoundedTextTail, SESSION_TOOL_STDERR_TAIL_BYTES } from "./sessions/tools/limits.js";
+import {
+  appendBoundedTextTailTracked,
+  type BoundedTextTailAppendResult,
+  SESSION_TOOL_STDERR_TAIL_BYTES,
+} from "./sessions/tools/limits.js";
 import { TOOL_SEARCH_CODE_MODE_CHILD_SOURCE } from "./tool-search-code-mode-child.js";
 import { toToolSearchJsonSafe } from "./tool-search-json.js";
 import { ToolSearchRuntime } from "./tool-search-runtime.js";
@@ -99,8 +103,11 @@ async function runCodeModeBridgeRequest(
   throw new ToolInputError("Unsupported tool_search_code bridge method.");
 }
 
-export function appendToolSearchCodeStderrTail(current: string, chunk: string): string {
-  return appendBoundedTextTail(current, chunk, SESSION_TOOL_STDERR_TAIL_BYTES);
+export function appendToolSearchCodeStderrTail(
+  current: string,
+  chunk: string,
+): BoundedTextTailAppendResult {
+  return appendBoundedTextTailTracked(current, chunk, SESSION_TOOL_STDERR_TAIL_BYTES);
 }
 
 export function runCodeModeChild(params: {
@@ -121,6 +128,7 @@ export function runCodeModeChild(params: {
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     let stderrTail = "";
+    let stderrDroppedBytes = 0;
     let settled = false;
     let timedOut = false;
     let exitRejectionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -159,7 +167,9 @@ export function runCodeModeChild(params: {
 
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {
-      stderrTail = appendToolSearchCodeStderrTail(stderrTail, chunk);
+      const append = appendToolSearchCodeStderrTail(stderrTail, chunk);
+      stderrTail = append.tail;
+      stderrDroppedBytes += append.droppedBytes;
     });
     child.stderr?.on("error", (error) => {
       settle(() => reject(error));
@@ -173,7 +183,12 @@ export function runCodeModeChild(params: {
       }
       const rejectOnExit = () => {
         const suffix = stderrTail.trim();
-        const detail = suffix ? `: ${sliceUtf16Safe(suffix, -500)}` : "";
+        const truncationNote =
+          stderrDroppedBytes > 0
+            ? ` [${stderrDroppedBytes} bytes of earlier stderr output were discarded at the 64 KiB retention cap and cannot be recovered]`
+            : "";
+        const detail =
+          suffix || truncationNote ? `: ${sliceUtf16Safe(suffix, -500)}${truncationNote}` : "";
         settle(() =>
           reject(
             new Error(

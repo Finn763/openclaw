@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendBoundedTextTail,
+  appendBoundedTextTailTracked,
   normalizePositiveLimit,
   SESSION_TOOL_STDERR_TAIL_BYTES,
 } from "./limits.js";
@@ -65,5 +66,40 @@ describe("session tool limits", () => {
     const output = appendBoundedTextTail("", "x".repeat(SESSION_TOOL_STDERR_TAIL_BYTES + 1));
 
     expect(Buffer.byteLength(output, "utf8")).toBe(SESSION_TOOL_STDERR_TAIL_BYTES);
+  });
+});
+
+describe("appendBoundedTextTailTracked", () => {
+  it("reports zero dropped bytes when the combined output fits the cap", () => {
+    const result = appendBoundedTextTailTracked("old-", "middle-", 12);
+
+    expect(result.tail).toBe("old-middle-");
+    expect(result.droppedBytes).toBe(0);
+  });
+
+  it("reports the discarded head bytes when the tail truncates", () => {
+    const first = appendBoundedTextTailTracked("old-", "middle-", 12);
+    expect(first.droppedBytes).toBe(0);
+
+    const second = appendBoundedTextTailTracked(first.tail, "recent", 12);
+
+    expect(second.tail).toBe("iddle-recent");
+    expect(second.droppedBytes).toBe(5);
+  });
+
+  it("reports the full dropped head for oversized chunks", () => {
+    const result = appendBoundedTextTailTracked("ignored", "x".repeat(128), 16);
+
+    expect(result.tail).toBe("x".repeat(16));
+    expect(result.droppedBytes).toBe(7 + 128 - 16);
+  });
+
+  it("keeps UTF-8 safety while reporting dropped multibyte head bytes", () => {
+    // "aaaa😀ccccccc" is 15 bytes; a 16-byte cap keeps the last 13 bytes.
+    const result = appendBoundedTextTailTracked("aaaa😀ccccccc", "dddddd", 16);
+
+    expect(result.tail).toBe("cccccccdddddd");
+    expect(result.tail).not.toContain("�");
+    expect(result.droppedBytes).toBe(8);
   });
 });

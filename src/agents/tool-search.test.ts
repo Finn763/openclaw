@@ -3910,17 +3910,18 @@ describe("Tool Search", () => {
   });
 
   it("bounds tool_search_code stderr accumulation to the session tool tail limit", () => {
-    let stderrTail = "";
-    stderrTail = testing.appendToolSearchCodeStderrTail(
-      stderrTail,
+    const append = testing.appendToolSearchCodeStderrTail(
+      "",
       `HEAD_OVERFLOW_${"x".repeat(SESSION_TOOL_STDERR_TAIL_BYTES + 10_000)}TAIL`,
     );
+    const stderrTail = append.tail;
 
     expect(stderrTail).not.toContain("HEAD_OVERFLOW_");
     expect(stderrTail.endsWith("TAIL")).toBe(true);
     expect(Buffer.byteLength(stderrTail, "utf8")).toBeLessThanOrEqual(
       SESSION_TOOL_STDERR_TAIL_BYTES,
     );
+    expect(append.droppedBytes).toBeGreaterThan(0);
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
