@@ -132,6 +132,11 @@ export function runCodeModeChild(params: {
     let settled = false;
     let timedOut = false;
     let exitRejectionTimer: ReturnType<typeof setTimeout> | undefined;
+    // Exit status is retained when 'exit' fires, but failure rendering waits
+    // for the stderr stream to reach 'close' so a trailing chunk flushed after
+    // exit is still counted in both the tail and the dropped-bytes notice.
+    let exitStatus: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let stderrClosed = false;
     const bridgeAbortController = new AbortController();
     const settle = (callback: () => void) => {
       if (settled) {
@@ -174,6 +179,38 @@ export function runCodeModeChild(params: {
     child.stderr?.on("error", (error) => {
       settle(() => reject(error));
     });
+    // Builds the failure detail only once both conditions hold: the process
+    // has exited AND (unless explicitly bypassed) stderr has drained to
+    // 'close'. This is the single point where the disclosure is rendered.
+    const finalizeExitFailure = (requireStderrClosed: boolean) => {
+      const status = exitStatus;
+      if (!status || settled) {
+        return;
+      }
+      if (requireStderrClosed && !stderrClosed) {
+        return;
+      }
+      const suffix = stderrTail.trim();
+      const truncationNote =
+        stderrDroppedBytes > 0
+          ? ` [${stderrDroppedBytes} bytes of earlier stderr output were discarded at the 64 KiB retention cap and cannot be recovered]`
+          : "";
+      const detail =
+        suffix || truncationNote ? `: ${sliceUtf16Safe(suffix, -500)}${truncationNote}` : "";
+      settle(() =>
+        reject(
+          new Error(
+            timedOut
+              ? "tool_search_code timed out"
+              : `tool_search_code child exited with ${status.signal ?? status.code}${detail}`,
+          ),
+        ),
+      );
+    };
+    child.stderr?.on("close", () => {
+      stderrClosed = true;
+      finalizeExitFailure(true);
+    });
     child.on("error", (error) => {
       settle(() => reject(error));
     });
@@ -181,30 +218,15 @@ export function runCodeModeChild(params: {
       if (settled) {
         return;
       }
-      const rejectOnExit = () => {
-        const suffix = stderrTail.trim();
-        const truncationNote =
-          stderrDroppedBytes > 0
-            ? ` [${stderrDroppedBytes} bytes of earlier stderr output were discarded at the 64 KiB retention cap and cannot be recovered]`
-            : "";
-        const detail =
-          suffix || truncationNote ? `: ${sliceUtf16Safe(suffix, -500)}${truncationNote}` : "";
-        settle(() =>
-          reject(
-            new Error(
-              timedOut
-                ? "tool_search_code timed out"
-                : `tool_search_code child exited with ${signal ?? code}${detail}`,
-            ),
-          ),
-        );
-      };
+      exitStatus = { code, signal };
       if (code === 0 && signal === null) {
-        // A clean exit can race the final IPC result.
-        exitRejectionTimer = setTimeout(rejectOnExit, 250);
+        // A clean exit can race the final IPC result. This timer is a
+        // last-resort race breaker: it does not wait for stderr close so a
+        // stalled stream cannot hang resolution past this deadline.
+        exitRejectionTimer = setTimeout(() => finalizeExitFailure(false), 250);
         return;
       }
-      rejectOnExit();
+      finalizeExitFailure(true);
     });
     child.on("message", (message: CodeModeChildMessage) => {
       if (settled || !isRecord(message) || typeof message.type !== "string") {

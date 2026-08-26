@@ -99,6 +99,11 @@ describe("tool-search code-mode stream errors", () => {
           stderr?.emit("data", `${"a".repeat(500)}😀${"a".repeat(499)}`);
           process.nextTick(() => {
             child.emit("exit", 1, null);
+            // Real stdio streams always reach 'close' after process exit;
+            // failure rendering now waits for that drain point.
+            process.nextTick(() => {
+              stderr?.emit("close");
+            });
           });
         });
         return child as unknown as ChildProcess;
@@ -141,6 +146,11 @@ describe("tool-search code-mode stream errors", () => {
           stderr?.emit("data", chunk);
           process.nextTick(() => {
             child.emit("exit", 1, null);
+            // Real stdio streams always reach 'close' after process exit;
+            // failure rendering now waits for that drain point.
+            process.nextTick(() => {
+              stderr?.emit("close");
+            });
           });
         });
         return child as unknown as ChildProcess;
@@ -171,6 +181,67 @@ describe("tool-search code-mode stream errors", () => {
     );
   });
 
+  it("accounts for stderr chunks emitted after exit but before stream close", async () => {
+    testing.setToolSearchCodeModeSupportedForTest(true);
+    testing.setToolSearchMinCodeTimeoutMsForTest(1000);
+
+    // Reproduces the real-world ordering where a child flushes its final
+    // oversized stderr chunk AFTER the process has already reported exit but
+    // BEFORE the stderr stream closes. The loss notice must not be rendered
+    // at 'exit' time or this trailing chunk is silently lost.
+    const earlyChunk = "early ";
+    const lateChunk = `${"x".repeat(SESSION_TOOL_STDERR_TAIL_BYTES + 400)}LATE_END`;
+    const expectedDropped =
+      Buffer.byteLength(`${earlyChunk}${lateChunk}`, "utf8") - SESSION_TOOL_STDERR_TAIL_BYTES;
+
+    let sawStderrClose = false;
+    spawnMock.mockImplementationOnce(
+      (_command: string, _args: readonly string[], _options: SpawnOptions): ChildProcess => {
+        const { child, stderr } = createMockSpawnChild();
+        stderr?.once("close", () => {
+          sawStderrClose = true;
+        });
+        process.nextTick(() => {
+          stderr?.emit("data", earlyChunk);
+          process.nextTick(() => {
+            child.emit("exit", 1, null);
+            process.nextTick(() => {
+              stderr?.emit("data", lateChunk);
+              process.nextTick(() => {
+                stderr?.emit("close");
+              });
+            });
+          });
+        });
+        return child as unknown as ChildProcess;
+      },
+    );
+
+    const runtime = new toolSearch.ToolSearchRuntime({}, toolSearch.resolveToolSearchConfig({}));
+
+    let caught: Error | undefined;
+    try {
+      await testing.runCodeModeChild({
+        code: "return 1;",
+        config: toolSearch.resolveToolSearchConfig({}),
+        logs: [],
+        parentToolCallId: "call-stderr-after-exit-chunk",
+        runtime,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(sawStderrClose).toBe(true);
+    expect(caught).toBeDefined();
+    expect(caught?.message).toMatch(/tool_search_code child exited with 1/);
+    expect(caught?.message).toContain("LATE_END");
+    expect(caught?.message).not.toContain("early ");
+    expect(caught?.message).toContain(
+      `[${expectedDropped} bytes of earlier stderr output were discarded at the 64 KiB retention cap and cannot be recovered]`,
+    );
+  });
+
   it("omits the truncation disclosure when child stderr fits the tail cap", async () => {
     testing.setToolSearchCodeModeSupportedForTest(true);
     testing.setToolSearchMinCodeTimeoutMsForTest(1000);
@@ -182,6 +253,11 @@ describe("tool-search code-mode stream errors", () => {
           stderr?.emit("data", "short stderr note");
           process.nextTick(() => {
             child.emit("exit", 1, null);
+            // Real stdio streams always reach 'close' after process exit;
+            // failure rendering now waits for that drain point.
+            process.nextTick(() => {
+              stderr?.emit("close");
+            });
           });
         });
         return child as unknown as ChildProcess;
