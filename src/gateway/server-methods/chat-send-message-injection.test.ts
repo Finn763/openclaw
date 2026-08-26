@@ -2,6 +2,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { emitInboundMessageAuditTerminal } from "../../auto-reply/reply/dispatch-from-config.audit.js";
+import { replyMessageInjectionTargetOperation } from "../../auto-reply/reply/reply-run-registry.contracts.js";
 import {
   beginReplyMessageInjectionTarget,
   createReplyOperation,
@@ -9,6 +10,7 @@ import {
   replyRunRegistry,
   type ReplyMessageInjectionAttempt,
   type ReplyMessageInjectionTarget,
+  type ReplyOperation,
 } from "../../auto-reply/reply/reply-run-registry.js";
 import type { RuntimeMsgContext } from "../../auto-reply/templating.js";
 import {
@@ -309,6 +311,60 @@ describe("createChatSendMessageInjectionStarter admission fence", () => {
 
     expect(attempt).toBe(queuedAttempt);
     expect(beginReplyMessageInjectionTarget).toHaveBeenCalledOnce();
+  });
+
+  it("queues the steer when the latest persisted entry holds only an unrelated historical tombstone", () => {
+    // Terminal run ids are accumulated session history; a tombstone from a
+    // prior source must not fence the active source into follow-up mode.
+    vi.mocked(loadSessionEntry).mockReturnValueOnce({
+      sessionId: "session-1",
+      status: "running",
+      restartRecoveryTerminalRunIds: ["source-old"],
+      updatedAt: 2,
+    } as never);
+    const queuedAttempt = {
+      acceptance: Promise.resolve(true),
+      outcome: Promise.resolve({ status: "accepted" }),
+    } as ReplyMessageInjectionAttempt;
+    vi.mocked(beginReplyMessageInjectionTarget).mockReturnValueOnce(queuedAttempt);
+    const params = makeStarterParams({
+      entry: { sessionId: "session-1", status: "running", updatedAt: 1 } as never,
+    });
+    params.target = {
+      [replyMessageInjectionTargetOperation]: {} as unknown as ReplyOperation,
+      runId: "run-1",
+      sourceTurnId: "source-1",
+    };
+    const begin = createChatSendMessageInjectionStarter(params);
+
+    const attempt = begin();
+
+    expect(attempt).toBe(queuedAttempt);
+    expect(beginReplyMessageInjectionTarget).toHaveBeenCalledOnce();
+  });
+
+  it("rejects before queueing when the latest persisted entry tombstones the active source turn", () => {
+    // The active source turn itself is tombstoned: the steered terminal send
+    // would resolve to already-delivered, so the fence must reject.
+    vi.mocked(loadSessionEntry).mockReturnValueOnce({
+      sessionId: "session-1",
+      status: "running",
+      restartRecoveryTerminalRunIds: ["source-1"],
+      updatedAt: 2,
+    } as never);
+    const params = makeStarterParams();
+    params.target = {
+      [replyMessageInjectionTargetOperation]: {} as unknown as ReplyOperation,
+      runId: "run-1",
+      sourceTurnId: "source-1",
+    };
+    const begin = createChatSendMessageInjectionStarter(params);
+
+    const attempt = begin();
+
+    expect(attempt).toBeUndefined();
+    expect(beginReplyMessageInjectionTarget).not.toHaveBeenCalled();
+    expect(params.logGateway.warn).toHaveBeenCalled();
   });
 });
 

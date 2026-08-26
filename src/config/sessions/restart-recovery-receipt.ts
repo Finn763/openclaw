@@ -1,7 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   hasActiveRestartRecoverySourceClaim,
-  hasAnyRestartRecoveryTerminalRun,
   hasRestartRecoveryTerminalRun,
 } from "./restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "./session-accessor.js";
@@ -93,15 +92,19 @@ function resolveRestartRecoveryTerminalDeliveryDisposition(
  * True when the session's active run can no longer own another terminal
  * source-reply send: it already holds a delivery receipt (terminal-pending or
  * delivered-terminal), an unresolved terminal tool-call id, a terminal-source
- * tombstone after claim cleanup, or a stale claim. This is the fail-closed
- * classification of `beginRestartRecoveryTerminalDelivery`
- * (already-delivered / delivery-ambiguous / stale) narrowed to the entry the
- * fence can observe, so steering never accepts an inbound into a turn whose
- * terminal send would be refused.
+ * tombstone for the exact active source turn after claim cleanup, or a stale
+ * claim. This is the fail-closed classification of
+ * `beginRestartRecoveryTerminalDelivery` (already-delivered /
+ * delivery-ambiguous / stale) narrowed to the entry the fence can observe, so
+ * steering never accepts an inbound into a turn whose terminal send would be
+ * refused. Callers must supply the active source-turn identity: terminal run
+ * ids are accumulated session history, so a tombstone may only fail-close the
+ * fence when it belongs to the target source turn itself.
  */
 export function isRestartRecoveryTerminalDeliveryFailClosed(
   entry: SessionEntry | null | undefined,
   sessionId: string,
+  sourceTurnId: string,
 ): boolean {
   if (!entry) {
     // No session entry means no persisted receipt state to fence; the send
@@ -111,16 +114,16 @@ export function isRestartRecoveryTerminalDeliveryFailClosed(
   if (entry.restartRecoveryDeliveryReceiptState || entry.restartRecoveryDeliveryToolCallId) {
     return true;
   }
+  const normalizedSourceTurnId = normalizeOptionalString(sourceTurnId) ?? "";
   const disposition = resolveRestartRecoveryTerminalDeliveryDisposition(entry, {
     sessionId,
-    sourceTurnId: normalizeOptionalString(entry.restartRecoveryDeliverySourceRunId) ?? "",
+    sourceTurnId: normalizedSourceTurnId,
   });
   if (disposition === "not-applicable") {
     // Claimless entries are the legitimate fresh state ("not-applicable" in
-    // beginRestartRecoveryTerminalDelivery); a claimless entry that also
-    // records a terminal tombstone had its claim cleaned after a completed
-    // send and resolves to "already-delivered".
-    return hasAnyRestartRecoveryTerminalRun(entry);
+    // beginRestartRecoveryTerminalDelivery); a tombstone only fail-closes the
+    // fence when it records this exact source turn, not any earlier one.
+    return hasRestartRecoveryTerminalRun(entry, normalizedSourceTurnId);
   }
   return (
     disposition === "already-delivered" ||

@@ -54,6 +54,7 @@ type ReplyRunState = {
   waitersByKey: Map<string, Set<ReplyRunWaiter>>;
   followupAdmissionBarriersByKey: Map<string, ReplyRunAdmissionBarrier>;
   successorAdmissionBarriersByKey: Map<string, ReplyRunAdmissionBarrier>;
+  sourceTurnByKey: Map<string, string>;
   evictOperationByOperation?: WeakMap<ReplyOperation, () => void>;
   clearOperationByOperation?: WeakMap<ReplyOperation, () => void>;
   executionStartedOperations?: WeakSet<ReplyOperation>;
@@ -70,6 +71,7 @@ export const replyRunState = resolveGlobalSingleton<ReplyRunState>(REPLY_RUN_STA
   waitersByKey: new Map<string, Set<ReplyRunWaiter>>(),
   followupAdmissionBarriersByKey: new Map<string, ReplyRunAdmissionBarrier>(),
   successorAdmissionBarriersByKey: new Map<string, ReplyRunAdmissionBarrier>(),
+  sourceTurnByKey: new Map<string, string>(),
   evictOperationByOperation: new WeakMap<ReplyOperation, () => void>(),
   executionStartedOperations: new WeakSet<ReplyOperation>(),
   lifecycleAdmissionByOperation: new WeakMap<ReplyOperation, ReplyOperationAdmission>(),
@@ -612,6 +614,7 @@ export function clearReplyRunState(params: {
   }
   replyRunState.activeRunsByKey.delete(params.sessionKey);
   replyRunState.activeSessionIdsByKey.delete(params.sessionKey);
+  replyRunState.sourceTurnByKey.delete(params.sessionKey);
   if (replyRunState.activeKeysBySessionId.get(params.sessionId) === params.sessionKey) {
     replyRunState.activeKeysBySessionId.delete(params.sessionId);
   }
