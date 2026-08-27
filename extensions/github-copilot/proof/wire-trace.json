@@ -1,0 +1,241 @@
+{
+  "environment": {
+    "host": "win32",
+    "node": "v26.5.1",
+    "mockEndpoint": "http://127.0.0.1:<ephemeral>",
+    "note": "Run on a developer workstation with a localhost mock standing in for the affected GitHub Enterprise Copilot tenant. No real GHE network traffic is generated; the source token is a synthetic placeholder."
+  },
+  "operatorConfig": {
+    "baseUrl": "https://copilot-api.acme.ghe.com",
+    "configuredIdentity": "vscode-chat"
+  },
+  "expected": {
+    "beforeIntegrationId": "copilot-developer-cli",
+    "afterIntegrationId": "vscode-chat",
+    "unrelatedHeaderMustNotLeak": "X-Private-Header"
+  },
+  "beforeWireTrace": [
+    {
+      "method": "GET",
+      "path": "/models",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "copilot-developer-cli"
+      },
+      "bodyBytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/models",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "copilot-developer-cli"
+      },
+      "bodyBytes": 0
+    },
+    {
+      "method": "POST",
+      "path": "/embeddings",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "copilot-developer-cli"
+      },
+      "bodyBytes": 50
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "copilot-developer-cli",
+        "x-initiator": "user"
+      },
+      "bodyBytes": 92
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "caller-identity",
+        "x-initiator": "user"
+      },
+      "bodyBytes": 92
+    }
+  ],
+  "afterWireTrace": [
+    {
+      "method": "GET",
+      "path": "/models",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "vscode-chat"
+      },
+      "bodyBytes": 0
+    },
+    {
+      "method": "GET",
+      "path": "/models",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "vscode-chat"
+      },
+      "bodyBytes": 0
+    },
+    {
+      "method": "POST",
+      "path": "/embeddings",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "vscode-chat"
+      },
+      "bodyBytes": 50
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "vscode-chat",
+        "x-initiator": "user"
+      },
+      "bodyBytes": 92
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "headers": {
+        "authorization": "Bearer <redacted:***7e2a>",
+        "copilot-integration-id": "caller-identity",
+        "x-initiator": "user"
+      },
+      "bodyBytes": 92
+    }
+  ],
+  "regression": {
+    "runA": [
+      {
+        "method": "GET",
+        "path": "/models",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 0
+      },
+      {
+        "method": "GET",
+        "path": "/models",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 0
+      },
+      {
+        "method": "POST",
+        "path": "/embeddings",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 50
+      },
+      {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat",
+          "x-initiator": "user"
+        },
+        "bodyBytes": 92
+      },
+      {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "caller-identity",
+          "x-initiator": "user"
+        },
+        "bodyBytes": 92
+      }
+    ],
+    "runB": [
+      {
+        "method": "GET",
+        "path": "/models",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 0
+      },
+      {
+        "method": "GET",
+        "path": "/models",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 0
+      },
+      {
+        "method": "POST",
+        "path": "/embeddings",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat"
+        },
+        "bodyBytes": 50
+      },
+      {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "vscode-chat",
+          "x-initiator": "user"
+        },
+        "bodyBytes": 92
+      },
+      {
+        "method": "POST",
+        "path": "/v1/messages",
+        "headers": {
+          "authorization": "Bearer <redacted:***7e2a>",
+          "copilot-integration-id": "caller-identity",
+          "x-initiator": "user"
+        },
+        "bodyBytes": 92
+      }
+    ]
+  },
+  "headerBuilder": {
+    "before": {
+      "fileBeforeFix": "extensions/github-copilot/runtime-identity.ts (at origin/main)",
+      "note": "buildCopilotRuntimeHeaders() ignored its arguments and always returned the hardcoded CLI identity; embeddings + stream code pathed the same default through a static `COPILOT_HEADERS_STATIC` map."
+    },
+    "after": {
+      "fileAfterFix": "extensions/github-copilot/runtime-identity.ts (at PR #127965 head 44f07942681d)",
+      "note": "buildCopilotRuntimeHeaders({ config, headers }) walks provider.headers, provider.request.headers, and caller headers looking for case-insensitive `copilot-integration-id`; embeddings + stream now share that builder."
+    }
+  },
+  "summary": {
+    "before": {
+      "catalogIntegrationId": "copilot-developer-cli",
+      "embeddingDiscoveryIntegrationId": "copilot-developer-cli",
+      "embeddingRequestIntegrationId": "copilot-developer-cli",
+      "streamIntegrationId": "copilot-developer-cli",
+      "streamCallerOverrideIntegrationId": "caller-identity"
+    },
+    "after": {
+      "catalogIntegrationId": "vscode-chat",
+      "embeddingDiscoveryIntegrationId": "vscode-chat",
+      "embeddingRequestIntegrationId": "vscode-chat",
+      "streamIntegrationId": "vscode-chat",
+      "streamCallerOverrideIntegrationId": "caller-identity"
+    }
+  }
+}
