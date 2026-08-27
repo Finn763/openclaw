@@ -858,17 +858,36 @@ describe("AcpSessionManager turn results", () => {
     });
   });
 
-  it("blocks parented ACP completion evidence that exceeds the verification limit", async () => {
+  it.each([
+    {
+      label: "accepts exact-limit evidence when a surrogate pair spans deltas",
+      requestId: "direct-parented-completion-exact-limit-run",
+      suffix: "",
+      overflowed: false,
+    },
+    {
+      label: "blocks parented ACP completion evidence one byte over the verification limit",
+      requestId: "direct-parented-completion-overflow-run",
+      suffix: "x",
+      overflowed: true,
+    },
+  ])("$label", async ({ requestId, suffix, overflowed }) => {
     await withAcpManagerTaskStateDir(async () => {
       const runtimeState = createRuntime();
-      const oversizedOutput = `Final report: ${"x".repeat(100 * 1024)}`;
+      const prefix = "Final report: ";
+      const filler = "x".repeat(100 * 1024 - Buffer.byteLength(prefix, "utf8") - 4);
       runtimeState.runtime.startTurn = vi.fn((input) => ({
         requestId: input.requestId,
         events: (async function* () {
           yield {
             type: "text_delta" as const,
             stream: "output" as const,
-            text: oversizedOutput,
+            text: `${prefix}${filler}\ud83d`,
+          };
+          yield {
+            type: "text_delta" as const,
+            stream: "output" as const,
+            text: `\ude00${suffix}`,
           };
         })(),
         result: Promise.resolve({
@@ -894,18 +913,21 @@ describe("AcpSessionManager turn results", () => {
         sessionKey: "agent:codex:acp:child-1",
         text: "Produce a final report",
         mode: "prompt",
-        requestId: "direct-parented-completion-overflow-run",
+        requestId,
       });
 
-      const record = requireTaskByRunId("direct-parented-completion-overflow-run");
+      const record = requireTaskByRunId(requestId);
       expectRecordFields(record, {
         ownerKey: "agent:main:main",
         childSessionKey: "agent:codex:acp:child-1",
         status: "succeeded",
-        terminalOutcome: "blocked",
-        terminalSummary:
-          "Required completion output exceeded the 100 KB verification limit; inspect the child session for the final deliverable.",
       });
+      expect(record.terminalOutcome).toBe(overflowed ? "blocked" : undefined);
+      expect(record.terminalSummary).toBe(
+        overflowed
+          ? "Required completion output exceeded the 100 KB verification limit; inspect the child session for the final deliverable."
+          : undefined,
+      );
       expect(record.progressSummary).toHaveLength(240);
       expect(record.progressSummary).toMatch(/…$/);
     });

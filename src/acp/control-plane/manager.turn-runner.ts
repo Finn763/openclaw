@@ -301,12 +301,12 @@ export async function runManagerTurn(params: {
                 );
                 // Keep semantic evidence attempt-local; only the bounded display summary is persisted.
                 if (taskContext && !completionEvidenceOverflowed) {
-                  completionEvidenceBytes += Buffer.byteLength(event.text, "utf8");
-                  completionEvidenceOverflowed =
-                    completionEvidenceBytes > ACP_COMPLETION_EVIDENCE_MAX_BYTES;
-                  completionEvidenceText = completionEvidenceOverflowed
-                    ? ""
-                    : completionEvidenceText + event.text;
+                  completionEvidenceText += event.text;
+                  completionEvidenceBytes = Buffer.byteLength(completionEvidenceText, "utf8");
+                  if (completionEvidenceBytes > ACP_COMPLETION_EVIDENCE_MAX_BYTES) {
+                    completionEvidenceOverflowed = true;
+                    completionEvidenceText = "";
+                  }
                 }
               }
               if (taskContext) {
