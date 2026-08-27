@@ -51,13 +51,14 @@ const PLANNING_CONTINUATION_PATTERN =
   /^(?:then|next|after|afterwards|once|before|while|when|and|or|but|so|to|for|with|as|like|plus|also|unless|until|since|because|however|meanwhile|whereas)\b/i;
 
 // A lowercase continuation that opens a fresh clause (copulas, auxiliaries,
-// or the sentence adverb "now" before a finite verb) marks a glued prose
-// boundary, e.g. "hooks.Targets are wired" or "suite.PinPoints now has ...".
+// or the sentence adverb "now" before a finite verb — any word that is not a
+// closed-class function word like "the"/"and"/"then") marks a glued prose
+// boundary, e.g. "hooks.Targets are wired" or "suite.PinPoints now works.".
 // Ordinary noun-phrase continuations ("foo.Bar results") keep the dotted
 // reference glued so progress narration is never split into a fake
 // deliverable.
 const SENTENCE_OPENING_CONTINUATION_PATTERN =
-  /^(?:am\b|is\b|are\b|was\b|were\b|be\b|been\b|being\b|has\b|have\b|had\b|do\b|does\b|did\b|will\b|would\b|shall\b|should\b|can\b|could\b|may\b|might\b|must\b|now\s+(?:has|have|had|is|are|was|were|will|would|can|could|may|might|must|does|do|did)\b)/i;
+  /^(?:am\b|is\b|are\b|was\b|were\b|be\b|been\b|being\b|has\b|have\b|had\b|do\b|does\b|did\b|will\b|would\b|shall\b|should\b|can\b|could\b|may\b|might\b|must\b|now\s+(?!(?:the|a|an|and|or|but|nor|so|to|for|with|as|at|by|from|of|in|on|into|onto|over|under|if|when|while|since|until|unless|because|although|though|that|this|these|those|there|here|it|i|you|he|she|we|they|them|his|her|its|our|your|their|not|no|only|just|still|yet|even|then|next|before|after|about|against|along|around|between|beyond|during|except|off|out|per|than|through|till|toward|towards|upon|via|within|without)\b)[a-z]+)/i;
 
 function insertMissingSentenceSpaces(value: string): string {
   // A terminator glued to a Capitalized word is a sentence boundary unless

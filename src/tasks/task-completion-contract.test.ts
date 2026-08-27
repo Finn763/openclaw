@@ -48,6 +48,22 @@ describe("required completion terminal results", () => {
     expect(result.terminalOutcome).toBeUndefined();
   });
 
+  it("does not block a report whose only glued boundary opens with a general finite verb after now (issue #129222)", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll inspect the suite.PinPoints now works.",
+    );
+
+    expect(result.terminalOutcome).toBeUndefined();
+  });
+
+  it("does not block a report whose only glued boundary opens with an inflected finite verb after now (issue #129222)", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll run the unit tests on a booted simulator, then the UI smoke suite.PinPoints now passes.",
+    );
+
+    expect(result.terminalOutcome).toBeUndefined();
+  });
+
   it("still blocks progress-only narration with glued sentence terminators", () => {
     const result = resolveRequiredCompletionTerminalResult(
       "I'll start by mapping the repo.I'll check the dependencies.I'll run the tests next.",
@@ -124,6 +140,15 @@ describe("required completion terminal results", () => {
 
   it("still blocks progress-only text when an ordinary continuation follows a dotted reference", () => {
     const result = resolveRequiredCompletionTerminalResult("I'll inspect foo.Bar results.");
+
+    expect(result.terminalOutcome).toBe("blocked");
+    expect(result.terminalSummary).toContain("progress-only");
+  });
+
+  it("still blocks progress-only text when now precedes a function word after a dotted reference", () => {
+    const result = resolveRequiredCompletionTerminalResult(
+      "I'll inspect foo.Bar now and then check the tests.",
+    );
 
     expect(result.terminalOutcome).toBe("blocked");
     expect(result.terminalSummary).toContain("progress-only");
