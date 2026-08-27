@@ -21,6 +21,7 @@ import {
   applyPluginUninstallDirectoryRemovalMock,
 } from "../cli/plugins-cli-test-helpers.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH } from "../config/nesting-limit.js";
 import { hasRetainedManagedNpmInstallMarker } from "./managed-npm-retention.js";
 import { recordPluginManifestInstallOwner } from "./manifest-install-owner.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
@@ -1055,5 +1056,55 @@ describe("persistPluginInstall", () => {
     expect(next.plugins?.allow).toEqual(["memory-core"]);
     expect(next.plugins?.deny).toEqual(["memory-lancedb"]);
     expect(next.plugins?.entries?.["memory-lancedb"]).toBeUndefined();
+  });
+});
+
+describe("resolveInstallConfigMutationPreflights include nesting guard", () => {
+  it("blocks over-deep included configs at the preflight instead of parsing them natively", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-install-preflight-nesting-"));
+    try {
+      const configPath = path.join(tempRoot, "openclaw.json");
+      const includePath = path.join(tempRoot, "plugins.json5");
+      const overDeep =
+        "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) +
+        "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+      const includeRaw = `{"plugins":{"allow":${overDeep}}}`;
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { $include: "plugins.json5" } }),
+        "utf8",
+      );
+      fs.writeFileSync(includePath, includeRaw, "utf8");
+
+      const { resolveInstallConfigMutationPreflights } = await import("./install-persistence.js");
+      const { hashConfigIncludeRaw, resolveConfigIncludeWritePath } = await import(
+        "../config/includes.js"
+      );
+      const resolvedTarget = resolveConfigIncludeWritePath({
+        configPath,
+        includePath,
+        allowedRoots: [],
+      });
+
+      const preflights = resolveInstallConfigMutationPreflights({
+        parsed: { plugins: { $include: "plugins.json5" } } as unknown as Record<string, unknown>,
+        snapshotPath: configPath,
+        writeOptions: {
+          includeFileHashesForWrite: { [includePath]: hashConfigIncludeRaw(includeRaw) },
+          includeFileTargetsForWrite: { [includePath]: resolvedTarget },
+        },
+      });
+
+      // Controlled blocked outcome: the shared pre-scan rejects the over-deep
+      // include before any parser runs, so it lands in the existing
+      // "could not be inspected" blocked-preflight handling instead of a
+      // native parse (which no JS try/catch can contain).
+      expect(preflights.pluginMutation.mode).toBe("blocked");
+      expect(preflights.pluginMutation.reason).toContain(
+        "could not be inspected at its snapshot target",
+      );
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });
