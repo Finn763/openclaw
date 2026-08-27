@@ -84,6 +84,21 @@ type DispatchCapture = {
   lastRunId?: string;
 };
 
+/**
+ * Projection of the gateway-to-pipeline dispatch seam. The seam mock is typed
+ * `(...args: unknown[]) => Promise<unknown>`, so implementations cast the
+ * first argument to this shape.
+ */
+type DispatchInboundParams = {
+  ctx: { Provider?: string; Body?: string; From?: string; To?: string };
+  replyOptions?: { runId?: string };
+  dispatcher: {
+    sendFinalReply: (payload: { text: string }) => boolean;
+    markComplete: () => void;
+    waitForIdle: () => Promise<void>;
+  };
+};
+
 const dispatchCapture: DispatchCapture = { calls: 0 };
 
 let ws: WebSocket;
@@ -117,28 +132,19 @@ beforeEach(async () => {
   }
   // Default dispatch: record the inbound, emit a final reply via the
   // dispatcher so the wire response and chat-final event settle.
-  dispatchInboundMessageMock.mockImplementation(
-    async (params: {
-      ctx: { Provider?: string; Body?: string; From?: string; To?: string };
-      replyOptions?: { runId?: string };
-      dispatcher: {
-        sendFinalReply: (payload: { text: string }) => boolean;
-        markComplete: () => void;
-        waitForIdle: () => Promise<void>;
-      };
-    }) => {
-      dispatchCapture.calls += 1;
-      dispatchCapture.lastCtx = params.ctx;
-      dispatchCapture.lastRunId = params.replyOptions?.runId;
-      params.dispatcher.sendFinalReply({ text: "after-fix follow-up reply" });
-      params.dispatcher.markComplete();
-      await params.dispatcher.waitForIdle();
-      return {
-        queuedFinal: true,
-        counts: { final: 1, block: 0, tool: 0 },
-      };
-    },
-  );
+  dispatchInboundMessageMock.mockImplementation(async (params: unknown) => {
+    const p = params as DispatchInboundParams;
+    dispatchCapture.calls += 1;
+    dispatchCapture.lastCtx = p.ctx;
+    dispatchCapture.lastRunId = p.replyOptions?.runId;
+    p.dispatcher.sendFinalReply({ text: "after-fix follow-up reply" });
+    p.dispatcher.markComplete();
+    await p.dispatcher.waitForIdle();
+    return {
+      queuedFinal: true,
+      counts: { final: 1, block: 0, tool: 0 },
+    };
+  });
 });
 
 /**
@@ -214,7 +220,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
         isStreaming: () => false,
         messageInjection: {
           isAvailable: () => true,
-          queueMessage: async () => ({ accepted: true }),
+          queueMessage: async () => {},
         },
       });
       replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
@@ -242,41 +248,32 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
       // dispatch (the production fallback boundary), then route the rejected
       // steer's inbound through the REAL follow-up queue with the recording
       // runner as the transport stand-in.
-      dispatchInboundMessageMock.mockImplementation(
-        async (params: {
-          ctx: { Provider?: string; Body?: string; From?: string; To?: string };
-          replyOptions?: { runId?: string };
-          dispatcher: {
-            sendFinalReply: (payload: { text: string }) => boolean;
-            markComplete: () => void;
-            waitForIdle: () => Promise<void>;
-          };
-        }) => {
-          dispatchCapture.calls += 1;
-          dispatchCapture.lastCtx = params.ctx;
-          dispatchCapture.lastRunId = params.replyOptions?.runId;
-          const accepted = enqueueFollowupRun(
-            key,
-            createQueueTestRun({ prompt: params.ctx.Body ?? "" }),
-            settings,
-            "message-id",
-            recordingRunner,
-            false,
-          );
-          expect(accepted).toBe(true);
-          expect(getFollowupQueueDepth(key)).toBe(1);
-          scheduleFollowupDrain(key, recordingRunner);
-          // Keep the wire settlement path alive: the dispatcher projection
-          // emits the chat-final event the client observes.
-          params.dispatcher.sendFinalReply({ text: params.ctx.Body ?? "" });
-          params.dispatcher.markComplete();
-          await params.dispatcher.waitForIdle();
-          return {
-            queuedFinal: true,
-            counts: { final: 1, block: 0, tool: 0 },
-          };
-        },
-      );
+      dispatchInboundMessageMock.mockImplementation(async (params: unknown) => {
+        const p = params as DispatchInboundParams;
+        dispatchCapture.calls += 1;
+        dispatchCapture.lastCtx = p.ctx;
+        dispatchCapture.lastRunId = p.replyOptions?.runId;
+        const accepted = enqueueFollowupRun(
+          key,
+          createQueueTestRun({ prompt: p.ctx.Body ?? "" }),
+          settings,
+          "message-id",
+          recordingRunner,
+          false,
+        );
+        expect(accepted).toBe(true);
+        expect(getFollowupQueueDepth(key)).toBe(1);
+        scheduleFollowupDrain(key, recordingRunner);
+        // Keep the wire settlement path alive: the dispatcher projection
+        // emits the chat-final event the client observes.
+        p.dispatcher.sendFinalReply({ text: p.ctx.Body ?? "" });
+        p.dispatcher.markComplete();
+        await p.dispatcher.waitForIdle();
+        return {
+          queuedFinal: true,
+          counts: { final: 1, block: 0, tool: 0 },
+        };
+      });
 
       const runId = `idem-iso-gw-${randomUUID()}`;
       const res = (await rpcReq(ws, "chat.send", {
@@ -351,7 +348,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
         isStreaming: () => false,
         messageInjection: {
           isAvailable: () => true,
-          queueMessage: async () => ({ accepted: true }),
+          queueMessage: async () => {},
         },
       });
       // Bind a different active source turn than the tombstoned one.
@@ -426,7 +423,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
         isStreaming: () => false,
         messageInjection: {
           isAvailable: () => true,
-          queueMessage: async () => ({ accepted: true }),
+          queueMessage: async () => {},
         },
       });
       replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
