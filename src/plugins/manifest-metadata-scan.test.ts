@@ -7,6 +7,7 @@ import { resolveBundledPluginSources } from "./bundled-sources.js";
 import { listChannelCatalogEntries } from "./channel-catalog-registry.js";
 import { resolvePluginConfigContractsById } from "./config-contracts.js";
 import { setGatewayPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH } from "../config/nesting-limit.js";
 import { writePersistedInstalledPluginIndexSync } from "./installed-plugin-index-store-write.js";
 import { listOpenClawPluginManifestMetadata } from "./manifest-metadata-scan.js";
 import { loadPluginManifest } from "./manifest.js";
@@ -479,5 +480,41 @@ describe("listOpenClawPluginManifestMetadata", () => {
     });
 
     expect(records.find((record) => record.manifest.id === "exact-plugin")).toBeTruthy();
+  });
+
+  it("ignores over-deep manifests via the shared nesting guard during metadata scan", () => {
+    const { pluginDir, manifestPath, env } = createGlobalPluginFixture("deep-scan-plugin");
+    const overDeep =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+    fs.writeFileSync(
+      manifestPath,
+      `{"id":"deep-scan-plugin","configSchema":{"deep":${overDeep}}}`,
+      "utf8",
+    );
+
+    // The scan still legitimately parses other manifests (for example the
+    // source-checkout tree), so only flag native-parser calls that receive the
+    // over-limit payload.
+    let deepPayloadReachedNativeParse = false;
+    const realJsonParse = JSON.parse.bind(JSON);
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementation(((
+      text: string,
+      ...rest: unknown[]
+    ) => {
+      if (typeof text === "string" && text.includes(overDeep)) {
+        deepPayloadReachedNativeParse = true;
+        throw new Error("native JSON.parse must not be reached for over-limit manifests");
+      }
+      return realJsonParse(text, ...(rest as [reviver?: never]));
+    }) as typeof JSON.parse);
+    try {
+      expectPluginAbsentAcrossTwoScans(pluginDir, env);
+      expect(deepPayloadReachedNativeParse).toBe(false);
+      expect(warningMessagesForPath(manifestPath).join("\n")).toContain(
+        `exceeds the maximum supported nesting depth of ${MAX_CONFIG_JSON_NESTING_DEPTH}`,
+      );
+    } finally {
+      parseSpy.mockRestore();
+    }
   });
 });

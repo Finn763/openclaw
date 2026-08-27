@@ -2,9 +2,11 @@
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString as normalizeTrimmedString } from "@openclaw/normalization-core/string-coerce";
+import { parseJsonWithNestingGuard } from "../config/nesting-limit.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveHomeRelativePath } from "../infra/home-dir.js";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
+import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveBundledPluginsDir } from "./bundled-dir.js";
 import { getGatewayPluginMetadataSnapshot } from "./current-plugin-metadata-state.js";
@@ -91,6 +93,18 @@ function readJsonObject(filePath: string): Record<string, unknown> | undefined {
         `Ignoring unreadable plugin manifest at ${filePath}: ${formatErrorMessage(file.failure.error ?? file.failure.reason)}`,
       );
     }
+    return undefined;
+  }
+  try {
+    // Shared parser boundary: discovery must reject over-limit manifests
+    // before any native parser runs, mirroring the canonical loader.
+    parseJsonWithNestingGuard(file.contents.toString("utf8"), `plugin manifest ${filePath}`, (text) =>
+      parseJsonWithJson5Fallback(text),
+    );
+  } catch (error) {
+    warn(
+      `Ignoring invalid plugin manifest at ${filePath}: failed to parse plugin manifest: ${formatErrorMessage(error)}`,
+    );
     return undefined;
   }
   const result = parsePluginCacheJson(file, { json5: true });

@@ -4,8 +4,10 @@ import { normalizeModelCatalog } from "@openclaw/model-catalog-core/model-catalo
 import { normalizeOptionalString } from "../../packages/normalization-core/src/string-coerce.js";
 import { normalizeTrimmedStringList } from "../../packages/normalization-core/src/string-normalization.js";
 import { validatePluginCategories } from "../../packages/plugin-package-contract/src/index.js";
+import { parseJsonWithNestingGuard } from "../config/nesting-limit.js";
 import { matchRootFileOpenFailure } from "../infra/boundary-file-read.js";
 import { isRecord } from "../utils.js";
+import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
 import { coerceDoctorSessionRouteStateOwners } from "./doctor-session-route-state-owner-types.js";
 import * as capabilityNormalizers from "./manifest-capability-normalizers.js";
 import { normalizeManifestCommandAliases } from "./manifest-command-aliases.js";
@@ -172,6 +174,22 @@ export function loadPluginManifest(
   const cacheResult = (result: PluginManifestLoadResult): PluginManifestLoadResult => {
     return (file.manifest = result);
   };
+  try {
+    // Shared parser boundary: canonical plugin manifests must never hand raw
+    // text to a native parser before the nesting pre-scan, so an over-limit
+    // manifest fails as a controlled depth error instead of a stack overflow.
+    parseJsonWithNestingGuard(
+      file.contents.toString("utf8"),
+      `plugin manifest ${manifestPath}`,
+      (text) => parseJsonWithJson5Fallback(text),
+    );
+  } catch (err) {
+    return cacheResult({
+      ok: false,
+      error: `failed to parse plugin manifest: ${String(err)}`,
+      manifestPath,
+    });
+  }
   const parsed = parsePluginCacheJson(file, { json5: true });
   if (!parsed.ok) {
     return cacheResult({
