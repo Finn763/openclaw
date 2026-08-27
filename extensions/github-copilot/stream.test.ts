@@ -5,7 +5,6 @@ import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import { streamSimple, type Context, type Model } from "openclaw/plugin-sdk/llm";
 import { buildCopilotIdeHeaders } from "openclaw/plugin-sdk/provider-auth";
 import { describe, expect, it, vi } from "vitest";
-import { COPILOT_RUNTIME_INTEGRATION_ID } from "./runtime-identity.js";
 import { wrapCopilotProviderStream } from "./stream.js";
 
 type ResponsesTestPayload = { input: Array<Record<string, unknown>> };
@@ -40,7 +39,7 @@ function buildExpectedCopilotHeaders(
 ): Record<string, string> {
   return {
     ...buildCopilotIdeHeaders(),
-    "Copilot-Integration-Id": COPILOT_RUNTIME_INTEGRATION_ID,
+    "Copilot-Integration-Id": "copilot-developer-cli",
     "Openai-Organization": "github-copilot",
     "x-initiator": initiator,
     ...(hasImages ? { "Copilot-Vision-Request": "true" } : {}),

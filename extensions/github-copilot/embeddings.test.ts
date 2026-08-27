@@ -386,6 +386,8 @@ describe("githubCopilotMemoryEmbeddingProviderAdapter", () => {
           models: {
             providers: {
               "github-copilot": {
+                baseUrl: TEST_BASE_URL,
+                models: [],
                 headers: {
                   "copilot-integration-id": "vscode-chat",
                   "X-Private-Header": "not-for-embeddings",

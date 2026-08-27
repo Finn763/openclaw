@@ -4,7 +4,7 @@ import { normalizeResolvedSecretInputString } from "openclaw/plugin-sdk/secret-i
 
 // GitHub's current fine-grained PAT contract is the Copilot CLI identity.
 // Keep this provider-owned instead of changing the legacy public SDK constant.
-export const COPILOT_RUNTIME_INTEGRATION_ID = "copilot-developer-cli";
+const COPILOT_RUNTIME_INTEGRATION_ID = "copilot-developer-cli";
 
 /** Keep catalog and inference identity aligned without forwarding unrelated configured secrets. */
 export function buildCopilotRuntimeHeaders(params?: {
