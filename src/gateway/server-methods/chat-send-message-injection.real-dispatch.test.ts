@@ -224,7 +224,9 @@ describe("terminal-receipt steer fence real-dispatch proof (#128971 round-6)", (
       // fake time for it to deliver, well short of the 10-second race arm.
       for (let i = 0; i < 10; i++) {
         await vi.advanceTimersByTimeAsync(50);
-        if (outcome !== undefined) break;
+        if (outcome !== undefined) {
+          break;
+        }
       }
       expect(outcome).toBe("dispatched");
       expect(dispatched.length).toBe(1);
