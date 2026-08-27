@@ -52,7 +52,7 @@ import os from "node:os";
 import path from "node:path";
 import { rawDataToString } from "@openclaw/gateway-client/websocket-data";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { WebSocket } from "ws";
+import type { RawData, WebSocket } from "ws";
 import { installQueueRuntimeErrorSilencer } from "../../auto-reply/reply/queue.test-helpers.js";
 import * as replyRunRegistryModule from "../../auto-reply/reply/reply-run-registry.js";
 import {
@@ -302,7 +302,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
       // the production broadcast path emits for this run.
       const runId = `idem-iso-gw-${randomUUID()}`;
       const chatFrames: ChatWirePayload[] = [];
-      const onChatFrame = (raw: unknown) => {
+      const onChatFrame = (raw: RawData) => {
         try {
           const frame = JSON.parse(rawDataToString(raw)) as {
             type?: string;
