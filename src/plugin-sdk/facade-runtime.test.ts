@@ -1,4 +1,14 @@
 // Facade runtime tests cover installed plugin facade loading and fallback resolution.
+//
+// The shared non-isolated runner strips OPENCLAW_CONFIG_PATH from the process
+// env at file collect start (restoreSharedTestHomeAfterEnvUnstub), so a value
+// inherited from the test process can only be observed by seeding it here at
+// module evaluation time — the earliest code that runs after that
+// sanitization. The facade guard tests below must snapshot and restore this
+// pre-existing value instead of unconditionally deleting it; the trailing
+// regression test proves they do.
+const inheritedConfigPathProbe = "inherited-probe-value";
+process.env.OPENCLAW_CONFIG_PATH = inheritedConfigPathProbe;
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -914,6 +924,7 @@ describe("plugin-sdk facade runtime", () => {
   });
 
   it("guards the no-snapshot facade config fallback against over-deep config files", () => {
+    const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
     const dir = createTempDirSync("openclaw-facade-guard-fallback-");
     const stateDir = path.join(dir, "state");
     const configPath = path.join(dir, "openclaw.json");
@@ -955,13 +966,18 @@ describe("plugin-sdk facade runtime", () => {
       expect(parseSpy).not.toHaveBeenCalledWith(expect.stringContaining(overDeep));
     } finally {
       parseSpy.mockRestore();
-      delete process.env.OPENCLAW_CONFIG_PATH;
+      if (originalConfigPath === undefined) {
+        delete process.env.OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.OPENCLAW_CONFIG_PATH = originalConfigPath;
+      }
       delete process.env.OPENCLAW_STATE_DIR;
       clearRuntimeConfigSnapshot();
     }
   });
 
   it("guards bundled openclaw.plugin.json manifest reads against over-deep payloads", () => {
+    const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
     const rootDir = createTrustedBundledFixtureRoot("openclaw-facade-manifest-guard-");
     const pluginDir = path.join(rootDir, "demo");
     fs.mkdirSync(pluginDir, { recursive: true });
@@ -1010,9 +1026,17 @@ describe("plugin-sdk facade runtime", () => {
       expect(parseSpy).not.toHaveBeenCalledWith(expect.stringContaining(overDeep));
     } finally {
       parseSpy.mockRestore();
-      delete process.env.OPENCLAW_CONFIG_PATH;
+      if (originalConfigPath === undefined) {
+        delete process.env.OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.OPENCLAW_CONFIG_PATH = originalConfigPath;
+      }
       delete process.env.OPENCLAW_STATE_DIR;
       clearRuntimeConfigSnapshot();
     }
+  });
+
+  it("preserves an inherited OPENCLAW_CONFIG_PATH across facade guard tests", () => {
+    expect(process.env.OPENCLAW_CONFIG_PATH).toBe(inheritedConfigPathProbe);
   });
 });
