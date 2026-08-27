@@ -1077,9 +1077,8 @@ describe("resolveInstallConfigMutationPreflights include nesting guard", () => {
       fs.writeFileSync(includePath, includeRaw, "utf8");
 
       const { resolveInstallConfigMutationPreflights } = await import("./install-persistence.js");
-      const { hashConfigIncludeRaw, resolveConfigIncludeWritePath } = await import(
-        "../config/includes.js"
-      );
+      const { hashConfigIncludeRaw, resolveConfigIncludeWritePath } =
+        await import("../config/includes.js");
       const resolvedTarget = resolveConfigIncludeWritePath({
         configPath,
         includePath,
