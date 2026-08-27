@@ -442,11 +442,6 @@ export function hasRestartRecoveryTerminalRun(
   );
 }
 
-/** True when the entry records at least one terminal source turn (tombstone). */
-export function hasAnyRestartRecoveryTerminalRun(entry: SessionEntry | null | undefined): boolean {
-  return normalizeRestartRecoveryTerminalRunIds(entry?.restartRecoveryTerminalRunIds) !== undefined;
-}
-
 /** Matches durable source ownership regardless of the surrounding run status. */
 export function hasRestartRecoverySourceClaim(
   entry: SessionEntry | null | undefined,
