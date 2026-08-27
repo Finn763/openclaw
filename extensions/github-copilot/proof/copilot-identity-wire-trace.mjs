@@ -34,7 +34,7 @@
 //   node extensions/github-copilot/proof/copilot-identity-wire-trace.mjs
 
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -597,8 +597,12 @@ async function main() {
   await mkdir(HERE, { recursive: true });
   const outFile = path.join(HERE, "wire-trace.json");
   await writeFile(outFile, traceJson + "\n", "utf8");
-
-  const traceSha = createHash("sha256").update(traceJson).digest("hex");
+  // Hash the bytes on disk so the printed sha256 matches what
+  // `sha256sum wire-trace.json` (or `git hash-object wire-trace.json`)
+  // reports, instead of the in-memory JSON string before the trailing
+  // newline is appended.
+  const onDisk = await readFile(outFile);
+  const traceSha = createHash("sha256").update(onDisk).digest("hex");
   console.log("=== PR #127965 wire-trace proof ===");
   console.log(`trace sha256: ${traceSha}`);
   console.log(`trace written to: ${outFile}`);

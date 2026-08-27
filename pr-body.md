@@ -90,7 +90,7 @@ ClawSweeper's 02:15Z review (Patch quality 4/6, no findings) left one gate: "No 
 | POST   | /v1/messages | `Bearer <redacted:***7e2a>` | `vscode-chat`                                  | absent           |
 | POST   | /v1/messages | `Bearer <redacted:***7e2a>` | `caller-identity` (caller override still wins) | absent           |
 
-**Section C — REGRESSION.** Two consecutive AFTER runs against the same mock were byte-identical on every wire header field. The full redacted trace (all 20 wire requests across BEFORE / AFTER / REGRESSION runA / REGRESSION runB) is committed in `extensions/github-copilot/proof/wire-trace.json` (sha256 `2f70c6d242149e1d69aa2b8875864e11662ea244593bd2462513eee48f35a1fd`). The companion vitest file `extensions/github-copilot/proof/copilot-identity-wire-trace.test.ts` re-asserts the AFTER behavior against a live mock and passes 7/7, covering the unit builder, catalog discovery, embeddings discovery + request, streaming inference, caller-override precedence, lowercase-key casing, and the no-comma-joined-pair invariant.
+**Section C — REGRESSION.** Two consecutive AFTER runs against the same mock were byte-identical on every wire header field. The full redacted trace (all 20 wire requests across BEFORE / AFTER / REGRESSION runA / REGRESSION runB) is committed in `extensions/github-copilot/proof/wire-trace.json` (sha256 `54d4b205e4e7595f2826597b4c3c547cf4864c287a678d590676facedd8da815`, matches `sha256sum wire-trace.json` against the on-disk file). The companion vitest file `extensions/github-copilot/proof/copilot-identity-wire-trace.test.ts` re-asserts the AFTER behavior against a live mock and passes 7/7, covering the unit builder, catalog discovery, embeddings discovery + request, streaming inference, caller-override precedence, lowercase-key casing, and the no-comma-joined-pair invariant.
 
 **Why this addresses the gate.** The ClawSweeper review asked for proof that the configured identity actually flows through to the wire in discovery and inference. The trace above shows that for both — the configured `vscode-chat` now reaches the catalog `/models`, the embeddings `/models`, the embeddings request, and the streaming `/v1/messages` call. Unrelated provider headers (e.g. `X-Private-Header`) are confirmed not to leak. A same-account affected-tenant trace is still gated by the open #127287; this harness reproduces the shared configured-header defect in the only way that's reproducible without standing up a real GitHub Enterprise tenant and is the closest achievable substitute.
 
@@ -98,7 +98,7 @@ ClawSweeper's 02:15Z review (Patch quality 4/6, no findings) left one gate: "No 
 
 - `extensions/github-copilot/proof/copilot-identity-wire-trace.mjs` — self-contained Node script (no plugin-sdk dependency) that generates the redacted trace and writes `wire-trace.json`. Runnable with `node extensions/github-copilot/proof/copilot-identity-wire-trace.mjs`.
 - `extensions/github-copilot/proof/copilot-identity-wire-trace.test.ts` — vitest regression that drives a localhost mock and asserts the AFTER header on every wire path.
-- `extensions/github-copilot/proof/wire-trace.json` — the published redacted trace; sha256 `2f70c6d242149e1d69aa2b8875864e11662ea244593bd2462513eee48f35a1fd`.
+- `extensions/github-copilot/proof/wire-trace.json` — the published redacted trace; sha256 `54d4b205e4e7595f2826597b4c3c547cf4864c287a678d590676facedd8da815`.
 
 Re-run with:
 
