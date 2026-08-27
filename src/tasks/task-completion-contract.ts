@@ -40,86 +40,14 @@ function matchesProgressOnlyPrefix(value: string): boolean {
   );
 }
 
-const KNOWN_FILE_EXTENSION_PATTERN =
-  /^(?:Kt|py|js|ts|json|yaml|toml|sh|mjs|cjs|go|rs|java|cs|h|cpp)(?![A-Za-z0-9_])/;
-
-const LOWERCASE_WORD_PATTERN = /^[a-z]+$/;
-
-const PLAIN_WORD_PATTERN = /^[a-zA-Z]+$/;
-
-const PLANNING_CONTINUATION_PATTERN =
-  /^(?:then|next|after|afterwards|once|before|while|when|and|or|but|so|to|for|with|as|like|plus|also|unless|until|since|because|however|meanwhile|whereas)\b/i;
-
-// A lowercase continuation that opens a fresh clause (copulas, auxiliaries,
-// or the sentence adverb "now" before a finite verb — any word that is not a
-// closed-class function word like "the"/"and"/"then") marks a glued prose
-// boundary, e.g. "hooks.Targets are wired" or "suite.PinPoints now works.".
-// Ordinary noun-phrase continuations ("foo.Bar results") keep the dotted
-// reference glued so progress narration is never split into a fake
-// deliverable.
-const SENTENCE_OPENING_CONTINUATION_PATTERN =
-  /^(?:am\b|is\b|are\b|was\b|were\b|be\b|been\b|being\b|has\b|have\b|had\b|do\b|does\b|did\b|will\b|would\b|shall\b|should\b|can\b|could\b|may\b|might\b|must\b|now\s+(?!(?:the|a|an|and|or|but|nor|so|to|for|with|as|at|by|from|of|in|on|into|onto|over|under|if|when|while|since|until|unless|because|although|though|that|this|these|those|there|here|it|i|you|he|she|we|they|them|his|her|its|our|your|their|not|no|only|just|still|yet|even|then|next|before|after|about|against|along|around|between|beyond|during|except|off|out|per|than|through|till|toward|towards|upon|via|within|without)\b)[a-z]+)/i;
-
-function insertMissingSentenceSpaces(value: string): string {
-  // A terminator glued to a Capitalized word is a sentence boundary unless
-  // the dot belongs to a structured dotted reference (see helper below).
-  return value.replace(/([.!?])(?=[A-Z])/g, (match, terminator, offset) => {
-    const charBeforeDot = offset > 0 ? value[offset - 1] : undefined;
-    if (terminator === "." && charBeforeDot !== undefined && /[A-Za-z0-9_]/.test(charBeforeDot)) {
-      let start = offset;
-      while (start > 0 && !/\s/.test(value[start - 1]!)) {
-        start -= 1;
-      }
-      let end = offset + 1;
-      while (end < value.length && !/\s/.test(value[end]!)) {
-        end += 1;
-      }
-      const token = value.slice(start, end);
-      if (isStructuredDottedToken(token, offset - start, value.slice(end))) {
-        return match;
-      }
-    }
-    return `${terminator} `;
-  });
-}
-
-// Only lowercase-word.Prose splits ("hooks.Targets", "suite.PinPoints") when
-// the continuation starts a new sentence; acronyms, camelCase, paths, known
-// extensions and punctuated/planning/ordinary continuations stay glued so
-// dotted references never fabricate a boundary.
-function isStructuredDottedToken(token: string, dotIndex: number, continuation: string): boolean {
-  const beforeDot = token.slice(0, dotIndex);
-  const afterDot = token.slice(dotIndex + 1);
-  if (
-    KNOWN_FILE_EXTENSION_PATTERN.test(afterDot) ||
-    /[/_-]/.test(token) ||
-    token.split(".").length > 2 ||
-    !LOWERCASE_WORD_PATTERN.test(beforeDot)
-  ) {
-    return true;
-  }
-  const rest = continuation.trimStart();
-  if (rest.length === 0 || PLANNING_CONTINUATION_PATTERN.test(rest) || /^[,;)]/.test(rest)) {
-    return true;
-  }
-  if (PLAIN_WORD_PATTERN.test(afterDot) && /^[a-z]/.test(rest)) {
-    // Ordinary continuations belong to the dotted reference ("foo.Bar
-    // results"); clause-opening continuations start a glued prose sentence
-    // ("hooks.Targets are wired", "suite.PinPoints now has ...").
-    return !SENTENCE_OPENING_CONTINUATION_PATTERN.test(rest);
-  }
-  return false;
-}
-
 function hasNonProgressFollowupSentence(value: string): boolean {
-  const spaced = insertMissingSentenceSpaces(value);
-  const boundary = /(?:[.!?:]|\s[-\u2013\u2014])\s+\S/.exec(spaced);
+  const boundary = /(?:[.!?:]|\s[-\u2013\u2014])\s+\S/.exec(value);
   if (!boundary) {
     return false;
   }
   const separatorEnd = boundary.index + boundary[0].length - 1;
-  const firstSentence = spaced.slice(0, separatorEnd).trim();
-  const rest = spaced.slice(separatorEnd).trim();
+  const firstSentence = value.slice(0, separatorEnd).trim();
+  const rest = value.slice(separatorEnd).trim();
   return matchesProgressOnlyPrefix(firstSentence) && !isProgressOnlyCompletionText(rest);
 }
 
