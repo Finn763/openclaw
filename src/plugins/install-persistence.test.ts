@@ -1099,9 +1099,11 @@ describe("resolveInstallConfigMutationPreflights include nesting guard", () => {
       // "could not be inspected" blocked-preflight handling instead of a
       // native parse (which no JS try/catch can contain).
       expect(preflights.pluginMutation.mode).toBe("blocked");
-      expect(preflights.pluginMutation.reason).toContain(
-        "could not be inspected at its snapshot target",
-      );
+      if (preflights.pluginMutation.mode === "blocked") {
+        expect(preflights.pluginMutation.reason).toContain(
+          "could not be inspected at its snapshot target",
+        );
+      }
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
