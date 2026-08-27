@@ -222,8 +222,9 @@ describe("terminal-receipt steer fence real-dispatch proof (#128971 round-6)", (
       });
       // The drain is microtask-driven with debounceMs 0; advance only enough
       // fake time for it to deliver, well short of the 10-second race arm.
-      for (let i = 0; i < 10 && outcome === undefined; i++) {
+      for (let i = 0; i < 10; i++) {
         await vi.advanceTimersByTimeAsync(50);
+        if (outcome !== undefined) break;
       }
       expect(outcome).toBe("dispatched");
       expect(dispatched.length).toBe(1);
