@@ -3,6 +3,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { parseJsonWithNestingGuard } from "../config/nesting-limit.js";
 import { resolveConfigPath } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { configMayNeedPluginAutoEnable } from "../config/plugin-auto-enable.shared.js";
