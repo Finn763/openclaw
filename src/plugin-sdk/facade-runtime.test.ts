@@ -960,4 +960,59 @@ describe("plugin-sdk facade runtime", () => {
       clearRuntimeConfigSnapshot();
     }
   });
+
+  it("guards bundled openclaw.plugin.json manifest reads against over-deep payloads", () => {
+    const rootDir = createTrustedBundledFixtureRoot("openclaw-facade-manifest-guard-");
+    const pluginDir = path.join(rootDir, "demo");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    const overDeep =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      `{"id":"demo","enabledByDefault":true,"deep":${overDeep}}`,
+      "utf8",
+    );
+
+    // No snapshots and no boundary config file: activation must read the
+    // bundled openclaw.plugin.json directly. The shared guard has to reject
+    // the over-limit manifest before the compatibility parser ever hands it
+    // to a native parser, so the record is treated as missing instead of
+    // enabling the facade.
+    clearRuntimeConfigSnapshot();
+    process.env.OPENCLAW_STATE_DIR = path.join(rootDir, "state");
+    process.env.OPENCLAW_CONFIG_PATH = path.join(rootDir, "missing-openclaw.json");
+    useBundledPluginDirOverrideForTest(rootDir);
+
+    let deepPayloadReachedNativeParse = false;
+    const realJsonParse = JSON.parse.bind(JSON);
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementation(((
+      text: string,
+      ...rest: unknown[]
+    ) => {
+      if (typeof text === "string" && text.includes(overDeep)) {
+        deepPayloadReachedNativeParse = true;
+      }
+      return realJsonParse(text, ...(rest as [reviver?: never]));
+    }) as typeof JSON.parse);
+    try {
+      const access = resolveActivationCheckBundledPluginPublicSurfaceAccess({
+        dirName: "demo",
+        artifactBasename: "api.js",
+        location: {
+          modulePath: path.join(pluginDir, "api.js"),
+          boundaryRoot: rootDir,
+        },
+        sourceExtensionsRoot: rootDir,
+        resolutionKey: "facade-manifest-guard",
+      });
+      expect(access.allowed).toBe(false);
+      expect(deepPayloadReachedNativeParse).toBe(false);
+      expect(parseSpy).not.toHaveBeenCalledWith(expect.stringContaining(overDeep));
+    } finally {
+      parseSpy.mockRestore();
+      delete process.env.OPENCLAW_CONFIG_PATH;
+      delete process.env.OPENCLAW_STATE_DIR;
+      clearRuntimeConfigSnapshot();
+    }
+  });
 });

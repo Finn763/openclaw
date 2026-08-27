@@ -136,7 +136,13 @@ function readBundledPluginManifestRecordFromDir(params: {
     return null;
   }
   try {
-    const raw = parseJsonWithJson5Fallback(fs.readFileSync(manifestPath, "utf8")) as {
+    const manifestText = fs.readFileSync(manifestPath, "utf8");
+    // Shared parser boundary: bundled manifest text must pre-scan nesting
+    // before the compatibility parser runs, matching the bounded contract
+    // used for boundary config reads during activation.
+    const raw = parseJsonWithNestingGuard(manifestText, "Bundled facade manifest JSON", (text) =>
+      parseJsonWithJson5Fallback(text),
+    ) as {
       id?: unknown;
       enabledByDefault?: unknown;
       channels?: unknown;
