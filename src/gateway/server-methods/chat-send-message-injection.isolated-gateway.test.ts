@@ -11,27 +11,35 @@
  *  - a real `installConnectedControlUiServerSuite` loopback Gateway with a
  *    real authenticated WebSocket client (no live credentials, no live
  *    channel);
- *  - the real `chat.send` RPC handler driving the real admission fence;
+ *  - the real `chat.send` RPC handler driving the real admission fence —
+ *    the production handler path, not the admission starter called directly;
  *  - a real persisted session entry carrying a terminal tombstone for the
  *    active source turn (real session store + real receipt classifier);
  *  - the real `replyRunRegistry` recording the active source-turn identity;
  *  - the real `beginReplyMessageInjectionTarget` (spied) — the only mocked
  *    boundary is `dispatchInboundMessage` (the gateway-to-pipeline seam),
- *    which the live transport would normally reach.
+ *    which the live transport would normally reach. The seam mock records
+ *    the projected inbound dispatch and then routes the rejected inbound
+ *    through the REAL follow-up queue machinery
+ *    (`enqueueFollowupRun` + `scheduleFollowupDrain`) into a recording
+ *    runner — the transport stand-in — which captures the outbound reply.
  *
  * The wire-level assertions show: the inbound is rejected at the injection-
- * start boundary, no steer is enqueued into the live run, the inbound falls
- * through to the follow-up dispatch path, and the wire response is the same
- * shape a real Telegram/WhatsApp dashboard client would observe. A positive
- * control (unrelated historical tombstone) shows the steer is enqueued, and
- * a before-fix control (classifier weakened) shows the silent-loss race.
+ * start boundary, no steer is enqueued into the live run (zero steer
+ * enqueues), the inbound falls through to the follow-up dispatch path
+ * exactly once (one follow-up dispatch), and the real queue drains exactly
+ * one reply into the recording transport (one observable reply carrying the
+ * inbound text). The wire response is the same shape a real
+ * Telegram/WhatsApp dashboard client would observe. A positive control
+ * (unrelated historical tombstone) shows the steer is enqueued, and a
+ * before-fix control (classifier weakened) shows the silent-loss race.
  */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSessionQueues,
   enqueueFollowupRun,
@@ -43,12 +51,12 @@ import {
   installQueueRuntimeErrorSilencer,
 } from "../../auto-reply/reply/queue.test-helpers.js";
 import type { FollowupRun, QueueSettings } from "../../auto-reply/reply/queue/types.js";
+import * as replyRunRegistryModule from "../../auto-reply/reply/reply-run-registry.js";
 import {
   forceClearReplyOperation,
   createReplyOperation,
 } from "../../auto-reply/reply/reply-run-registry.operation.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.registry.js";
-import * as replyRunRegistryModule from "../../auto-reply/reply/reply-run-registry.js";
 import {
   dispatchInboundMessageMock,
   installGatewayTestHooks,
@@ -80,10 +88,17 @@ const dispatchCapture: DispatchCapture = { calls: 0 };
 
 let ws: WebSocket;
 const sharedTempDirs: string[] = [];
+const queueKeys: string[] = [];
 let liveOperation: { key: string; op: { complete: () => void } } | undefined;
 
 installConnectedControlUiServerSuite((started) => {
   ws = started.ws;
+});
+
+afterEach(() => {
+  if (queueKeys.length > 0) {
+    clearSessionQueues(queueKeys.splice(0));
+  }
 });
 
 beforeEach(async () => {
@@ -102,26 +117,28 @@ beforeEach(async () => {
   }
   // Default dispatch: record the inbound, emit a final reply via the
   // dispatcher so the wire response and chat-final event settle.
-  dispatchInboundMessageMock.mockImplementation(async (params: {
-    ctx: { Provider?: string; Body?: string; From?: string; To?: string };
-    replyOptions?: { runId?: string };
-    dispatcher: {
-      sendFinalReply: (payload: { text: string }) => boolean;
-      markComplete: () => void;
-      waitForIdle: () => Promise<void>;
-    };
-  }) => {
-    dispatchCapture.calls += 1;
-    dispatchCapture.lastCtx = params.ctx;
-    dispatchCapture.lastRunId = params.replyOptions?.runId;
-    params.dispatcher.sendFinalReply({ text: "after-fix follow-up reply" });
-    params.dispatcher.markComplete();
-    await params.dispatcher.waitForIdle();
-    return {
-      queuedFinal: true,
-      counts: { final: 1, block: 0, tool: 0 },
-    };
-  });
+  dispatchInboundMessageMock.mockImplementation(
+    async (params: {
+      ctx: { Provider?: string; Body?: string; From?: string; To?: string };
+      replyOptions?: { runId?: string };
+      dispatcher: {
+        sendFinalReply: (payload: { text: string }) => boolean;
+        markComplete: () => void;
+        waitForIdle: () => Promise<void>;
+      };
+    }) => {
+      dispatchCapture.calls += 1;
+      dispatchCapture.lastCtx = params.ctx;
+      dispatchCapture.lastRunId = params.replyOptions?.runId;
+      params.dispatcher.sendFinalReply({ text: "after-fix follow-up reply" });
+      params.dispatcher.markComplete();
+      await params.dispatcher.waitForIdle();
+      return {
+        queuedFinal: true,
+        counts: { final: 1, block: 0, tool: 0 },
+      };
+    },
+  );
 });
 
 /**
@@ -202,9 +219,63 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
       });
       replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
 
-      const registrySpy = vi.spyOn(
-        replyRunRegistryModule,
-        "beginReplyMessageInjectionTarget",
+      const registrySpy = vi.spyOn(replyRunRegistryModule, "beginReplyMessageInjectionTarget");
+
+      // Recording transport: the real follow-up queue machinery drains the
+      // rejected inbound through this runner, which captures the outbound
+      // reply a live transport would carry (round-7: the reply is drained by
+      // the real queue, not authored by the seam mock).
+      const key = `iso-gw-followup-${randomUUID()}`;
+      queueKeys.push(key);
+      const settings: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
+      const dispatched: FollowupRun[] = [];
+      let resolveFirst: (() => void) | undefined;
+      const firstDispatched = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const recordingRunner = async (run: FollowupRun) => {
+        dispatched.push(run);
+        resolveFirst?.();
+      };
+
+      // Seam implementation for this proof: record the projected inbound
+      // dispatch (the production fallback boundary), then route the rejected
+      // steer's inbound through the REAL follow-up queue with the recording
+      // runner as the transport stand-in.
+      dispatchInboundMessageMock.mockImplementation(
+        async (params: {
+          ctx: { Provider?: string; Body?: string; From?: string; To?: string };
+          replyOptions?: { runId?: string };
+          dispatcher: {
+            sendFinalReply: (payload: { text: string }) => boolean;
+            markComplete: () => void;
+            waitForIdle: () => Promise<void>;
+          };
+        }) => {
+          dispatchCapture.calls += 1;
+          dispatchCapture.lastCtx = params.ctx;
+          dispatchCapture.lastRunId = params.replyOptions?.runId;
+          const accepted = enqueueFollowupRun(
+            key,
+            createQueueTestRun({ prompt: params.ctx.Body ?? "" }),
+            settings,
+            "message-id",
+            recordingRunner,
+            false,
+          );
+          expect(accepted).toBe(true);
+          expect(getFollowupQueueDepth(key)).toBe(1);
+          scheduleFollowupDrain(key, recordingRunner);
+          // Keep the wire settlement path alive: the dispatcher projection
+          // emits the chat-final event the client observes.
+          params.dispatcher.sendFinalReply({ text: params.ctx.Body ?? "" });
+          params.dispatcher.markComplete();
+          await params.dispatcher.waitForIdle();
+          return {
+            queuedFinal: true,
+            counts: { final: 1, block: 0, tool: 0 },
+          };
+        },
       );
 
       const runId = `idem-iso-gw-${randomUUID()}`;
@@ -229,6 +300,13 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
       expect(dispatchCapture.calls).toBe(1);
       expect(dispatchCapture.lastCtx?.Body).toBe("round-7 isolated-gateway inbound");
       expect(dispatchCapture.lastRunId).toBe(runId);
+
+      // Observable reply proof: the rejected inbound was drained through the
+      // real follow-up queue into the recording transport exactly once, and
+      // the captured outbound reply carries the inbound text.
+      await firstDispatched;
+      expect(dispatched.length).toBe(1);
+      expect(dispatched[0]?.prompt).toBe("round-7 isolated-gateway inbound");
 
       registrySpy.mockRestore();
     },
@@ -354,9 +432,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-7)"
       replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
 
       // Simulate the pre-fix classifier: never fail-closed.
-      const receiptModule = await import(
-        "../../config/sessions/restart-recovery-receipt.js"
-      );
+      const receiptModule = await import("../../config/sessions/restart-recovery-receipt.js");
       const classifierSpy = vi
         .spyOn(receiptModule, "isRestartRecoveryTerminalDeliveryFailClosed")
         .mockReturnValue(false);
