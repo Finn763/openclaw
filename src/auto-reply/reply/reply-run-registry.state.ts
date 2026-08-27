@@ -81,6 +81,7 @@ export const lifecycleAdmissionByOperation = (replyRunState.lifecycleAdmissionBy
   new WeakMap<ReplyOperation, ReplyOperationAdmission>());
 replyRunState.followupAdmissionBarriersByKey ??= new Map();
 replyRunState.successorAdmissionBarriersByKey ??= new Map();
+replyRunState.sourceTurnByKey ??= new Map();
 
 export function resolveReplyOperationAgentId(sessionKey: string, agentId?: string) {
   const owner = normalizeOptionalString(agentId) ?? parseAgentSessionKey(sessionKey)?.agentId;
