@@ -55,7 +55,14 @@ function readFacadeBoundaryConfigSafely(): {
       return { rawConfig: EMPTY_FACADE_BOUNDARY_CONFIG };
     }
     const raw = fs.readFileSync(configPath, "utf8");
-    const parsed = parseJsonWithJson5Fallback(raw);
+    // Shared parser boundary: the no-snapshot fallback reads the configured
+    // raw file directly, so it must pre-scan nesting before the compatibility
+    // parser runs. A native parser overflow would otherwise escape this
+    // function's catch, bypassing the bounded config contract during plugin
+    // activation.
+    const parsed = parseJsonWithNestingGuard(raw, "Facade boundary config JSON", (text) =>
+      parseJsonWithJson5Fallback(text),
+    );
     const rawConfig =
       parsed && typeof parsed === "object"
         ? (parsed as OpenClawConfig)

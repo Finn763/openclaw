@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
+import { MAX_CONFIG_JSON_NESTING_DEPTH } from "../config/nesting-limit.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginActivationSource, normalizePluginsConfig } from "../plugins/config-state.js";
 import { setCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
@@ -910,5 +911,53 @@ describe("plugin-sdk facade runtime", () => {
       allowed: true,
       pluginId: "demo-snapshot",
     });
+  });
+
+  it("guards the no-snapshot facade config fallback against over-deep config files", () => {
+    const dir = createTempDirSync("openclaw-facade-guard-fallback-");
+    const stateDir = path.join(dir, "state");
+    const configPath = path.join(dir, "openclaw.json");
+    const overDeep =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH + 1);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(configPath, `{"plugins":${overDeep}}`, "utf8");
+
+    // No runtime or source snapshot: the facade must read the configured raw
+    // file directly. The shared guard has to reject the over-limit payload
+    // before the compatibility parser ever hands it to a native parser.
+    clearRuntimeConfigSnapshot();
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    process.env.OPENCLAW_CONFIG_PATH = configPath;
+    useBundledPluginDirOverrideForTest(dir);
+
+    let deepPayloadReachedNativeParse = false;
+    const realJsonParse = JSON.parse.bind(JSON);
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementation(((
+      text: string,
+      ...rest: unknown[]
+    ) => {
+      if (typeof text === "string" && text.includes(overDeep)) {
+        deepPayloadReachedNativeParse = true;
+        throw new Error("native JSON.parse must not be reached for over-limit facade config");
+      }
+      return realJsonParse(text, ...(rest as [reviver?: never]));
+    }) as typeof JSON.parse);
+    try {
+      const access = resolveActivationCheckBundledPluginPublicSurfaceAccess({
+        dirName: "facade-guard-fallback-demo",
+        artifactBasename: "api.js",
+        location: null,
+        sourceExtensionsRoot: dir,
+        resolutionKey: "facade-guard-fallback",
+      });
+      expect(access.allowed).toBe(false);
+      expect(deepPayloadReachedNativeParse).toBe(false);
+      expect(parseSpy).not.toHaveBeenCalledWith(expect.stringContaining(overDeep));
+    } finally {
+      parseSpy.mockRestore();
+      delete process.env.OPENCLAW_CONFIG_PATH;
+      delete process.env.OPENCLAW_STATE_DIR;
+      clearRuntimeConfigSnapshot();
+    }
   });
 });

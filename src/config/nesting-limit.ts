@@ -104,26 +104,39 @@ function measureRawJsonNestingDepth(raw: string): number {
  * Iterative (explicit stack) so the measurement itself can never recurse.
  * Runs after parsing as a second layer: parsed values can also arrive from
  * in-process producers that never went through a raw-text boundary.
+ *
+ * Counting matches the raw scanner: only structural containers (arrays and
+ * records) advance the depth, and leaves never do, so a document with 512
+ * bracket levels measures as exactly 512 on both sides of the parser.
  */
 function measureJsonNestingDepth(value: unknown): number {
   let maxDepth = 0;
-  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 1 }];
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
   while (stack.length > 0) {
     const entry = stack.pop();
     if (!entry) {
       continue;
     }
-    if (entry.depth > maxDepth) {
-      maxDepth = entry.depth;
-    }
     const current = entry.value;
     if (Array.isArray(current)) {
+      const childDepth = entry.depth + 1;
+      if (childDepth > maxDepth) {
+        maxDepth = childDepth;
+      }
       for (const item of current) {
-        stack.push({ value: item, depth: entry.depth + 1 });
+        if (Array.isArray(item) || isRecord(item)) {
+          stack.push({ value: item, depth: childDepth });
+        }
       }
     } else if (isRecord(current)) {
+      const childDepth = entry.depth + 1;
+      if (childDepth > maxDepth) {
+        maxDepth = childDepth;
+      }
       for (const child of Object.values(current)) {
-        stack.push({ value: child, depth: entry.depth + 1 });
+        if (Array.isArray(child) || isRecord(child)) {
+          stack.push({ value: child, depth: childDepth });
+        }
       }
     }
   }

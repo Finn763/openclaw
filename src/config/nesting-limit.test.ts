@@ -89,7 +89,7 @@ describe("assertBoundedJsonNesting", () => {
 
   it("rejects pathological 100k-deep parsed values iteratively with an exact measured depth", () => {
     expect(() => assertBoundedJsonNesting(buildDeepArray(100_000), "Test JSON")).toThrowError(
-      formatConfigNestingDepthMessage("Test JSON", 100_001),
+      formatConfigNestingDepthMessage("Test JSON", 100_000),
     );
   });
 });
@@ -122,6 +122,23 @@ describe("nesting depth assertions", () => {
     expect(() => assertBoundedRawJsonNesting(raw, "Test JSON")).toThrowError(
       formatConfigNestingDepthMessage("Test JSON", MAX_CONFIG_JSON_NESTING_DEPTH + 1),
     );
+  });
+
+  it("measures the parsed boundary with the same structural counting as the raw scan", () => {
+    // 512 structural containers are the advertised maximum: the same document
+    // must pass both the raw scan and the post-parse assertion, and one more
+    // container must fail both, so the limit has one observable meaning.
+    const boundary =
+      "[".repeat(MAX_CONFIG_JSON_NESTING_DEPTH) + "]".repeat(MAX_CONFIG_JSON_NESTING_DEPTH);
+    expect(() =>
+      parseJsonWithNestingGuard(boundary, "Test JSON", (text) => JSON.parse(text)),
+    ).not.toThrow();
+    expect(() =>
+      assertBoundedJsonNesting(buildDeepArray(MAX_CONFIG_JSON_NESTING_DEPTH), "Test JSON"),
+    ).not.toThrow();
+    expect(() =>
+      assertBoundedJsonNesting(buildDeepArray(MAX_CONFIG_JSON_NESTING_DEPTH + 1), "Test JSON"),
+    ).toThrowError(ConfigNestingDepthError);
   });
 
   it("rejects deep raw text before any parser runs", () => {
