@@ -45,6 +45,32 @@ import { createChatSendMessageInjectionStarter } from "./chat-send-message-injec
 
 installQueueRuntimeErrorSilencer();
 
+/**
+ * Races a follow-up dispatch against a 10-second safety timeout and clears
+ * the losing timer on every path. Retaining the handle and clearing it after
+ * the race settles (unref first so the pending arm never keeps the Vitest
+ * worker alive) prevents a dangling timer from outliving every successful
+ * run. #128971 round-6 P2.
+ */
+async function settleDispatchRace(
+  firstDispatched: Promise<void>,
+): Promise<"dispatched" | "timeout"> {
+  let raceTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      firstDispatched.then(() => "dispatched" as const),
+      new Promise<"timeout">((resolve) => {
+        raceTimeout = setTimeout(() => resolve("timeout"), 10_000);
+        raceTimeout?.unref?.();
+      }),
+    ]);
+  } finally {
+    if (raceTimeout !== undefined) {
+      clearTimeout(raceTimeout);
+    }
+  }
+}
+
 describe("terminal-receipt steer fence real-dispatch proof (#128971 round-6)", () => {
   const fixture = useTempSessionsFixture("steer-fence-proof-");
   const sessionKey = "agent:main:dashboard:proof-1";
@@ -142,15 +168,71 @@ describe("terminal-receipt steer fence real-dispatch proof (#128971 round-6)", (
     expect(getFollowupQueueDepth(key)).toBe(1);
 
     scheduleFollowupDrain(key, recordingRunner);
-    const outcome = await Promise.race([
-      firstDispatched.then(() => "dispatched" as const),
-      new Promise<"timeout">((resolve) => {
-        setTimeout(() => resolve("timeout"), 10_000);
-      }),
-    ]);
+    const outcome = await settleDispatchRace(firstDispatched);
     expect(outcome).toBe("dispatched");
     expect(dispatched.length).toBe(1);
     expect(dispatched[0]?.prompt).toBe("fallback reply");
+  });
+
+  it("clears the dispatch-race timeout once the success branch wins, leaving no dangling worker timer", async () => {
+    vi.useFakeTimers();
+    try {
+      await replaceSessionEntry(
+        { sessionKey, storePath },
+        {
+          sessionId: "session-1",
+          status: "running",
+          restartRecoveryTerminalRunIds: ["source-1"],
+          restartRecoveryDeliverySourceRunId: "source-1",
+          updatedAt: 1,
+        },
+      );
+      const registrySpy = vi.spyOn(replyRunRegistry, "beginReplyMessageInjectionTarget");
+      const attempt = buildStarter(undefined)();
+      expect(attempt).toBeUndefined();
+      expect(registrySpy).not.toHaveBeenCalled();
+
+      const key = `proof-timeout-${Date.now()}-${Math.random()}`;
+      queueKeys.push(key);
+      const settings: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
+      const dispatched: FollowupRun[] = [];
+      let resolveFirst: (() => void) | undefined;
+      const firstDispatched = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const recordingRunner = async (run: FollowupRun) => {
+        dispatched.push(run);
+        resolveFirst?.();
+      };
+
+      const accepted = enqueueFollowupRun(
+        key,
+        createQueueTestRun({ prompt: "fallback reply" }),
+        settings,
+        "message-id",
+        recordingRunner,
+        false,
+      );
+      expect(accepted).toBe(true);
+
+      scheduleFollowupDrain(key, recordingRunner);
+      let outcome: "dispatched" | "timeout" | undefined;
+      void settleDispatchRace(firstDispatched).then((resolved) => {
+        outcome = resolved;
+      });
+      // The drain is microtask-driven with debounceMs 0; advance only enough
+      // fake time for it to deliver, well short of the 10-second race arm.
+      for (let i = 0; i < 10 && outcome === undefined; i++) {
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      expect(outcome).toBe("dispatched");
+      expect(dispatched.length).toBe(1);
+      // The losing 10-second safety timer must not survive the settled race:
+      // a live handle pointlessly keeps the Vitest worker alive.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("still steers when the persisted tombstone belongs to an unrelated prior source turn", async () => {
