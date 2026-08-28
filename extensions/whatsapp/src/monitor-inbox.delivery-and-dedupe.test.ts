@@ -419,14 +419,16 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
-  it("delivery coordinator bounds concurrent read-receipt dispatches when the socket stalls", async () => {
-    // Mirrors the production READ_RECEIPT_INFLIGHT_MAX bound in
-    // inbound/message-delivery.ts. Each distinct inbound message normally
-    // starts one socket readMessages operation; when the socket is stalled
-    // (markRead is bounded by the socket operation timeout, default 60s),
-    // a burst of distinct messages would otherwise start unbounded socket
-    // work. The window must cap concurrent acknowledgements without blocking
-    // message admission, and saturated receipts must stay retryable.
+  it("delivery coordinator bounds concurrent read-receipt dispatches and drains queued receipts when the socket recovers", async () => {
+    // Mirrors the production READ_RECEIPT_INFLIGHT_MAX /
+    // READ_RECEIPT_PENDING_MAX bounds in inbound/message-delivery.ts. Each
+    // distinct inbound message normally starts one socket readMessages
+    // operation; when the socket is stalled (markRead is bounded by the
+    // socket operation timeout, default 60s), a burst of distinct messages
+    // must not start unbounded socket work, and receipts that arrive while
+    // the in-flight window is full must be retained (queued) and drained
+    // once the socket recovers — never silently dropped — while admission
+    // stays unblocked and every message is acknowledged exactly once.
     const INFLIGHT_MAX = 32;
     const TOTAL = INFLIGHT_MAX + 3;
     const stalledAcks: Array<() => void> = [];
@@ -467,23 +469,109 @@ describe("web monitor inbox delivery and dedupe", () => {
     // Admission is never blocked by receipt saturation: every message is
     // delivered even while the acknowledgement window is full.
     await waitForMessageCalls(onMessage, TOTAL);
-    // Socket work is bounded to the in-flight window size.
+    // Socket work is bounded to the in-flight window size while the socket
+    // is stalled; the excess receipts are queued, not dropped.
     await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(INFLIGHT_MAX));
     expect(onMessage).toHaveBeenCalledTimes(TOTAL);
 
-    // Release the stalled acknowledgements; the window frees up again.
+    // Recover the socket and release the stalled acknowledgements; the
+    // queued receipts must drain automatically as the window frees up.
+    sock.readMessages.mockResolvedValue(undefined);
     for (const release of stalledAcks.splice(0)) {
       release();
     }
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(TOTAL), {
+      timeout: 5_000,
+    });
     await settleInboundWork();
 
-    // A saturated receipt was never recorded as sent: redelivering one of
-    // the skipped messages retries its acknowledgement instead of being
-    // suppressed by the success memo. The delivery itself stays deduped:
-    // the agent still sees each message exactly once.
-    const skippedIndex = INFLIGHT_MAX;
-    sock.ev.emit("messages.upsert", { type: "notify", messages: [messages[skippedIndex]] });
-    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(INFLIGHT_MAX + 1));
+    // Every message is acknowledged exactly once: no receipt was silently
+    // dropped during the stall and none double-fires after the drain.
+    expect(sock.readMessages).toHaveBeenCalledTimes(TOTAL);
+
+    // Redelivering an already-acknowledged message must not re-send its
+    // receipt; the delivery itself stays deduped.
+    sock.ev.emit("messages.upsert", { type: "notify", messages: [messages[INFLIGHT_MAX]] });
+    await settleInboundWork();
+    expect(sock.readMessages).toHaveBeenCalledTimes(TOTAL);
+    expect(onMessage).toHaveBeenCalledTimes(TOTAL);
+
+    await listener.close();
+  });
+
+  it("delivery coordinator bounds the pending receipt queue and keeps overflow retryable", async () => {
+    // Beyond the in-flight window AND the bounded pending queue, a receipt
+    // target can no longer be retained: it is dropped with a warn, but the
+    // message itself is still admitted, and a redelivery retries the receipt
+    // once capacity frees up — the loss is bounded and observable, never a
+    // silent unbounded swallow.
+    const INFLIGHT_MAX = 32;
+    const PENDING_MAX = 128;
+    const TOTAL = INFLIGHT_MAX + PENDING_MAX + 5;
+    const RETAINED = INFLIGHT_MAX + PENDING_MAX;
+    const stalledAcks: Array<() => void> = [];
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage, {
+      debounceMs: 20,
+      socketTiming: {
+        keepAliveIntervalMs: 25_000,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 60_000,
+      },
+      verbose: true,
+    });
+
+    const messages = Array.from(
+      { length: TOTAL },
+      (_, index) =>
+        buildNotifyMessageUpsert({
+          id: nextMessageId(`receipt-queue-overflow-${index}`),
+          remoteJid: "999@s.whatsapp.net",
+          text: `msg-${index}`,
+          timestamp: 1_700_000_000 + index,
+          pushName: "Tester",
+        }).messages[0],
+    );
+
+    sock.readMessages.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          stalledAcks.push(resolve);
+        }),
+    );
+
+    sock.ev.emit("messages.upsert", { type: "notify", messages });
+
+    // Admission is never blocked: every message is delivered even when both
+    // receipt windows are full. (Custom timeout: 165 messages through the
+    // debounced admission pipeline exceed the shared helper's fixed 5s
+    // window.)
+    await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(TOTAL), {
+      timeout: 20_000,
+    });
+    expect(sock.readMessages).toHaveBeenCalledTimes(INFLIGHT_MAX);
+
+    // Recover the socket: the in-flight window drains, then the bounded
+    // pending queue drains completely; only the beyond-bound overflow is
+    // dropped.
+    sock.readMessages.mockResolvedValue(undefined);
+    for (const release of stalledAcks.splice(0)) {
+      release();
+    }
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(RETAINED), {
+      timeout: 5_000,
+    });
+    await settleInboundWork();
+    expect(sock.readMessages).toHaveBeenCalledTimes(RETAINED);
+
+    // A dropped receipt was never recorded as sent: redelivering one of the
+    // overflow messages retries its acknowledgement. The delivery itself
+    // stays deduped: the agent still sees each message exactly once.
+    const droppedIndex = RETAINED;
+    sock.ev.emit("messages.upsert", { type: "notify", messages: [messages[droppedIndex]] });
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(RETAINED + 1), {
+      timeout: 5_000,
+    });
     expect(onMessage).toHaveBeenCalledTimes(TOTAL);
 
     await listener.close();

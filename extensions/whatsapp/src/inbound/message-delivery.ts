@@ -35,6 +35,7 @@ import {
   type WhatsAppNormalizedInboundMessage,
 } from "./message-normalization.js";
 import { addWhatsAppOutboundMentionsToContent } from "./outbound-mentions.js";
+import { createWhatsAppReadReceiptDispatcher } from "./read-receipt-dispatch.js";
 import { normalizeWhatsAppSendResult } from "./send-result.js";
 import type { WhatsAppAttachedSocketSession } from "./socket-session.js";
 import type { WebInboundCallbackMessage } from "./types.js";
@@ -150,83 +151,12 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         }
       : undefined;
 
-  // One read receipt per transport message id: the receive-time accepted path
-  // fires it, and later redeliveries (pending or completed verdicts) must not
-  // re-send it. Successful receipts and in-flight claims are tracked
-  // separately: a claim is only reserved while the markRead call is running
-  // and is released when it rejects or times out, so a later same-process
-  // redelivery can retry a lost receipt instead of being suppressed forever.
-  // The success memo is bounded like the prepared-inbound map; the in-flight
-  // claims are transient but are also bounded (READ_RECEIPT_INFLIGHT_MAX), so
-  // a stalled socket plus a burst of distinct messages cannot start unbounded
-  // socket work during the operation-timeout window.
-  const READ_RECEIPT_MEMO_MAX = 1000;
-  // Upper bound on concurrently stalled socket acknowledgements. markRead is
-  // bounded by the socket operation timeout (default 60s); while the socket
-  // is stalled, each distinct inbound message would otherwise start one more
-  // socket operation with no cap. When the window is full, new receipts are
-  // skipped without recording success, so a later redelivery can retry them
-  // once capacity frees up. Message admission is never blocked: the skip is
-  // instant and no queue is built.
-  const READ_RECEIPT_INFLIGHT_MAX = 32;
-  const readReceiptsSent = new Set<string>();
-  const readReceiptsInFlight = new Set<string>();
-  const buildReadReceiptDedupeKey = (target: WhatsAppReadReceiptTarget): string =>
-    createHash("sha256").update(`${target.remoteJid}\n${target.id}`).digest("hex");
-
-  const maybeMarkInboundAsRead = async (target: WhatsAppReadReceiptTarget | undefined) => {
-    if (!target || options.sendReadReceipts === false) {
-      return;
-    }
-    const dedupeKey = buildReadReceiptDedupeKey(target);
-    if (readReceiptsSent.has(dedupeKey)) {
-      logWhatsAppVerbose(
-        options.verbose,
-        `Skipping read receipt for already-acknowledged message ${target.id}`,
-      );
-      return;
-    }
-    if (readReceiptsInFlight.has(dedupeKey)) {
-      // A concurrent duplicate delivery is already acknowledging this
-      // message; it must not double-fire.
-      logWhatsAppVerbose(
-        options.verbose,
-        `Skipping read receipt for in-flight acknowledgement of message ${target.id}`,
-      );
-      return;
-    }
-    if (readReceiptsInFlight.size >= READ_RECEIPT_INFLIGHT_MAX) {
-      // The acknowledgement window is full of stalled socket operations.
-      // Skip without recording success so a later redelivery can retry this
-      // receipt once capacity frees up; admission of the message itself is
-      // unaffected.
-      logWhatsAppVerbose(
-        options.verbose,
-        `Read receipt dispatch saturated (${readReceiptsInFlight.size} in flight); deferring acknowledgement for message ${target.id}`,
-      );
-      return;
-    }
-    if (readReceiptsSent.size >= READ_RECEIPT_MEMO_MAX) {
-      const oldest = readReceiptsSent.keys().next().value;
-      if (oldest !== undefined) {
-        readReceiptsSent.delete(oldest);
-      }
-    }
-    readReceiptsInFlight.add(dedupeKey);
-    const { id, remoteJid, participant } = target;
-    try {
-      await socketSession.markRead(target);
-      // Record success only after the call resolves: a rejected or timed-out
-      // attempt releases its reservation below and stays retryable.
-      readReceiptsSent.add(dedupeKey);
-      const suffix = participant ? ` (participant ${participant})` : "";
-      logWhatsAppVerbose(options.verbose, `Marked message ${id} as read for ${remoteJid}${suffix}`);
-    } catch (err) {
-      logWhatsAppVerbose(options.verbose, `Failed to mark message ${id} read: ${String(err)}`);
-    } finally {
-      readReceiptsInFlight.delete(dedupeKey);
-    }
-  };
+  const readReceiptDispatcher = createWhatsAppReadReceiptDispatcher({
+    markRead: (target) => socketSession.markRead(target),
+    sendReadReceipts: options.sendReadReceipts !== false,
+    logVerbose: (message) => logWhatsAppVerbose(options.verbose, message),
+    logger: inboundLogger,
+  });
 
   const maybeLogSkippedSelfChatReadReceipt = (
     inbound: WhatsAppNormalizedInboundMessage,
@@ -246,16 +176,16 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       maybeLogSkippedSelfChatReadReceipt(inbound, target);
       return;
     }
-    await maybeMarkInboundAsRead(target);
+    await readReceiptDispatcher.maybeMarkInboundAsRead(target);
   };
 
   // Fire-and-track dispatch: the sequential upsert loop must never wait on a
   // read-receipt acknowledgement. markRead is bounded by the socket operation
   // timeout (default 60s), so one stalled receipt would otherwise delay the
   // admission of every later message in the same upsert. The dispatch is
-  // awaited nowhere; the dedupe reservation (readReceiptsInFlight) is taken
-  // synchronously when the async call starts and released when it settles,
-  // and errors are logged here so no rejection escapes unhandled.
+  // awaited nowhere; the dedupe reservation and bounded pending queue live in
+  // the read-receipt dispatcher, and errors are logged here so no rejection
+  // escapes unhandled.
   const dispatchReadReceipt = (
     inbound: WhatsAppNormalizedInboundMessage,
     target: WhatsAppReadReceiptTarget | undefined,
