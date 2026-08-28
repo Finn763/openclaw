@@ -6,12 +6,16 @@
 // module evaluation time — the earliest code that runs after that
 // sanitization. The facade guard tests below must snapshot and restore this
 // pre-existing value instead of unconditionally deleting it; the trailing
-// regression test proves they do.
+// regression test proves they do. Because the seed is a module-level
+// assignment, this file must undo it itself: the afterAll hook (and the
+// trailing test's own end-of-file restore) put the pre-seed environment back
+// so the synthetic value cannot leak into later files sharing the worker.
 const inheritedConfigPathProbe = "inherited-probe-value";
+const originalConfigPathBeforeSeed = process.env.OPENCLAW_CONFIG_PATH;
 process.env.OPENCLAW_CONFIG_PATH = inheritedConfigPathProbe;
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
 import { MAX_CONFIG_JSON_NESTING_DEPTH } from "../config/nesting-limit.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -125,6 +129,18 @@ afterEach(() => {
   } else {
     process.env.OPENCLAW_STATE_DIR = originalStateDir;
   }
+});
+
+function restoreSeededConfigPath(): void {
+  if (originalConfigPathBeforeSeed === undefined) {
+    delete process.env.OPENCLAW_CONFIG_PATH;
+  } else {
+    process.env.OPENCLAW_CONFIG_PATH = originalConfigPathBeforeSeed;
+  }
+}
+
+afterAll(() => {
+  restoreSeededConfigPath();
 });
 
 describe("plugin-sdk facade runtime", () => {
@@ -1036,7 +1052,13 @@ describe("plugin-sdk facade runtime", () => {
     }
   });
 
-  it("preserves an inherited OPENCLAW_CONFIG_PATH across facade guard tests", () => {
+  it("restores the process environment after facade guard tests", () => {
+    // The guard tests above must restore this file's seeded probe rather than
+    // unconditionally deleting it or leaving their own config paths behind.
     expect(process.env.OPENCLAW_CONFIG_PATH).toBe(inheritedConfigPathProbe);
+    // End-of-file: undo the module-level seed so later files sharing the
+    // worker observe the pre-seed environment instead of this synthetic value.
+    restoreSeededConfigPath();
+    expect(process.env.OPENCLAW_CONFIG_PATH).toBe(originalConfigPathBeforeSeed);
   });
 });
