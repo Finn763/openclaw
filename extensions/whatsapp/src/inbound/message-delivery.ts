@@ -239,7 +239,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     inbound: WhatsAppNormalizedInboundMessage,
     target: WhatsAppReadReceiptTarget | undefined,
   ) => {
-    maybeMarkNonSelfChatReadReceipt(inbound, target).catch((error) => {
+    maybeMarkNonSelfChatReadReceipt(inbound, target).catch((error: unknown) => {
       inboundLogger.warn(
         { error: formatError(error) },
         "failed dispatching WhatsApp receive-time read receipt",
