@@ -156,9 +156,19 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
   // separately: a claim is only reserved while the markRead call is running
   // and is released when it rejects or times out, so a later same-process
   // redelivery can retry a lost receipt instead of being suppressed forever.
-  // The success memo is bounded like the prepared-inbound map; in-flight
-  // claims are transient and clear as soon as their call settles.
+  // The success memo is bounded like the prepared-inbound map; the in-flight
+  // claims are transient but are also bounded (READ_RECEIPT_INFLIGHT_MAX), so
+  // a stalled socket plus a burst of distinct messages cannot start unbounded
+  // socket work during the operation-timeout window.
   const READ_RECEIPT_MEMO_MAX = 1000;
+  // Upper bound on concurrently stalled socket acknowledgements. markRead is
+  // bounded by the socket operation timeout (default 60s); while the socket
+  // is stalled, each distinct inbound message would otherwise start one more
+  // socket operation with no cap. When the window is full, new receipts are
+  // skipped without recording success, so a later redelivery can retry them
+  // once capacity frees up. Message admission is never blocked: the skip is
+  // instant and no queue is built.
+  const READ_RECEIPT_INFLIGHT_MAX = 32;
   const readReceiptsSent = new Set<string>();
   const readReceiptsInFlight = new Set<string>();
   const buildReadReceiptDedupeKey = (target: WhatsAppReadReceiptTarget): string =>
@@ -182,6 +192,17 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       logWhatsAppVerbose(
         options.verbose,
         `Skipping read receipt for in-flight acknowledgement of message ${target.id}`,
+      );
+      return;
+    }
+    if (readReceiptsInFlight.size >= READ_RECEIPT_INFLIGHT_MAX) {
+      // The acknowledgement window is full of stalled socket operations.
+      // Skip without recording success so a later redelivery can retry this
+      // receipt once capacity frees up; admission of the message itself is
+      // unaffected.
+      logWhatsAppVerbose(
+        options.verbose,
+        `Read receipt dispatch saturated (${readReceiptsInFlight.size} in flight); deferring acknowledgement for message ${target.id}`,
       );
       return;
     }

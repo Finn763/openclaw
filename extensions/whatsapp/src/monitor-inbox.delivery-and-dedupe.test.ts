@@ -419,6 +419,76 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
+  it("delivery coordinator bounds concurrent read-receipt dispatches when the socket stalls", async () => {
+    // Mirrors the production READ_RECEIPT_INFLIGHT_MAX bound in
+    // inbound/message-delivery.ts. Each distinct inbound message normally
+    // starts one socket readMessages operation; when the socket is stalled
+    // (markRead is bounded by the socket operation timeout, default 60s),
+    // a burst of distinct messages would otherwise start unbounded socket
+    // work. The window must cap concurrent acknowledgements without blocking
+    // message admission, and saturated receipts must stay retryable.
+    const INFLIGHT_MAX = 32;
+    const TOTAL = INFLIGHT_MAX + 3;
+    const stalledAcks: Array<() => void> = [];
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage, {
+      debounceMs: 20,
+      socketTiming: {
+        keepAliveIntervalMs: 25_000,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 60_000,
+      },
+      verbose: true,
+    });
+
+    const messages = Array.from(
+      { length: TOTAL },
+      (_, index) =>
+        buildNotifyMessageUpsert({
+          id: nextMessageId(`receipt-saturation-${index}`),
+          remoteJid: "999@s.whatsapp.net",
+          text: `msg-${index}`,
+          timestamp: 1_700_000_000 + index,
+          pushName: "Tester",
+        }).messages[0],
+    );
+
+    // Every acknowledgement stalls on the socket, so the in-flight window
+    // fills up and stays full.
+    sock.readMessages.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          stalledAcks.push(resolve);
+        }),
+    );
+
+    sock.ev.emit("messages.upsert", { type: "notify", messages });
+
+    // Admission is never blocked by receipt saturation: every message is
+    // delivered even while the acknowledgement window is full.
+    await waitForMessageCalls(onMessage, TOTAL);
+    // Socket work is bounded to the in-flight window size.
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(INFLIGHT_MAX));
+    expect(onMessage).toHaveBeenCalledTimes(TOTAL);
+
+    // Release the stalled acknowledgements; the window frees up again.
+    for (const release of stalledAcks.splice(0)) {
+      release();
+    }
+    await settleInboundWork();
+
+    // A saturated receipt was never recorded as sent: redelivering one of
+    // the skipped messages retries its acknowledgement instead of being
+    // suppressed by the success memo. The delivery itself stays deduped:
+    // the agent still sees each message exactly once.
+    const skippedIndex = INFLIGHT_MAX;
+    sock.ev.emit("messages.upsert", { type: "notify", messages: [messages[skippedIndex]] });
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(INFLIGHT_MAX + 1));
+    expect(onMessage).toHaveBeenCalledTimes(TOTAL);
+
+    await listener.close();
+  });
+
   it("delivery coordinator acknowledges a completed duplicate replayed after restart once", async () => {
     const onMessage = vi.fn(async () => undefined);
     const first = await startInboxMonitor(onMessage as InboxOnMessage);
