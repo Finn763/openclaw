@@ -227,6 +227,25 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     }
     await maybeMarkInboundAsRead(target);
   };
+
+  // Fire-and-track dispatch: the sequential upsert loop must never wait on a
+  // read-receipt acknowledgement. markRead is bounded by the socket operation
+  // timeout (default 60s), so one stalled receipt would otherwise delay the
+  // admission of every later message in the same upsert. The dispatch is
+  // awaited nowhere; the dedupe reservation (readReceiptsInFlight) is taken
+  // synchronously when the async call starts and released when it settles,
+  // and errors are logged here so no rejection escapes unhandled.
+  const dispatchReadReceipt = (
+    inbound: WhatsAppNormalizedInboundMessage,
+    target: WhatsAppReadReceiptTarget | undefined,
+  ) => {
+    maybeMarkNonSelfChatReadReceipt(inbound, target).catch((error) => {
+      inboundLogger.warn(
+        { error: formatError(error) },
+        "failed dispatching WhatsApp receive-time read receipt",
+      );
+    });
+  };
   const messageDebouncer = createWhatsAppInboundMessageDebouncer({
     debounceMs: options.debounceMs,
     onMessage: options.onMessage,
@@ -606,7 +625,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         finishPreparation(undefined);
         const inbound = await normalizeInboundMessage(msg);
         if (inbound) {
-          await maybeMarkNonSelfChatReadReceipt(inbound, buildReadReceiptTarget(inbound));
+          dispatchReadReceipt(inbound, buildReadReceiptTarget(inbound));
         }
       } else if (result.kind === "durable" && result.queueResult.kind === "accepted") {
         if (skipRecentOutboundEcho) {
@@ -629,11 +648,10 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
           if (acceptedInbound) {
             // Read receipts (blue ticks) fire at receive time: the sender sees
             // the message was read as soon as the gateway ingests it, before
-            // the agent turn starts (issue #128875).
-            await maybeMarkNonSelfChatReadReceipt(
-              acceptedInbound,
-              buildReadReceiptTarget(acceptedInbound),
-            );
+            // the agent turn starts (issue #128875). Fire-and-track only: a
+            // stalled acknowledgement must not delay the admission of later
+            // messages in the same upsert.
+            dispatchReadReceipt(acceptedInbound, buildReadReceiptTarget(acceptedInbound));
           }
         }
       } else {

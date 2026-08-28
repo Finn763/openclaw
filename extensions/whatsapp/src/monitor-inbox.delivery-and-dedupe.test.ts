@@ -332,6 +332,93 @@ describe("web monitor inbox delivery and dedupe", () => {
     await listener.close();
   });
 
+  it("delivery coordinator does not block later message admission on a stalled read receipt", async () => {
+    let releaseFirstReceipt: (() => void) | undefined;
+    let firstReceiptSettled = false;
+    const firstReceiptGate = new Promise<void>((resolve) => {
+      releaseFirstReceipt = resolve;
+    });
+    void firstReceiptGate.then(() => {
+      firstReceiptSettled = true;
+    });
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage, {
+      debounceMs: 20,
+      // The receive-time receipt for the first message stalls on the socket.
+      // It is bounded by the socket operation timeout, but the admission loop
+      // must not wait for it: the second message in the same upsert has to be
+      // admitted while the first receipt is still in flight.
+      socketTiming: {
+        keepAliveIntervalMs: 25_000,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 60_000,
+      },
+    });
+    const firstId = nextMessageId("receipt-stall-1");
+    const secondId = nextMessageId("receipt-stall-2");
+    const first = buildNotifyMessageUpsert({
+      id: firstId,
+      remoteJid: "999@s.whatsapp.net",
+      text: "first",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+    const second = buildNotifyMessageUpsert({
+      id: secondId,
+      remoteJid: "999@s.whatsapp.net",
+      text: "second",
+      timestamp: 1_700_000_001,
+      pushName: "Tester",
+    });
+
+    // Only the first receipt stalls; later receipts resolve normally.
+    sock.readMessages.mockImplementationOnce(() => firstReceiptGate);
+
+    sock.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [...first.messages, ...second.messages],
+    });
+
+    // Both messages are admitted and delivered while the first receipt is
+    // still stalled on the socket.
+    await waitForMessageCalls(onMessage, 2);
+    expect(inboundMessage(onMessage, 0).payload.body).toBe("first");
+    expect(inboundMessage(onMessage, 1).payload.body).toBe("second");
+    expect(sock.readMessages).toHaveBeenCalledWith([
+      {
+        remoteJid: "999@s.whatsapp.net",
+        id: firstId,
+        participant: undefined,
+        fromMe: false,
+      },
+    ]);
+    expect(firstReceiptSettled).toBe(false);
+
+    // Release the stalled receipt; each message must still have exactly one
+    // acknowledgement (no double-fire).
+    releaseFirstReceipt?.();
+    await vi.waitFor(() => expect(firstReceiptSettled).toBe(true));
+    await vi.waitFor(() => expect(sock.readMessages).toHaveBeenCalledTimes(2));
+    expect(sock.readMessages).toHaveBeenNthCalledWith(1, [
+      {
+        remoteJid: "999@s.whatsapp.net",
+        id: firstId,
+        participant: undefined,
+        fromMe: false,
+      },
+    ]);
+    expect(sock.readMessages).toHaveBeenNthCalledWith(2, [
+      {
+        remoteJid: "999@s.whatsapp.net",
+        id: secondId,
+        participant: undefined,
+        fromMe: false,
+      },
+    ]);
+
+    await listener.close();
+  });
+
   it("delivery coordinator acknowledges a completed duplicate replayed after restart once", async () => {
     const onMessage = vi.fn(async () => undefined);
     const first = await startInboxMonitor(onMessage as InboxOnMessage);
