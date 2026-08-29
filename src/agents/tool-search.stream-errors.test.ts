@@ -38,7 +38,12 @@ async function rejectedMessage(promise: Promise<unknown>): Promise<string> {
   await expect(promise).rejects.toBeInstanceOf(Error);
   return promise.then(
     () => "",
-    (error: Error) => error.message,
+    (error: unknown) => {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      return error.message;
+    },
   );
 }
 
@@ -155,9 +160,13 @@ describe("tool-search code-mode stream errors", () => {
     async (stderrFirst) => {
       vi.useFakeTimers();
       const { child, stderr, promise, settled } = startChild();
-      if (stderrFirst) stderr.emit("close");
+      if (stderrFirst) {
+        stderr.emit("close");
+      }
       child.emit("exit", 0, null);
-      if (!stderrFirst) stderr.emit("close");
+      if (!stderrFirst) {
+        stderr.emit("close");
+      }
       child.emit("close", 0, null);
       await vi.advanceTimersByTimeAsync(249);
       expect(settled).not.toHaveBeenCalled();
@@ -186,8 +195,11 @@ describe("tool-search code-mode stream errors", () => {
       const { child, promise } = startChild(controller.signal);
       const failure = rejectedMessage(promise);
       child.emit("exit", 1, null);
-      if (kind === "abort") controller.abort();
-      else await vi.advanceTimersByTimeAsync(1000);
+      if (kind === "abort") {
+        controller.abort();
+      } else {
+        await vi.advanceTimersByTimeAsync(1000);
+      }
       expect(await failure).toBe(
         kind === "abort" ? "tool_search_code aborted" : "tool_search_code timed out",
       );
@@ -256,11 +268,16 @@ describe("tool-search code-mode stream errors", () => {
       await vi.advanceTimersByTimeAsync(1000);
     }
     const result = await outcome;
-    if (terminal === "result-success") expect(result).toBe(7);
-    else expect(result).toBeInstanceOf(Error);
+    if (terminal === "result-success") {
+      expect(result).toBe(7);
+    } else {
+      expect(result).toBeInstanceOf(Error);
+    }
     expect(bridgeSignal?.aborted).toBe(true);
     expect(aborted).toHaveBeenCalledOnce();
-    if (terminal === "abort") expect(bridgeSignal?.reason).toBe(reason);
+    if (terminal === "abort") {
+      expect(bridgeSignal?.reason).toBe(reason);
+    }
     if (terminal === "timeout") {
       expect(bridgeSignal?.reason).toMatchObject({ message: "tool_search_code timed out" });
     }
