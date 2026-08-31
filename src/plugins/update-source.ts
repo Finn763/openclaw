@@ -15,6 +15,7 @@ import {
   isPrereleaseResolutionAllowed,
   isPrereleaseSemverVersion,
   parseRegistryNpmSpec,
+  resolveOpenClawReleaseCohortVersion,
 } from "../infra/npm-registry-spec.js";
 import {
   comparePackageUpdateVersions,
@@ -469,6 +470,45 @@ export function isTrustedSourceLinkedOfficialBridgeNpmInstall(params: {
   return Boolean(officialPackageName && requestedPackageName === officialPackageName);
 }
 
+/**
+ * Fix #133810: heal a stale official-plugin pin to the gateway cohort on a plain
+ * `plugins update <id>` (no explicit override, no official bulk sync), mirroring
+ * the drift warning's `resolvePluginVersionDriftUpdateCommand` target. A pin like
+ * `@openclaw/discord@2026.7.1` under a `2026.8.x` gateway otherwise reinstalls
+ * the stale cohort and leaves the plugin crashed until the operator adds
+ * `@latest`. Non-official specs and same-cohort pins pass through untouched.
+ */
+function resolveGatewayCohortPinnedOfficialSpec(params: {
+  spec: string;
+  officialPackageName: string | undefined;
+  coreVersion: string | undefined;
+}): string {
+  if (!params.officialPackageName || !params.coreVersion) {
+    return params.spec;
+  }
+  const parsed = parseRegistryNpmSpec(params.spec);
+  if (parsed?.selectorKind !== "exact-version" || parsed.name !== params.officialPackageName) {
+    return params.spec;
+  }
+  const pinnedVersion = parsed.selector;
+  if (
+    !pinnedVersion ||
+    !isExactSemverVersion(pinnedVersion) ||
+    !isExactSemverVersion(params.coreVersion) ||
+    !/^2026\.\d+\.\d+/.test(pinnedVersion)
+  ) {
+    return params.spec;
+  }
+  const coreCohort = resolveOpenClawReleaseCohortVersion(params.coreVersion);
+  if (resolveOpenClawReleaseCohortVersion(pinnedVersion) === coreCohort) {
+    return params.spec;
+  }
+  const gatewaySpec = `${params.officialPackageName}@${coreCohort}`;
+  return parseRegistryNpmSpec(gatewaySpec)?.selectorKind === "exact-version"
+    ? gatewaySpec
+    : params.spec;
+}
+
 /** Shares recorded target and catalog replacement precedence with update admission. */
 export function resolveNpmUpdateTarget(params: {
   record: PluginInstallRecord;
@@ -490,13 +530,22 @@ export function resolveNpmUpdateTarget(params: {
     specOverride ??
     params.record.spec ??
     (params.syncOfficialPluginInstalls ? official?.npmSpec : undefined);
+  const officialPackageName = resolveNpmSpecPackageName(official?.npmSpec);
+  const healable =
+    spec !== undefined && specOverride === undefined && !params.syncOfficialPluginInstalls;
   return {
     specOverride,
     target: spec
       ? {
-          spec,
+          spec: healable
+            ? resolveGatewayCohortPinnedOfficialSpec({
+                spec,
+                officialPackageName,
+                coreVersion: params.coreVersion,
+              })
+            : spec,
           updateChannel: params.updateChannel,
-          officialPackageName: resolveNpmSpecPackageName(official?.npmSpec),
+          officialPackageName,
           coreVersion: params.coreVersion,
           versionBoundToCore: params.versionBoundToCore,
           timeoutMs: params.timeoutMs,
