@@ -421,9 +421,20 @@ describe("application session placement startup", () => {
       pendingRunId: "message-stable",
       message: {
         role: "user",
-        __openclaw: { idempotencyKey: "message-stable:user", seq: 7 },
+        __openclaw: { idempotencyKey: "message-stable:user" },
       },
     });
+    {
+      const stored = initialUserMessage.read(input.recovery.sessionKey, client)?.message as
+        | {
+            __openclaw?: Record<string, unknown>;
+          }
+        | undefined;
+      // eslint-disable-next-line no-underscore-dangle -- test inspects internal __openclaw field
+      expect((stored as { __openclaw?: Record<string, unknown> })?.__openclaw).not.toHaveProperty(
+        "seq",
+      );
+    }
     expect(sessions.refresh).not.toHaveBeenCalled();
     startup.dispose();
   });

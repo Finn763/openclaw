@@ -145,13 +145,13 @@ export function applyChatPendingInputs(
     const projection = getChatSessionProjection(state, state.chatMessages, scope);
     // Custody replaces only this pane's provisional user copy, never a canonical
     // message or active assistant state that happens to share the run correlation.
+    // Retirement is by submission identity (pendingRunId) to avoid transient
+    // duplicate during worktree preparation when a speculative seq was stamped.
     const entries = projection.entries.filter(
       (entry) =>
         !(
           entry.pending &&
           entry.identity?.role === "user" &&
-          entry.identity.id === null &&
-          entry.identity.sequence === null &&
           acceptedRunIds.has(entry.pendingRunId ?? "")
         ),
     );

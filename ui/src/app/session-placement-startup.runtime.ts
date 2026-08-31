@@ -157,7 +157,6 @@ export default function createApplicationPlacementStartupRuntime(
       attachments: entry.attachments,
       createdAt: entry.createdAt,
       runId: result.messageId,
-      sequence: result.messageSeq,
     });
     if (message) {
       params.initialUserMessage.prepare({
