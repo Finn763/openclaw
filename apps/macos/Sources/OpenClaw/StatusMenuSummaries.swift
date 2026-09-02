@@ -3,7 +3,6 @@ import Foundation
 import Observation
 import OpenClawKit
 import QuartzCore
-import SwiftUI
 
 @MainActor
 @Observable
@@ -73,20 +72,33 @@ final class StatusMenuSummaries: NSObject {
 
     func configureAutomations(_ item: NSMenuItem) {
         let jobs = self.enabledJobs
-        let count = jobs.count
         let detail = if let next = jobs.compactMap(\.nextRunDate).min() {
-            String(localized: "\(count) jobs · next \(Self.relativeRun(next))")
+            "\(jobs.count) · \(Self.relativeRun(next))"
         } else {
-            String(localized: "\(count) jobs")
+            String(jobs.count)
         }
-        item.title = String(localized: "Automations · \(detail)")
-        item.image = NSImage(systemSymbolName: "clock.badge.checkmark", accessibilityDescription: nil)
+        item.title = String(localized: "Automations")
+        item.image = nil
+        StatusMenuRenderer.configureHostedView(
+            item,
+            rootView: StatusSummaryCard(
+                symbolName: "clock.badge.checkmark",
+                title: String(localized: "Automations"),
+                detail: detail),
+            highlights: true)
 
         var entries = jobs.prefix(8).map { job in
-            MenuEntry(id: "cron.job.\(job.id)") { item in
-                let next = job.nextRunDate.map(Self.relativeRun)
-                item.title = next.map { "\(job.displayName) · \($0)" } ?? job.displayName
-                item.isEnabled = false
+            MenuEntry(id: "cron.job.\(job.id)") { [weak self] item in
+                item.title = job.displayName
+                item.target = self
+                item.action = #selector(Self.openAutomations(_:))
+                item.isEnabled = true
+                StatusMenuRenderer.configureHostedView(
+                    item,
+                    rootView: StatusJobRow(
+                        name: job.displayName,
+                        nextRun: job.nextRunDate.map(Self.relativeRun)),
+                    highlights: true)
             }
         }
         if !entries.isEmpty {
@@ -102,19 +114,21 @@ final class StatusMenuSummaries: NSObject {
     }
 
     func configureUsage(_ item: NSMenuItem) {
-        item.title = if let summary = self.usageSummary {
-            String(localized: "Usage · \(summary)")
-        } else {
-            String(localized: "Usage")
-        }
-        item.image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: nil)
+        item.title = String(localized: "Usage")
+        item.image = nil
+        StatusMenuRenderer.configureHostedView(
+            item,
+            rootView: StatusSummaryCard(
+                symbolName: "chart.bar.xaxis",
+                title: String(localized: "Usage"),
+                detail: self.usageSummary),
+            highlights: true)
 
         var entries = self.orderedUsageRows.map { row in
             MenuEntry(id: "usage.provider.\(row.id)") { item in
-                item.title = row.titleText
+                item.title = StatusMenuMetrics.fittedTitle(row.titleText)
                 item.isEnabled = false
-                Self.updateHostedView(item, rootView: AnyView(
-                    UsageMenuLabelView(row: row, width: StatusMenuRenderer.cardWidth)))
+                StatusMenuRenderer.configureHostedView(item, rootView: UsageMenuLabelView(row: row))
             }
         }
 
@@ -133,8 +147,7 @@ final class StatusMenuSummaries: NSObject {
             entries.append(MenuEntry(id: "usage.cost.chart") { item in
                 item.title = String(localized: "Usage cost (30 days)")
                 item.isEnabled = false
-                Self.updateHostedView(item, rootView: AnyView(
-                    CostUsageHistoryMenuView(summary: summary, width: StatusMenuRenderer.cardWidth)))
+                StatusMenuRenderer.configureHostedView(item, rootView: CostUsageHistoryMenuView(summary: summary))
             })
         } else if let error = self.costError {
             if !entries.isEmpty {
@@ -147,8 +160,15 @@ final class StatusMenuSummaries: NSObject {
 
     func configureDevices(_ item: NSMenuItem) {
         let count = self.connectedDeviceCount
-        item.title = String(localized: "Devices · \(count) connected")
-        item.image = NSImage(systemSymbolName: "laptopcomputer.and.iphone", accessibilityDescription: nil)
+        item.title = String(localized: "Devices")
+        item.image = nil
+        StatusMenuRenderer.configureHostedView(
+            item,
+            rootView: StatusSummaryCard(
+                symbolName: "laptopcomputer.and.iphone",
+                title: String(localized: "Devices"),
+                detail: String(format: String(localized: "%lld connected"), count)),
+            highlights: true)
 
         var entries: [MenuEntry] = []
         if let gateway = self.gatewayEntry() {
@@ -162,7 +182,7 @@ final class StatusMenuSummaries: NSObject {
             entries.append(.info(id: "devices.connecting", title: String(localized: "Connecting…")))
         } else if self.isConnected {
             if let error = self.nodes.lastError?.nonEmpty {
-                entries.append(.info(id: "devices.error", title: String(localized: "Error: \(error)")))
+                entries.append(.info(id: "devices.error", title: String(format: String(localized: "Error: %@"), error)))
             } else if let message = self.nodes.statusMessage?.nonEmpty {
                 entries.append(.info(id: "devices.status", title: message))
             }
@@ -189,17 +209,12 @@ final class StatusMenuSummaries: NSObject {
         self.reconcileSubmenu(for: item, entries: entries)
     }
 
-    func configureGateway(_ item: NSMenuItem, gatewayID: String, isAlternate: Bool) {
-        guard let gateway = DashboardGatewayMenuModel
-            .items(from: DashboardManager.shared.gatewayEntries)
-            .first(where: { $0.id == gatewayID })
-        else { return }
-
-        item.identifier = NSUserInterfaceItemIdentifier(gatewayID)
+    func configureGateway(_ item: NSMenuItem, gateway: DashboardGatewayMenuItem, isAlternate: Bool) {
+        item.identifier = NSUserInterfaceItemIdentifier(gateway.id)
         item.target = self
         item.isAlternate = isAlternate
         if isAlternate {
-            item.title = String(localized: "Set \(gateway.name) as Primary…")
+            item.title = String(format: String(localized: "Set %@ as Primary…"), gateway.name)
             item.action = #selector(Self.setPrimary(_:))
             item.keyEquivalentModifierMask = [.option]
             item.image = nil
@@ -211,6 +226,7 @@ final class StatusMenuSummaries: NSObject {
             item.image = Self.gatewayImage(health: gateway.health, name: gateway.name)
             item.state = gateway.isPrimary ? .on : .off
         }
+        item.title = StatusMenuMetrics.fittedTitle(item.title)
     }
 
     private var enabledJobs: [CronJob] {
@@ -332,10 +348,10 @@ final class StatusMenuSummaries: NSObject {
         if delta <= 0 { return String(localized: "due") }
         if delta < 60 { return String(localized: "in <1m") }
         let minutes = Int(round(delta / 60))
-        if minutes < 60 { return String(localized: "in \(minutes)m") }
+        if minutes < 60 { return String(format: String(localized: "in %lldm"), minutes) }
         let hours = Int(round(Double(minutes) / 60))
-        if hours < 48 { return String(localized: "in \(hours)h") }
-        return String(localized: "in \(Int(round(Double(hours) / 24)))d")
+        if hours < 48 { return String(format: String(localized: "in %lldh"), hours) }
+        return String(format: String(localized: "in %lldd"), Int(round(Double(hours) / 24)))
     }
 
     @objc
@@ -358,11 +374,11 @@ final class StatusMenuSummaries: NSObject {
     private static func gatewayImage(health: DashboardGatewayHealth, name: String) -> NSImage? {
         let (symbol, color, accessibility): (String, NSColor, String) = switch health {
         case .ok:
-            ("circle.fill", .systemGreen, String(localized: "\(name), healthy"))
+            ("circle.fill", .systemGreen, String(format: String(localized: "%@, healthy"), name))
         case .error:
-            ("exclamationmark.circle.fill", .systemRed, String(localized: "\(name), health error"))
+            ("exclamationmark.circle.fill", .systemRed, String(format: String(localized: "%@, health error"), name))
         case .unknown:
-            ("circle", .tertiaryLabelColor, String(localized: "\(name), health unknown"))
+            ("circle", .tertiaryLabelColor, String(format: String(localized: "%@, health unknown"), name))
         }
         return NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
             .withSymbolConfiguration(.init(paletteColors: [color]))
@@ -431,14 +447,14 @@ extension StatusMenuSummaries {
 
     private func nodeEntry(_ node: NodeInfo) -> MenuEntry {
         MenuEntry(id: "devices.node.\(node.nodeId)") { [weak self] item in
-            item.title = NodeMenuEntryFormatter.primaryName(node)
+            item.title = StatusMenuMetrics.fittedTitle(NodeMenuEntryFormatter.primaryName(node))
             item.target = self
             item.action = #selector(Self.copyNodeValue(_:))
+            item.isEnabled = true
             if let id = item.representedObject as? String {
                 self?.copiedValues[id] = NodeMenuEntryFormatter.summaryText(node)
             }
-            Self.updateHostedView(item, rootView: AnyView(
-                NodeMenuRowView(entry: node, width: StatusMenuRenderer.cardWidth)))
+            StatusMenuRenderer.configureHostedView(item, rootView: NodeMenuRowView(entry: node), highlights: true)
             self?.configureNodeSubmenu(for: item, node: node)
         }
     }
@@ -466,10 +482,10 @@ extension StatusMenuSummaries {
         }
         entries.append(.info(
             id: "devices.node.\(node.nodeId).connected",
-            title: String(localized: "Connected: \(node.isConnected ? "Yes" : "No")")))
+            title: node.isConnected ? String(localized: "Connected: Yes") : String(localized: "Connected: No")))
         entries.append(.info(
             id: "devices.node.\(node.nodeId).paired",
-            title: String(localized: "Paired: \(node.isPaired ? "Yes" : "No")")))
+            title: node.isPaired ? String(localized: "Paired: Yes") : String(localized: "Paired: No")))
 
         if let capabilities = node.caps?.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
            !capabilities.isEmpty
@@ -496,7 +512,7 @@ extension StatusMenuSummaries {
         let entryID = "devices.node.\(node.nodeId).\(id)"
         self.copiedValues[entryID] = value
         return MenuEntry(id: entryID) { [weak self] item in
-            item.title = "\(label): \(value)"
+            item.title = StatusMenuMetrics.fittedTitle("\(label): \(value)")
             item.target = self
             item.action = #selector(Self.copyNodeValue(_:))
             item.isEnabled = true
@@ -523,7 +539,7 @@ extension StatusMenuSummaries {
 
         static func info(id: String, title: String) -> Self {
             Self(id: id) { item in
-                item.title = title
+                item.title = StatusMenuMetrics.fittedTitle(title)
                 item.isEnabled = false
             }
         }
@@ -536,6 +552,7 @@ extension StatusMenuSummaries {
         } else {
             menu = NSMenu()
             menu.autoenablesItems = false
+            menu.delegate = StatusMenuHighlightDelegate.shared
             StatusMenuAppearance.pin(menu)
             parent.submenu = menu
         }
@@ -573,19 +590,5 @@ extension StatusMenuSummaries {
             entries[index].update(menu.item(at: index)!)
         }
         CATransaction.commit()
-    }
-
-    private static func updateHostedView(_ item: NSMenuItem, rootView: AnyView) {
-        let hosting: NSHostingView<AnyView>
-        if let existing = item.view as? NSHostingView<AnyView> {
-            existing.rootView = rootView
-            hosting = existing
-        } else {
-            hosting = NSHostingView(rootView: rootView)
-            item.view = hosting
-        }
-        let width = StatusMenuRenderer.cardWidth
-        hosting.frame.size.width = width
-        hosting.frame = NSRect(origin: .zero, size: NSSize(width: width, height: hosting.fittingSize.height))
     }
 }
