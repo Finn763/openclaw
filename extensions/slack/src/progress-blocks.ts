@@ -56,6 +56,7 @@ function isAuthoredProgressLine(line: ChannelProgressDraftLine): boolean {
 
 function resolveProgressAttention(
   lines: readonly ChannelProgressDraftLine[],
+  options?: { recovered?: boolean },
 ): SlackPlanTask | undefined {
   const approval = lines.findLast(
     (line) => line.kind === "approval" && line.status === "requested",
@@ -79,11 +80,21 @@ function resolveProgressAttention(
   if (!failure) {
     return undefined;
   }
+  const baseTitle = [...new Set([failure.label, failure.detail, failure.status].filter(Boolean))].join(
+    " — ",
+  );
+  // A recovered run must not keep a terminal red row: Slack rows cannot be
+  // removed, so reconcile the stable attention row to non-error complete.
+  if (options?.recovered) {
+    return {
+      id: "openclaw_attention",
+      title: compactTitle(`Recovered: ${baseTitle}`),
+      status: "complete",
+    };
+  }
   return {
     id: "openclaw_attention",
-    title: compactTitle(
-      [...new Set([failure.label, failure.detail, failure.status].filter(Boolean))].join(" — "),
-    ),
+    title: compactTitle(baseTitle),
     status: "error",
   };
 }
@@ -115,7 +126,9 @@ export function buildSlackProgressStreamChunks(params: {
         status: entry.status === "completed" ? "complete" : entry.status,
       }))
     : [{ id: "openclaw_summary", title: compactTitle(title), status: "in_progress" }];
-  let attention = resolveProgressAttention(params.lines);
+  let attention = resolveProgressAttention(params.lines, {
+    recovered: params.finalInProgressStatus === "complete",
+  });
   if (
     params.finalInProgressStatus === "error" &&
     !tasks.some((task) => task.status === "in_progress")
@@ -172,7 +185,9 @@ export function buildSlackProgressCardBlocks(params: {
     .filter((text, index, values) => text && text !== narration && values.indexOf(text) === index)
     .map((text) => normalizeSlackOutboundText(compactDetail(text, maxLineChars)))
     .join("\n");
-  const attention = resolveProgressAttention(params.lines);
+  const attention = resolveProgressAttention(params.lines, {
+    recovered: params.state === "success",
+  });
   const status =
     params.state === "success" ? "Completed: " : params.state === "error" ? "Failed: " : "";
   const sections = [
