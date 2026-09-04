@@ -131,6 +131,8 @@ const agentsHandlerDeps = {
 };
 
 export const testing = {
+  cleanupPathIdentity,
+  cleanupIdentityEquals,
   setDepsForTests(
     overrides: Partial<{
       root: typeof root;
@@ -356,6 +358,17 @@ function cleanupFailure(pathname: string, error: unknown): AgentDeletePathOutcom
   return { failed: { path: pathname, reason: reason || "unknown error" } };
 }
 
+function cleanupIdentityPart(value: number | bigint): number | string {
+  // Safe ids stay numbers so journals remain readable by the prior release;
+  // only ids past 2^53 become exact decimal strings (JSON cannot hold BigInt).
+  if (typeof value === "bigint") {
+    return value <= BigInt(Number.MAX_SAFE_INTEGER) && value >= BigInt(Number.MIN_SAFE_INTEGER)
+      ? Number(value)
+      : value.toString();
+  }
+  return Number.isSafeInteger(value) ? value : String(value);
+}
+
 function cleanupPathIdentity(stat: { dev?: number | bigint; ino?: number | bigint } | undefined) {
   if (
     (typeof stat?.dev !== "number" && typeof stat?.dev !== "bigint") ||
@@ -363,12 +376,18 @@ function cleanupPathIdentity(stat: { dev?: number | bigint; ino?: number | bigin
   ) {
     return null;
   }
-  const dev = Number(stat.dev);
-  const ino = Number(stat.ino);
-  if (!Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)) {
-    throw new Error("cleanup path identity exceeds the safe integer range");
-  }
-  return { dev, ino };
+  // NTFS file ids routinely exceed Number.MAX_SAFE_INTEGER; callers must pass
+  // bigint stats (lstat with { bigint: true }) so unsafe identities are
+  // captured exactly here.
+  return { dev: cleanupIdentityPart(stat.dev), ino: cleanupIdentityPart(stat.ino) };
+}
+
+// String comparison is exact for safe numbers and tells apart unsafe ids that
+// collapse to one double (9007199254740993 vs 9007199254740992): a rounded
+// number-valued recheck never matches an exact unsafe prepared id, so the
+// fence fails closed and the exact re-read below gets its chance first.
+function cleanupIdentityEquals(prepared: number | string, fresh: number | string): boolean {
+  return String(prepared) === String(fresh);
 }
 
 async function statAgentCleanupPath(cleanupPath: AgentDeleteCleanupPath) {
@@ -390,7 +409,24 @@ async function statAgentCleanupPath(cleanupPath: AgentDeleteCleanupPath) {
   if (stat.isFile && stat.nlink > 1) {
     throw new AgentCleanupIdentityMismatchError("hardlinked cleanup replacement preserved");
   }
-  const identity = cleanupPathIdentity(stat);
+  let identity = cleanupPathIdentity(stat);
+  if (
+    cleanupPath.preparedIdentity === null ||
+    typeof cleanupPath.preparedIdentity.dev === "string" ||
+    typeof cleanupPath.preparedIdentity.ino === "string"
+  ) {
+    // Only unsafe ids are stored as strings, and the fs-safe stat above is
+    // number-valued (PathStat dev/ino are numbers), so it would arrive rounded
+    // and could never match: the path would be skipped yet reported done.
+    // Re-read the exact identity instead; on error keep the fs-safe value so
+    // the fence still fails closed. (Same accepted residual race bound as the
+    // rename below: replacement between check and move.)
+    try {
+      identity = cleanupPathIdentity(await fs.lstat(cleanupPath.trashPath, { bigint: true }));
+    } catch {
+      // Fall through with the fs-safe stat identity (fail-closed mismatch).
+    }
+  }
   if (cleanupPath.preparedIdentity === null) {
     // The journal fence blocks legitimate claims on prepared-absent paths, so a
     // file that appeared here is leaked deleted-agent state (recreated WAL
@@ -399,8 +435,8 @@ async function statAgentCleanupPath(cleanupPath: AgentDeleteCleanupPath) {
     cleanupPath.preparedIdentity = identity;
   } else if (
     identity === null ||
-    identity.dev !== cleanupPath.preparedIdentity.dev ||
-    identity.ino !== cleanupPath.preparedIdentity.ino
+    !cleanupIdentityEquals(cleanupPath.preparedIdentity.dev, identity.dev) ||
+    !cleanupIdentityEquals(cleanupPath.preparedIdentity.ino, identity.ino)
   ) {
     throw new AgentCleanupIdentityMismatchError("cleanup path identity changed before deletion");
   }
@@ -448,7 +484,7 @@ type AgentDeleteCleanupPath = {
   trashPath: string;
   trashCoversDescendants: boolean;
   kind: "target" | "symlink";
-  preparedIdentity: { dev: number; ino: number } | null;
+  preparedIdentity: { dev: number | string; ino: number | string } | null;
   done: boolean;
   note?: string;
   preparationError?: unknown;
@@ -546,9 +582,12 @@ async function prepareAgentDeleteCleanupPaths(
     } catch (error) {
       preparationError = error;
     }
-    let sourceStat: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+    let sourceStat:
+      | { dev?: number | bigint; ino?: number | bigint; isSymbolicLink(): boolean }
+      | undefined;
     try {
-      sourceStat = await fs.lstat(pathname);
+      // bigint: exact dev/ino capture; NTFS ids past 2^53 would round otherwise.
+      sourceStat = await fs.lstat(pathname, { bigint: true });
     } catch (error) {
       if (!isMissingPathError(error)) {
         preparationError ??= error;
@@ -557,7 +596,7 @@ async function prepareAgentDeleteCleanupPaths(
     let targetStat = sourceStat;
     if (resolvedPath !== sourcePath) {
       try {
-        targetStat = await fs.lstat(resolvedPath);
+        targetStat = await fs.lstat(resolvedPath, { bigint: true });
       } catch (error) {
         if (!isMissingPathError(error)) {
           preparationError ??= error;

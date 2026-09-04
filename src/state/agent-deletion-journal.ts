@@ -50,8 +50,8 @@ export type AgentDeletionJournalCleanupPath = {
   parentPath: string;
   kind: "target" | "symlink";
   sourcePaths: string[];
-  dev: number | null;
-  ino: number | null;
+  dev: number | string | null;
+  ino: number | string | null;
   coversDescendants: boolean;
   done: boolean;
   note?: string;
@@ -295,6 +295,10 @@ function parseDatabasePaths(value: string): string[] {
   return parsed;
 }
 
+function isOptionalIdentityPart(value: unknown): value is number | string | null {
+  return value === null || typeof value === "number" || typeof value === "string";
+}
+
 function parseCleanupPaths(value: string): AgentDeletionJournalCleanupPath[] {
   const parsed: unknown = JSON.parse(value);
   if (
@@ -308,10 +312,8 @@ function parseCleanupPaths(value: string): AgentDeletionJournalCleanupPath[] {
         typeof (entry as { parentPath?: unknown }).parentPath === "string" &&
         ((entry as { kind?: unknown }).kind === "target" ||
           (entry as { kind?: unknown }).kind === "symlink") &&
-        ((entry as { dev?: unknown }).dev === null ||
-          typeof (entry as { dev?: unknown }).dev === "number") &&
-        ((entry as { ino?: unknown }).ino === null ||
-          typeof (entry as { ino?: unknown }).ino === "number") &&
+        isOptionalIdentityPart((entry as { dev?: unknown }).dev) &&
+        isOptionalIdentityPart((entry as { ino?: unknown }).ino) &&
         typeof (entry as { coversDescendants?: unknown }).coversDescendants === "boolean" &&
         typeof (entry as { done?: unknown }).done === "boolean" &&
         ((entry as { note?: unknown }).note === undefined ||
