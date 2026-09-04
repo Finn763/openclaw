@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { isRequesterParentOfBackgroundAcpSession } from "@openclaw/acp-core/session-interaction-mode";
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { normalizeOptionalString, normalizeOptionalStringifiedId } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
 import { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../config/legacy.default-agent-owner.js";
@@ -496,6 +496,9 @@ export function createSessionsSendTool(opts?: {
   agentId?: string;
   agentSessionKey?: string;
   agentChannel?: string;
+  agentAccountId?: string;
+  agentTo?: string;
+  agentThreadId?: string | number;
   sandboxed?: boolean;
   config?: OpenClawConfig;
   callGateway?: GatewayCaller;
@@ -971,6 +974,21 @@ export function createSessionsSendTool(opts?: {
           }
 
           const requesterChannel = opts?.agentChannel;
+          // Carry the live requester delivery route so the detached announce
+          // flow can fall back to it when the target route is internal/stale.
+          const requesterOriginChannel = normalizeOptionalString(opts?.agentChannel);
+          const requesterOriginTo = normalizeOptionalString(opts?.agentTo);
+          const requesterOriginAccountId = normalizeOptionalString(opts?.agentAccountId);
+          const requesterOriginThreadId = normalizeOptionalStringifiedId(opts?.agentThreadId);
+          const requesterOrigin =
+            requesterOriginChannel && requesterOriginTo
+              ? {
+                  channel: requesterOriginChannel,
+                  to: requesterOriginTo,
+                  ...(requesterOriginAccountId ? { accountId: requesterOriginAccountId } : {}),
+                  ...(requesterOriginThreadId ? { threadId: requesterOriginThreadId } : {}),
+                }
+              : undefined;
           const isIsolatedCronRequester = isCronRunSessionKey(requesterSessionKey);
           // Watch registration follows successful dispatch: a failed send must not leave
           // a hidden watch, and cron run-scoped sends can fall back to the durable parent
@@ -1085,6 +1103,7 @@ export function createSessionsSendTool(opts?: {
                     requesterSessionKey: replyRequesterSessionKey,
                     requesterAgentId,
                     requesterChannel,
+                    requesterOrigin,
                     roundOneReply: reply?.replyText,
                     sourceReplyDelivered: reply?.sourceReplyDelivered,
                     waitRunId,
