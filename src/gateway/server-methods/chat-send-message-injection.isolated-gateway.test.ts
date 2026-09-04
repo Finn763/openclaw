@@ -43,7 +43,9 @@
  * "rejected"` — the fresh-turn disposition), and the production delivery
  * owner emits exactly one outbound final over the real transport (one
  * `chat.final` event carrying the reply text). A positive control (unrelated
- * historical tombstone) shows the steer is enqueued, and a before-fix control
+ * historical tombstone) shows the steer is enqueued, an unknown-source
+ * regression (retained tombstone, no source identity) shows the steer is
+ * rejected to exactly one follow-up final, and a before-fix control
  * (classifier weakened) shows the silent-loss race.
  */
 import { randomUUID } from "node:crypto";
@@ -347,6 +349,160 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
           timeout: 15_000,
         });
         expect(resolverCapture.ctxBody).toBe("round-8 isolated-gateway inbound");
+        expect(resolverCapture.runId).toBe(runId);
+        expect(resolverCapture.messageInjectionDisposition).toBe("rejected");
+        expect(dispatchCapture.calls).toBe(0);
+
+        // Transport-level proof: the production delivery owner emitted
+        // exactly one outbound final over the real transport, carrying the
+        // reply text produced through the real dispatcher.
+        await vi.waitFor(
+          () => {
+            expect(chatFrames.some((frame) => frame.state === "final")).toBe(true);
+          },
+          { interval: 50, timeout: 15_000 },
+        );
+        // Quiet-period check: no second terminal may follow the first.
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 300);
+        });
+        const finals = chatFrames.filter((frame) => frame.state === "final");
+        expect(finals.length).toBe(1);
+        const finalMessage = finals[0]?.message;
+        expect(visibleMessageText(finalMessage)).toContain(replyText);
+      } finally {
+        ws.off("message", onChatFrame);
+      }
+
+      registrySpy.mockRestore();
+    },
+  );
+
+  /**
+   * Unknown-source regression (#128971 ClawSweeper P2): the active run carries
+   * no registry source-turn binding (e.g. lost across reload/upgrade) and the
+   * persisted claim was already cleaned up, while a terminal tombstone is
+   * retained. The fence cannot prove the tombstone is unrelated, so it must
+   * fail closed — reject the steer before anything is enqueued — and the
+   * rejected steer must flow through the REAL production dispatcher to
+   * exactly one outbound final over the real transport.
+   */
+  it(
+    "isolated gateway: a retained tombstone with unknown active source identity rejects the steer and yields exactly one outbound reply",
+    { timeout: 30_000 },
+    async () => {
+      const unknownSessionKey = "agent:main:unknown-source";
+      const dir = await makeSessionDir();
+      testState.sessionStorePath = path.join(dir, "sessions.json");
+      // Real persisted entry: retained terminal tombstone with no durable
+      // claim (claim cleanup already removed
+      // restartRecoveryDeliverySourceRunId).
+      await writeSessionStore({
+        entries: {
+          [unknownSessionKey]: {
+            sessionId: "session-unknown-source",
+            updatedAt: Date.now(),
+            restartRecoveryTerminalRunIds: ["source-old"],
+            status: "running",
+          },
+        },
+      });
+      // Real reply-run registry: a live run with NO source-turn binding, so
+      // the fence observes an unknown ("") active source identity.
+      const operation = createReplyOperation({
+        sessionKey: unknownSessionKey,
+        sessionId: "session-unknown-source",
+        resetTriggered: false,
+      });
+      liveOperation = { key: unknownSessionKey, op: operation as never };
+      operation.setPhase("running");
+      // Attach a backend so the gate resolves an injection target (not
+      // "injection_unavailable"); the steer is then attempted through the
+      // real fence and either enqueued or rejected by it.
+      operation.attachBackend({
+        kind: "embedded",
+        runId: "live-run-unknown-source",
+        cancel: () => {},
+        isStreaming: () => false,
+        messageInjection: {
+          isAvailable: () => true,
+          queueMessage: async () => {},
+        },
+      });
+      // NOTE: no replyRunRegistry.bindSourceTurnId — unknown identity.
+
+      const registrySpy = vi.spyOn(replyRunRegistryModule, "beginReplyMessageInjectionTarget");
+
+      // REAL production dispatcher: no seam implementation. The gateway test
+      // module mock then passes dispatchInboundMessageWithProjectedDispatcher
+      // straight through to production (dispatchReplyFromConfig pipeline +
+      // production reply delivery owner). The mocked seam must never run.
+      dispatchInboundMessageMock.mockReset();
+
+      // Controlled reply SOURCE: the production dispatcher consults
+      // getReplyFromConfig for the reply payload. Everything downstream —
+      // the dispatcher pipeline, the reply delivery owner, the broadcast —
+      // is production code.
+      const replyText = "unknown-source follow-up reply from the production dispatcher";
+      mockGetReplyFromConfigOnce(async (ctx, opts) => {
+        resolverCapture.calls += 1;
+        resolverCapture.ctxBody = (ctx as { Body?: string }).Body;
+        const options = (opts ?? {}) as { runId?: string; messageInjectionDisposition?: unknown };
+        resolverCapture.runId = options.runId;
+        resolverCapture.messageInjectionDisposition = options.messageInjectionDisposition;
+        return { text: replyText };
+      });
+
+      // Recording transport: the REAL transport is the loopback WebSocket
+      // back to the connected test client. Record every `chat` wire event
+      // the production broadcast path emits for this run.
+      const runId = `idem-iso-gw-unknown-${randomUUID()}`;
+      const chatFrames: ChatWirePayload[] = [];
+      const onChatFrame = (raw: RawData) => {
+        try {
+          const frame = JSON.parse(rawDataToString(raw)) as {
+            type?: string;
+            event?: string;
+            payload?: ChatWirePayload;
+          };
+          if (frame.type === "event" && frame.event === "chat" && frame.payload?.runId === runId) {
+            chatFrames.push(frame.payload);
+          }
+        } catch {
+          // Unrelated frames on the shared test socket.
+        }
+      };
+      ws.on("message", onChatFrame);
+      try {
+        const res = (await rpcReq(
+          ws,
+          "chat.send",
+          {
+            sessionKey: unknownSessionKey,
+            message: "unknown-source isolated-gateway inbound",
+            idempotencyKey: runId,
+            queueMode: "steer",
+          },
+          20_000,
+        )) as WireResponse;
+
+        // Wire-level proof: the gateway admitted the inbound for dispatch.
+        expect(res.ok).toBe(true);
+        expect(res.payload?.status).toBe("started");
+        expect(res.payload?.runId).toBe(runId);
+
+        // Fence-level proof: no steer was ever enqueued into the live run.
+        expect(registrySpy).not.toHaveBeenCalled();
+
+        // Production-dispatcher proof: the rejected steer reached the real
+        // dispatcher exactly once, as its own fresh turn — the client run id
+        // with the "rejected" injection disposition — carrying the inbound
+        // body. The mocked seam never handled the dispatch.
+        await vi.waitFor(() => expect(resolverCapture.calls).toBe(1), {
+          interval: 50,
+          timeout: 15_000,
+        });
+        expect(resolverCapture.ctxBody).toBe("unknown-source isolated-gateway inbound");
         expect(resolverCapture.runId).toBe(runId);
         expect(resolverCapture.messageInjectionDisposition).toBe("rejected");
         expect(dispatchCapture.calls).toBe(0);
