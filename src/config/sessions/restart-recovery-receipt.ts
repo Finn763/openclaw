@@ -2,6 +2,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import {
   hasActiveRestartRecoverySourceClaim,
   hasRestartRecoveryTerminalRun,
+  normalizeRestartRecoveryTerminalRunIds,
 } from "./restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "./session-accessor.js";
 import type { SessionEntry } from "./types.js";
@@ -99,7 +100,8 @@ function resolveRestartRecoveryTerminalDeliveryDisposition(
  * steering never accepts an inbound into a turn whose terminal send would be
  * refused. Callers must supply the active source-turn identity: terminal run
  * ids are accumulated session history, so a tombstone may only fail-close the
- * fence when it belongs to the target source turn itself.
+ * fence when it belongs to the target source turn itself — except an unknown
+ * (empty) source identity, which fail-closes on any retained tombstone.
  */
 export function isRestartRecoveryTerminalDeliveryFailClosed(
   entry: SessionEntry | null | undefined,
@@ -123,6 +125,16 @@ export function isRestartRecoveryTerminalDeliveryFailClosed(
     // Claimless entries are the legitimate fresh state ("not-applicable" in
     // beginRestartRecoveryTerminalDelivery); a tombstone only fail-closes the
     // fence when it records this exact source turn, not any earlier one.
+    // Unknown active source ("") is ambiguous: the run's real tool-context
+    // source may still be tombstoned, so any retained tombstone fail-closes
+    // to queue rather than risk steering into a refused terminal send. A
+    // tombstone-free unknown source stays fresh (false).
+    if (
+      normalizedSourceTurnId === "" &&
+      (normalizeRestartRecoveryTerminalRunIds(entry.restartRecoveryTerminalRunIds)?.length ?? 0) > 0
+    ) {
+      return true;
+    }
     return hasRestartRecoveryTerminalRun(entry, normalizedSourceTurnId);
   }
   return (

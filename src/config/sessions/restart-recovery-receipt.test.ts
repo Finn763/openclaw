@@ -210,16 +210,17 @@ describe("restart recovery terminal delivery fail-closed classification", () => 
     ).toBe(false);
   });
 
-  it("is not fail-closed for a claimless entry with historical tombstones when the active source is unknown", () => {
-    // The send path resolves an unknown source as "not-applicable" and arms a
-    // fresh claim; the fence must mirror that classification.
+  it("is fail-closed for a claimless entry with historical tombstones when the active source is unknown", () => {
+    // Unknown active source ("") is ambiguous: the live run's real
+    // tool-context source may still be tombstoned, so any retained tombstone
+    // fail-closes to queue rather than risk a refused terminal send.
     expect(
       isRestartRecoveryTerminalDeliveryFailClosed(
         entry({ status: "running", restartRecoveryTerminalRunIds: ["source-old"] }),
         "session-1",
         "",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("is fail-closed for a stale claim", () => {

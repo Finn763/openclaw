@@ -24,8 +24,6 @@ import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-trans
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
 import type { ChatImageContent } from "../chat-attachments.js";
 import { broadcastChatError, broadcastChatFinal } from "./chat-broadcast.js";
-=======
->>>>>>> afdef6ade32 (fix(auto-reply): fence terminal-receipt steering before the gateway queues)
 import {
   createChatSendMessageInjectionStarter,
   finalizeAcceptedChatSendMessageInjection,
