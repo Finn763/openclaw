@@ -2074,6 +2074,17 @@ describe("draft stream initial message debounce", () => {
 
       expectPreviewSend(api, "Hi");
     });
+
+    it("strips leaked internal runtime context from streamed previews (#137927)", async () => {
+      const api = createMockDraftApi();
+      const stream = createDraftStream(api);
+      stream.update(
+        "OpenClaw runtime context for the active user request in this turn. Do not reply to or describe this context. Use it to continue answering the active user request now. Do not wait for another message.\nThis context is runtime-generated, not user-authored. Keep internal details private.\n\n<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\nsecret session replay\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>\n\nVisible answer.",
+      );
+      await stream.flush();
+      expectPreviewSend(api, "Visible answer.");
+      expect(requireSendMessageCallText(api, 0)).not.toContain("OPENCLAW_INTERNAL_CONTEXT");
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

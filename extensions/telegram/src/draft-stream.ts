@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import type { Message } from "grammy/types";
 import {
   createFinalizableDraftStreamControlsForState,
+  stripInternalRuntimeContext,
   takeMessageIdAfterStop,
 } from "openclaw/plugin-sdk/channel-outbound";
 import type { MarkdownTableMode, ReplyToMode } from "openclaw/plugin-sdk/config-contracts";
@@ -587,9 +588,14 @@ export function createTelegramDraftStream(params: {
       // last delivered draft. Counting the consumed slot as a flush is intentional.
       return true;
     }
+    // Streaming edits bypass the delivery funnel's scaffolding strip (#137927):
+    // a model echo of the runtime-context block would stay visible here and be
+    // finalizable into the durable message. Strip at this one transport
+    // boundary; marker-free text passes through unchanged.
+    const sanitizedText = stripInternalRuntimeContext(text);
     if (isLazy) {
       lastRequestedPreview = undefined;
-      lastRequestedText = text;
+      lastRequestedText = sanitizedText;
     }
     if (streamState.stopped && !streamState.final) {
       return false;
@@ -600,7 +606,7 @@ export function createTelegramDraftStream(params: {
     if (!streamState.final && Date.now() < suspendedUntilMs) {
       return false;
     }
-    const trimmed = text.trimEnd();
+    const trimmed = sanitizedText.trimEnd();
     if (!trimmed) {
       return false;
     }

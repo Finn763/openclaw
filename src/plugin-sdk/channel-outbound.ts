@@ -79,6 +79,9 @@ export {
   createOutboundPayloadPlan,
   projectOutboundPayloadPlanForDelivery,
 } from "../infra/outbound/payloads.js";
+// Streaming previews edit messages outside the delivery funnel, so stream
+// transports strip leaked runtime-context blocks with this shared helper.
+export { stripInternalRuntimeContext } from "../agents/internal-runtime-context.js";
 export { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 export type { OutboundSessionContext } from "../infra/outbound/session-context.js";
 export type { OutboundDeliveryFormattingOptions } from "../infra/outbound/formatting.js";
