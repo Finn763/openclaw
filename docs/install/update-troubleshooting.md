@@ -79,6 +79,19 @@ the CLI fallback on the Gateway host.
   root before retrying.
 - `managed-service-handoff-*`: check status first. If the handoff stopped, use
   the CLI on the Gateway host to preserve the full diagnostic output.
+- `service-revalidation-failed`: the stopped Gateway service could not be
+  revalidated after the package update (ownership or manager identity
+  changed), so the updater left it stopped instead of restarting an
+  unverified installation. On Windows this follows an elevated update of a
+  per-user Scheduled Task: recover from an elevated shell with
+  `Enable-ScheduledTask -TaskName "OpenClaw Gateway"`, then
+  `openclaw gateway install --force`, delete stale
+  `~/.openclaw/tmp/openclaw/gateway.*.lock*` files, run Doctor, and
+  `openclaw gateway restart`. Run future updates from the owning account
+  rather than an elevated Administrator context. A launcher that exits at
+  once via `--task-supervisor` without binding its port is the managed
+  Windows startup failure fixed after 2026.9.1; update past it and
+  reinstall the service instead of editing the generated launcher.
 
 Unknown reason codes remain visible. Check the Gateway logs before retrying.
 
