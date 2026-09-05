@@ -111,6 +111,10 @@ export function buildConversationIdentity(params: {
   if (!peerId) {
     return null;
   }
+  // ponytail: whatsapp @g.us ids are always groups; dashboard sends without the
+  // inbound group flag would otherwise mint a duplicate direct row for the group.
+  const kind =
+    channel === "whatsapp" && peerId.toLowerCase().endsWith("@g.us") ? "group" : params.kind;
   // A normalized peer id identifies a conversation but is not necessarily a
   // routable transport address. Exact-address tools require authoritative egress facts.
   const deliveryTarget = normalizeText(params.deliveryTarget);
@@ -125,7 +129,7 @@ export function buildConversationIdentity(params: {
       : buildConversationRef({
           channel,
           accountId,
-          kind: params.kind,
+          kind,
           peerId: normalizeConversationPeerId(channel, rawParent),
         })
     : undefined;
@@ -134,14 +138,14 @@ export function buildConversationIdentity(params: {
     conversationRef: buildConversationRef({
       channel,
       accountId,
-      kind: params.kind,
+      kind,
       peerId,
       parentConversationRef,
       threadId,
     }),
     channel,
     accountId,
-    kind: params.kind,
+    kind,
     peerId,
     deliveryTarget,
     ...(parentConversationRef ? { parentConversationRef } : {}),

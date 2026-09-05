@@ -301,4 +301,24 @@ describe("conversation identity", () => {
     expect(persisted?.deliveryTarget).toBe("channel:ops-room");
     expect(live?.parentConversationRef).toBeUndefined();
   });
+
+  it("treats a whatsapp @g.us peer as group even when kind arrives as direct", () => {
+    const direct = buildConversationIdentity({
+      channel: "whatsapp",
+      accountId: "default",
+      kind: "direct",
+      peerId: "120363429459936309@g.us",
+      deliveryTarget: "120363429459936309@g.us",
+    });
+    const group = buildConversationIdentity({
+      channel: "whatsapp",
+      accountId: "default",
+      kind: "group",
+      peerId: "120363429459936309@g.us",
+      deliveryTarget: "120363429459936309@g.us",
+    });
+
+    expect(direct?.kind).toBe("group");
+    expect(direct?.conversationRef).toBe(group?.conversationRef);
+  });
 });
