@@ -429,6 +429,7 @@ export async function executePluginOwnedProcess(params: {
   const outstanding = {
     approvals: 0,
     background: 0,
+    compacting: false,
     lastOutputAt: startedAt,
     observed: false,
     replayUnsafe: false,
@@ -467,6 +468,7 @@ export async function executePluginOwnedProcess(params: {
           observedActivity: outstanding.observed,
           activeToolCount: Math.max(params.activeToolCount?.() ?? 0, outstanding.approvals),
           backgroundTaskCount: outstanding.background,
+          ...(outstanding.compacting ? { compactionActive: true as const } : {}),
         },
         hasOutputText: false,
         useResume: params.useResume,
@@ -570,6 +572,8 @@ export async function executePluginOwnedProcess(params: {
         throw new Error("CLI plugin runtime emitted an invalid structured stream event.");
       }
       if (next.value.type === "result") {
+        // A terminal result ends the turn, so any in-flight compaction is over.
+        outstanding.compacting = false;
         terminalResult =
           terminalResult === "error" ||
           next.value.is_error === true ||
@@ -584,7 +588,25 @@ export async function executePluginOwnedProcess(params: {
       ) {
         outstanding.background = next.value.tasks.filter(isRecord).length;
       }
-      params.consumeStdout(`${JSON.stringify(next.value)}\n`);
+      const line = JSON.stringify(next.value);
+      try {
+        // Reuse the backend-owned lifecycle parser so native compaction phases
+        // (e.g. Claude auto-compaction) count as outstanding work. Projection
+        // must never fail a live turn; the timer reset below still applies.
+        const backend = params.context.backendResolved;
+        const lifecycle = backend.parseJsonlLifecycleEvent?.(line, {
+          backendId: backend.id,
+          backend: backend.config,
+        });
+        for (const event of lifecycle == null ? [] : Array.isArray(lifecycle) ? lifecycle : [lifecycle]) {
+          if (event.kind === "compaction") {
+            outstanding.compacting = event.phase === "start";
+          }
+        }
+      } catch {
+        // Ignore lifecycle projection failures; the event itself still counts as output.
+      }
+      params.consumeStdout(`${line}\n`);
       outstanding.observed = true;
       if (
         !(next.value.type === "system" && next.value.subtype === "init") &&

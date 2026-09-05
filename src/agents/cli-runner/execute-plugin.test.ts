@@ -964,6 +964,41 @@ describe("plugin-owned CLI execution host boundary", () => {
     expect(received.map((event) => JSON.parse(event))).toHaveLength(3);
   });
 
+  it("defers the no-output watchdog while native compaction is active", async () => {
+    vi.useFakeTimers();
+    const { context } = await createExecution();
+    context.backendResolved.parseJsonlLifecycleEvent = (line) => {
+      const event = JSON.parse(line) as { status?: unknown; compact_result?: unknown };
+      if (event.status === "compacting") {
+        return { kind: "compaction", phase: "start" };
+      }
+      return event.compact_result === "success"
+        ? { kind: "compaction", phase: "end", completed: true }
+        : null;
+    };
+    const compactionFinished = createDeferred();
+    const received: string[] = [];
+    let completed = false;
+    const run = runPlugin(
+      context,
+      async function* () {
+        yield { type: "system", subtype: "status", status: "compacting" };
+        await compactionFinished.promise;
+        yield { compact_result: "success" };
+        yield SUCCESS_RESULT;
+      },
+      { noOutputTimeoutMs: 100, consumeStdout: received.push.bind(received) },
+    ).then((result) => {
+      completed = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(completed).toBe(false);
+    compactionFinished.resolve();
+    await expect(run).resolves.toMatchObject({ reason: "exit", timedOut: false });
+  });
+
   it("keeps the overall deadline authoritative while background work remains active", async () => {
     vi.useFakeTimers();
     const { context } = await createExecution({ timeoutMs: 150 });

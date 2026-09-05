@@ -20,7 +20,8 @@ export function resolveCliNoOutputTimeoutDecision(params: CliNoOutputTimeoutPoli
   error: FailoverError;
 } {
   const outstandingWork =
-    params.cliTimeout.activeToolCount + params.cliTimeout.backgroundTaskCount > 0;
+    params.cliTimeout.activeToolCount + params.cliTimeout.backgroundTaskCount > 0 ||
+    params.cliTimeout.compactionActive === true;
   const deferMs =
     outstandingWork && params.outstandingWorkGraceMs !== undefined
       ? Math.max(params.timeoutMs, params.outstandingWorkGraceMs) - params.quietDurationMs

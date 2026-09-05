@@ -12,6 +12,8 @@ export type CliTimeoutContext = {
   observedActivity: boolean;
   activeToolCount: number;
   backgroundTaskCount: number;
+  /** Native context maintenance (e.g. Claude auto-compaction) in progress: silent but busy. */
+  compactionActive?: boolean;
 };
 
 export type FallbackAttemptRecord = {
