@@ -27,7 +27,11 @@ export {
 } from "./llama-server-assets.js";
 
 const DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
-const VERSION_TIMEOUT_MS = 15_000;
+// First exec of a freshly extracted unsigned binary can block for tens of
+// seconds in macOS security evaluation (syspolicyd/notarization check, ~37s
+// observed on macOS 26 arm64), so allow ample time per attempt. (#138672)
+const VERSION_TIMEOUT_MS = 120_000;
+const VERSION_ATTEMPTS = 2;
 
 export type LlamaDownloadProgress = (status: {
   downloadedSize: number;
@@ -257,6 +261,26 @@ async function runServerCommand(
   });
 }
 
+function isServerCommandTimeout(error: unknown): boolean {
+  // execFile timeout surfaces as killed=true / SIGTERM (code null) or
+  // ETIMEDOUT, wrapped once by runServerCommand — check both layers.
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current !== null && (typeof current === "object" || typeof current === "function") && !seen.has(current)) {
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.killed === true || record.signal === "SIGTERM" || record.code === "ETIMEDOUT") {
+      return true;
+    }
+    const message = typeof record.message === "string" ? record.message : "";
+    if (/timed out|ETIMEDOUT/iu.test(message)) {
+      return true;
+    }
+    current = record.cause;
+  }
+  return false;
+}
+
 function formatRuntimeDependencyError(error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error);
   if (process.platform === "linux") {
@@ -279,12 +303,27 @@ async function validateInstalledServer(
   asset: LlamaServerAsset,
   signal?: AbortSignal,
 ): Promise<void> {
-  let version: string;
-  try {
-    version = await runServerCommand(command, ["--version"], signal);
-  } catch (error) {
+  let version: string | undefined;
+  let lastError: unknown;
+  // A timed-out first exec usually means the OS was still evaluating the
+  // freshly extracted binary; the check is cached by then, so one retry
+  // typically succeeds instantly instead of failing setup. (#138672)
+  for (let attempt = 1; attempt <= VERSION_ATTEMPTS; attempt += 1) {
+    try {
+      version = await runServerCommand(command, ["--version"], signal);
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+      signal?.throwIfAborted();
+      if (attempt >= VERSION_ATTEMPTS || !isServerCommandTimeout(error)) {
+        throw formatRuntimeDependencyError(error);
+      }
+    }
+  }
+  if (version === undefined) {
     signal?.throwIfAborted();
-    throw formatRuntimeDependencyError(error);
+    throw formatRuntimeDependencyError(lastError);
   }
   const versionLine = version.split(/\r?\n/u, 1)[0]?.trim() ?? "";
   const match = versionLine.match(/^version: .+ \(build (\d+), commit ([a-f\d]{9})\)$/u);
