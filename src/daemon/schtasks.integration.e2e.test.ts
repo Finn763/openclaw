@@ -626,7 +626,7 @@ describe.runIf(nativeIntegrationEnabled)("schtasks Windows integration", () => {
         expect(taskXml.replaceAll("/", "\\").toLowerCase()).toContain(
           launcherPath.replaceAll("/", "\\").toLowerCase(),
         );
-        expect(taskXml).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+        expect(taskXml).toContain("<MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>");
         assertInteractiveLeastPrivilegeTask({
           taskXml,
           principal: installedPrincipal,
@@ -639,7 +639,7 @@ describe.runIf(nativeIntegrationEnabled)("schtasks Windows integration", () => {
         expect(command?.environment?.OPENCLAW_GATEWAY_PORT).toBe(String(gatewayPort));
         expect(command?.environment?.OPENCLAW_SERVICE_KIND).toBe("gateway");
         // An executed exit 23 need not trigger Scheduler retry. Request recovery only
-        // after failure cleanup; IgnoreNew prevents overlap if Scheduler also retries.
+        // after failure cleanup; StopExisting replaces rather than piles up if Scheduler also retries.
         const recoveryMutations: string[] = [];
         await service.start({
           env,
