@@ -224,7 +224,11 @@ export async function resolveHeartbeatWakeStage(opts: HeartbeatRunOptions) {
   // ponytail: scheduled empty heartbeats are no-ops; cheap scratch preflight
   // before shared busy guards so they skip instead of queueing. Heartbeats
   // with real work still fall through to the busy checks below.
-  if (!preflight && scheduledTasks.length === 0 && (wakeSource === undefined || wakeSource === "interval")) {
+  if (
+    !preflight &&
+    scheduledTasks.length === 0 &&
+    (wakeSource === undefined || wakeSource === "interval")
+  ) {
     const early = await resolvePreflight();
     if (early.skipReason === "empty-heartbeat-file" && early.pendingEventEntries.length === 0) {
       return skippedHeartbeatStage(early.skipReason, startedAt);
