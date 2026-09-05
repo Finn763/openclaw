@@ -180,6 +180,12 @@ export function rewriteTranscriptEntriesInSessionManager(params: {
     };
   }
 
+  // Fail closed: an interrupted replay must leave the last complete branch active.
+  // ponytail: persists one leaf control restoring the pre-rewrite selection;
+  // partial rows stay stored but unreachable, delete nothing.
+  const savedLeafId = params.sessionManager.getLeafId();
+  const savedAppendParentId = params.sessionManager.getAppendParentId();
+  const savedAppendMode = params.sessionManager.getAppendMode();
   if (!firstMatchedEntry.parentId) {
     params.sessionManager.resetLeaf();
   } else {
@@ -194,24 +200,36 @@ export function rewriteTranscriptEntriesInSessionManager(params: {
     rawAppendMessage(message, { idempotencyLookup: "caller-checked" });
   const rewrittenEntryIds = new Map<string, string>();
   // Every re-appended message follows the rewritten prefix, so its prefix-bound checkpoint is stale.
-  for (const entry of branch.slice(firstMatchedIndex)) {
-    const replacement = entry.type === "message" ? replacementsById.get(entry.id) : undefined;
-    const newEntryId =
-      replacement === undefined
-        ? appendBranchEntry({
-            sessionManager: params.sessionManager,
-            entry,
-            rewrittenEntryIds,
-            appendMessage,
-          })
-        : appendMessage(
-            (params.preserveReplacementCompactionReplay
-              ? replacement
-              : stripStalePrefixReplay(replacement)) as Parameters<
-              typeof params.sessionManager.appendMessage
-            >[0],
-          );
-    rewrittenEntryIds.set(entry.id, newEntryId);
+  try {
+    for (const entry of branch.slice(firstMatchedIndex)) {
+      const replacement = entry.type === "message" ? replacementsById.get(entry.id) : undefined;
+      const newEntryId =
+        replacement === undefined
+          ? appendBranchEntry({
+              sessionManager: params.sessionManager,
+              entry,
+              rewrittenEntryIds,
+              appendMessage,
+            })
+          : appendMessage(
+              (params.preserveReplacementCompactionReplay
+                ? replacement
+                : stripStalePrefixReplay(replacement)) as Parameters<
+                typeof params.sessionManager.appendMessage
+              >[0],
+            );
+      rewrittenEntryIds.set(entry.id, newEntryId);
+    }
+  } catch (error) {
+    // branch()/resetLeaf() move only the in-memory pointer: with no further
+    // writes the partial suffix would still win after reopen. Persist the
+    // restored selection so the last complete branch stays active on restart.
+    params.sessionManager.appendLeafControl({
+      targetId: savedLeafId,
+      appendParentId: savedAppendParentId,
+      ...(savedAppendMode === undefined ? {} : { appendMode: savedAppendMode }),
+    });
+    throw error;
   }
 
   return {

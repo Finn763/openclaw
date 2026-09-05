@@ -418,4 +418,74 @@ describe("rewriteTranscriptEntriesInSessionManager", () => {
       }
     },
   );
+
+  it("restores the durable leaf across reopen when replay is interrupted", async () => {
+    // An in-memory branch()/resetLeaf() rollback is lost on reopen: the
+    // partial suffix would become the active conversation. The rollback must
+    // persist a leaf control pointing at the last complete branch.
+    const dir = tempDirs.make("openclaw-transcript-rewrite-interrupt-");
+    const storePath = path.join(dir, "sessions.json");
+    const sessionId = "interrupt-rewrite-leaf";
+    const sessionKey = "agent:main:test";
+    const target = {
+      agentId: "main",
+      sessionId,
+      sessionKey,
+      storePath,
+    };
+    await replaceSessionEntry({ sessionKey, storePath }, {
+      sessionFile: formatSqliteSessionFileMarker({
+        agentId: "main",
+        sessionId,
+        storePath,
+      }),
+      sessionId,
+      updatedAt: 10,
+    } as SessionEntry);
+    const sessionManager = SessionManager.open(target, dir);
+    appendSessionMessages(sessionManager, [
+      asAppendMessage({ role: "user", content: "run tool", timestamp: 1 }),
+      asAppendMessage(createToolResultReplacement("exec", "before rewrite", 2)),
+      asAppendMessage({
+        role: "assistant",
+        content: createTextContent("summarized"),
+        timestamp: 3,
+      }),
+    ]);
+    const savedLeafId = sessionManager.getLeafId();
+    const rewriteTarget = sessionManager.getBranch()[1];
+    if (rewriteTarget?.type !== "message") {
+      throw new Error("expected a persisted rewrite target");
+    }
+    // Fail the second replay append to simulate an interrupted rewrite.
+    const { getRawSessionAppendMessage, setRawSessionAppendMessage } =
+      await import("../session-raw-append-message.js");
+    const rawAppend = getRawSessionAppendMessage(sessionManager);
+    let replayAppends = 0;
+    setRawSessionAppendMessage(sessionManager, (message) => {
+      replayAppends += 1;
+      if (replayAppends > 1) {
+        throw new Error("injected replay failure");
+      }
+      return rawAppend(message);
+    });
+
+    expect(() =>
+      rewriteTranscriptEntriesInSessionManager({
+        sessionManager,
+        replacements: [
+          {
+            entryId: rewriteTarget.id,
+            message: createToolResultReplacement("exec", "[runtime rewrite]", 2),
+          },
+        ],
+      }),
+    ).toThrow("injected replay failure");
+    expect(sessionManager.getLeafId()).toBe(savedLeafId);
+    const reopened = SessionManager.open(target, dir);
+    expect(reopened.getLeafId()).toBe(savedLeafId);
+    expect(reopened.getBranch().map((entry) => entry.id)).toEqual(
+      sessionManager.getBranch().map((entry) => entry.id),
+    );
+  });
 });
