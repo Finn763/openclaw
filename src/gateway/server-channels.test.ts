@@ -4742,5 +4742,38 @@ describe("server-channels auto restart", () => {
 
     expect(manager.isHealthMonitorEnabled("discord", "")).toBe(true);
   });
+
+  it("re-drives a terminal reload handshake that never reached ready", async () => {
+    let starts = 0;
+    installTestRegistry(createTestPlugin({ startAccount: async ({ setStatus, abortSignal }) => {
+      starts += 1;
+      if (starts === 2) {
+        setStatus(channelBlockedPatch("session collision", { accountId: DEFAULT_ACCOUNT_ID }));
+        return;
+      }
+      setStatus(channelReadyPatch({ accountId: DEFAULT_ACCOUNT_ID }));
+      await new Promise<void>((resolve) => abortSignal.addEventListener("abort", () => resolve(), { once: true }));
+    }}));
+    const manager = createManager();
+    await manager.startChannels();
+    await manager.stopChannel("discord", DEFAULT_ACCOUNT_ID, { manual: false, routeHandoff: true });
+    await manager.startChannel("discord", DEFAULT_ACCOUNT_ID, { preserveManualStop: true, skipUnavailableAccounts: true });
+    await advanceTimersUntil(() => starts >= 3, "terminal handshake was not re-driven", { stepMs: 10, maxMs: 1_000 });
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID]).toMatchObject({ lifecycle: "ready", terminalDisconnect: undefined });
+  });
+
+  it("still wedges a terminal disconnect with no healthy history", async () => {
+    let starts = 0;
+    installTestRegistry(createTestPlugin({ startAccount: async ({ setStatus }) => {
+      starts += 1;
+      setStatus(channelBlockedPatch("relink required", { accountId: DEFAULT_ACCOUNT_ID }));
+    }}));
+    const manager = createManager();
+    await manager.startChannels();
+    await flushMicrotasks(30);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(starts).toBe(1);
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID]).toMatchObject({ lifecycle: "blocked", restartPending: false });
+  });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

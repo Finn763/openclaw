@@ -75,6 +75,12 @@ const RESTART_POLICY: BackoffPolicy = {
   factor: 2,
   jitter: 0.1,
 };
+// A replacement admitted for a recently-connected account that dies terminally
+// before its first ready most likely lost a restart race (for example a
+// hot-reload re-handshake colliding with the still-live external session),
+// not its credentials. Re-drive those through the bounded crash supervisor
+// instead of wedging blocked forever.
+const CHANNEL_TERMINAL_RETRY_HEALTHY_WINDOW_MS = 5 * 60_000;
 const MAX_RESTARTS = 10;
 const CHANNEL_STABLE_RUN_MS = RESTART_POLICY.maxMs;
 const CHANNEL_STOP_ABORT_TIMEOUT_MS = 5_000;
@@ -720,6 +726,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         const lifetime: ChannelAccountLifetime = { abort, capabilityLease };
         store.lifetimes.set(id, lifetime);
         let handedOffTask = false;
+        let taskReachedReady = false;
         const log = ensureChannelLog(channelId);
         let scopedChannelRuntime: {
           channelRuntime?: PluginRuntimeChannel;
@@ -904,6 +911,13 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             return;
           }
           let channelRunDurationMs: number | undefined;
+          const prevRuntimeForTerminalRetry = getRuntime(channelId, id);
+          const prevTerminalRetryable =
+            prevRuntimeForTerminalRetry.running === true ||
+            (typeof prevRuntimeForTerminalRetry.lastConnectedAt === "number" &&
+              Number.isFinite(prevRuntimeForTerminalRetry.lastConnectedAt) &&
+              Date.now() - prevRuntimeForTerminalRetry.lastConnectedAt <
+                CHANNEL_TERMINAL_RETRY_HEALTHY_WINDOW_MS);
           setRuntime(channelId, id, {
             accountId: id,
             enabled: true,
@@ -969,10 +983,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                   return withGatewayNativeApprovalRuntime(opts.getNativeApprovalRuntime?.(), () =>
                     startAccount({
                       ...accountContext,
-                      setStatus: (next) =>
-                        isCurrentTask()
+                      setStatus: (next) => {
+                        if (next.lifecycle === "ready") {
+                          taskReachedReady = true;
+                        }
+                        return isCurrentTask()
                           ? setRuntimeFromTaskStatus(channelId, id, next, abort.signal)
-                          : getRuntime(channelId, id),
+                          : getRuntime(channelId, id);
+                      },
                       invalidateDirectoryCache: () =>
                         resetDirectoryCache({ cfg, channel: channelId, accountId: id }),
                       ...(channelRuntimeForTask ? { channelRuntime: channelRuntimeForTask } : {}),
@@ -1054,18 +1072,26 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (getRuntime(channelId, id).terminalDisconnect) {
                 // Authentication/session termination wins over pending recovery.
                 // Leaving recovery state behind would restart a channel that needs user action.
-                recoveryStopTimedOut.delete(rKey);
-                recoveryStartRequested.delete(rKey);
-                restarts.delete(rKey);
-                setRuntime(channelId, id, {
-                  accountId: id,
-                  restartPending: false,
-                  reconnectAttempts: 0,
-                });
-                log.info?.(`[${id}] auto-restart skipped, terminal disconnect`);
-                return;
-              }
-              if (recoveryStopTimedOut.has(rKey)) {
+                // Exception: a replacement admitted for a recently-connected account
+                // that never reached ready most likely lost a restart race, so let
+                // the bounded crash supervisor below re-drive it instead of wedging.
+                if (prevTerminalRetryable && !taskReachedReady) {
+                  log.info?.(
+                    `[${id}] retrying terminal disconnect before first ready; last connection was recent`,
+                  );
+                } else {
+                  recoveryStopTimedOut.delete(rKey);
+                  recoveryStartRequested.delete(rKey);
+                  restarts.delete(rKey);
+                  setRuntime(channelId, id, {
+                    accountId: id,
+                    restartPending: false,
+                    reconnectAttempts: 0,
+                  });
+                  log.info?.(`[${id}] auto-restart skipped, terminal disconnect`);
+                  return;
+                }
+              } else if (recoveryStopTimedOut.has(rKey)) {
                 recoveryStopTimedOut.delete(rKey);
                 if (!recoveryStartRequested.delete(rKey)) {
                   setRuntime(channelId, id, {
