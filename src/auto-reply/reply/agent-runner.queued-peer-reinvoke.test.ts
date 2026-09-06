@@ -46,9 +46,21 @@ vi.mock("../../agents/model-fallback-runner.js", () => ({
   runWithModelFallback: async (params: {
     provider: string;
     model: string;
-    run: (provider: string, model: string) => Promise<unknown>;
+    run: (
+      provider: string,
+      model: string,
+      options?: { modelRoutingProvenance?: unknown },
+    ) => Promise<unknown>;
   }) => ({
-    result: await params.run(params.provider, params.model),
+    // The embedded run entry requires routing provenance on every fallback
+    // attempt; the real runner supplies it, so this stub must too.
+    result: await params.run(params.provider, params.model, {
+      modelRoutingProvenance: {
+        requestedProvider: params.provider,
+        requestedModel: params.model,
+        stage: "initial",
+      },
+    }),
     provider: params.provider,
     model: params.model,
     attempts: [],
@@ -163,7 +175,15 @@ function buildMessageToolDeliveredRunResult(runId: string, answerText: string) {
     didSendViaMessagingTool: true,
     didDeliverSourceReplyViaMessageTool: true,
     messagingToolSourceReplyPayloads: [{ text: answerText }],
-    messagingToolSentTargets: [{ to: "+15550001111", text: answerText, sourceReplyFinal: true }],
+    messagingToolSentTargets: [
+      {
+        tool: "message",
+        provider: "whatsapp",
+        to: "+15550001111",
+        text: answerText,
+        sourceReplyFinal: true,
+      },
+    ],
     sourceReplyDeliveryMode: "message_tool_only",
     runId,
   });
@@ -172,7 +192,15 @@ function buildMessageToolDeliveredRunResult(runId: string, answerText: string) {
     meta: { agentMeta: {}, finalAssistantVisibleText: answerText },
     didDeliverSourceReplyViaMessageTool: true,
     messagingToolSourceReplyPayloads: [{ text: answerText }],
-    messagingToolSentTargets: [{ to: "+15550001111", text: answerText, sourceReplyFinal: true }],
+    messagingToolSentTargets: [
+      {
+        tool: "message",
+        provider: "whatsapp",
+        to: "+15550001111",
+        text: answerText,
+        sourceReplyFinal: true,
+      },
+    ],
     messagingToolSentTexts: [answerText],
   };
 }
@@ -184,7 +212,15 @@ function buildEvidenceOnlyDeliveredRunResult(answerText: string) {
     meta: { agentMeta: {}, finalAssistantVisibleText: answerText },
     didDeliverSourceReplyViaMessageTool: true,
     messagingToolSourceReplyPayloads: [],
-    messagingToolSentTargets: [{ to: "+15550001111", text: answerText, sourceReplyFinal: true }],
+    messagingToolSentTargets: [
+      {
+        tool: "message",
+        provider: "whatsapp",
+        to: "+15550001111",
+        text: answerText,
+        sourceReplyFinal: true,
+      },
+    ],
     messagingToolSentTexts: [answerText],
   };
 }
