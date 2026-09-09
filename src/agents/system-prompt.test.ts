@@ -1466,6 +1466,7 @@ describe("buildAgentSystemPrompt", () => {
     });
     expect(withoutTool).not.toContain("## Skill Workshop");
     expect(withoutTool).not.toContain("Durable reusable skill/playbook/workflow work");
+    expect(withoutTool).not.toContain("repository-owned skill source");
 
     const withTool = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -1474,6 +1475,11 @@ describe("buildAgentSystemPrompt", () => {
     expect(withTool).toContain("- skill_workshop: Author reusable skills");
     expect(withTool).toContain("## Skill Workshop");
     expect(withTool).toContain("Durable reusable skill/playbook/workflow work");
+    expect(withTool).toContain(
+      "never write Workshop proposal or Workshop-owned skill files directly",
+    );
+    expect(withTool).toContain("repository-owned skill source");
+    expect(withTool).toContain("never infer Workshop ownership");
     expect(withTool).toContain("Used skill proved wrong or incomplete");
     expect(withTool).toContain(
       "Where supported, autonomous mode may disable repair, stage a proposal, or apply it",
