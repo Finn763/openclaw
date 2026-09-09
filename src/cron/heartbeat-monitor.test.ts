@@ -57,33 +57,27 @@ describe("heartbeat monitor desired-state planning", () => {
     ]);
   });
 
-  it("retains a disabled monitor and its existing cadence", () => {
+  it("removes the retained monitor when the cadence is disabled (#141558)", () => {
     const cfg = {
       agents: { defaults: { heartbeat: { every: "0m" } } },
     } as OpenClawConfig;
-    const input = resolveHeartbeatMonitorPlan(cfg, [], { schedulerSeed: "test-seed" }).specs[0]
-      ?.input;
-    if (!input) {
-      throw new Error("expected a disabled heartbeat monitor");
-    }
+    const options = { schedulerSeed: "test-seed" };
     const existing = monitorJob({
-      ...input,
+      declarationKey: "heartbeat:main",
+      displayName: "Heartbeat (main)",
+      name: "heartbeat-main",
+      agentId: "main",
       enabled: true,
-      schedule: { kind: "every", everyMs: 60_000 },
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: 1 },
+      payload: { kind: "heartbeat" },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
     });
 
-    const plan = resolveHeartbeatMonitorPlan(cfg, [existing], { schedulerSeed: "test-seed" });
+    const plan = resolveHeartbeatMonitorPlan(cfg, [existing], options);
 
-    expect(plan.changes).toEqual([
-      expect.objectContaining({
-        kind: "update",
-        agentId: "main",
-        input: expect.objectContaining({
-          enabled: false,
-          schedule: expect.objectContaining({ kind: "every", everyMs: 60_000 }),
-        }),
-      }),
-    ]);
+    expect(plan.specs).toEqual([]);
+    expect(plan.changes).toEqual([{ kind: "remove", agentId: "main", job: existing }]);
   });
 
   it("removes duplicate monitors before updating the retained row", () => {
@@ -106,6 +100,54 @@ describe("heartbeat monitor desired-state planning", () => {
     expect(plan.changes).toEqual([
       { kind: "remove", agentId: "main", job: older },
       expect.objectContaining({ kind: "update", agentId: "main" }),
+    ]);
+  });
+
+  it("owns no monitor row when the cadence is explicitly disabled (#141558)", () => {
+    const cfg = {
+      agents: {
+        defaults: { heartbeat: { every: "0m" } },
+        list: [
+          { id: "main", heartbeat: { every: "0m" } },
+          { id: "ops", heartbeat: { every: "0m" } },
+        ],
+      },
+    } as OpenClawConfig;
+    const plan = resolveHeartbeatMonitorPlan(cfg, [], { schedulerSeed: "test-seed" });
+
+    expect(plan.specs).toEqual([]);
+    expect(plan.changes).toEqual([]);
+  });
+
+  it("removes stale monitors when the cadence is explicitly disabled (#141558)", () => {
+    const enabledCfg = {
+      agents: {
+        defaults: { heartbeat: { every: "30m" } },
+        list: [{ id: "main" }, { id: "ops" }],
+      },
+    } as OpenClawConfig;
+    const options = { schedulerSeed: "test-seed" };
+    const enabled = resolveHeartbeatMonitorPlan(enabledCfg, [], options).specs;
+    if (enabled.length !== 2) {
+      throw new Error("expected enabled heartbeat monitor specs");
+    }
+    const existing = enabled.map((spec) => monitorJob({ ...spec.input, enabled: true }));
+    const disabledCfg = {
+      agents: {
+        defaults: { heartbeat: { every: "0m" } },
+        list: [
+          { id: "main", heartbeat: { every: "0m" } },
+          { id: "ops", heartbeat: { every: "0m" } },
+        ],
+      },
+    } as OpenClawConfig;
+
+    const plan = resolveHeartbeatMonitorPlan(disabledCfg, existing, options);
+
+    expect(plan.specs).toEqual([]);
+    expect(plan.changes.map(({ kind, agentId }) => ({ kind, agentId }))).toEqual([
+      { kind: "remove", agentId: "main" },
+      { kind: "remove", agentId: "ops" },
     ]);
   });
 

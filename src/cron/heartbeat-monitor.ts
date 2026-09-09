@@ -1,7 +1,6 @@
 /** Canonical projection from heartbeat config to system-owned cron monitor jobs. */
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
-import { DEFAULT_HEARTBEAT_EVERY } from "../auto-reply/heartbeat.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveHeartbeatAgents, resolveHeartbeatIntervalMs } from "../infra/heartbeat-config.js";
 import {
@@ -81,19 +80,15 @@ export function resolveHeartbeatMonitorPlan(
 
   const schedulerSeed = resolveHeartbeatSchedulerSeed(options.schedulerSeed);
   const specs: HeartbeatMonitorSpec[] = resolveHeartbeatAgents(cfg).flatMap((agent) => {
-    // Unset config already resolves to the 30m default here, so this is null
-    // only for an explicitly disabled cadence ("0m"/invalid). The fallbacks
-    // below therefore only shape the retained disabled monitor row; removing an
-    // interval override or re-enabling always returns to the resolved config.
+    // Unset config already resolves to the 30m default here, so null means an
+    // explicitly disabled cadence ("0m"/invalid). A disabled heartbeat owns no
+    // monitor row at all: stale rows fall through to the removal pass below
+    // instead of being retained with a default cadence. (#141558)
     const configuredIntervalMs = resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat);
-    const existing = existingByAgentId.get(agent.agentId);
-    const intervalMs =
-      configuredIntervalMs ??
-      (existing?.schedule.kind === "every" ? existing.schedule.everyMs : undefined) ??
-      resolveHeartbeatIntervalMs(cfg, DEFAULT_HEARTBEAT_EVERY, agent.heartbeat);
-    if (!intervalMs) {
+    if (configuredIntervalMs === null) {
       return [];
     }
+    const intervalMs = configuredIntervalMs;
     return [
       {
         agentId: agent.agentId,
@@ -102,7 +97,7 @@ export function resolveHeartbeatMonitorPlan(
           displayName: `Heartbeat (${agent.agentId})`,
           name: `heartbeat-${agent.agentId}`,
           agentId: agent.agentId,
-          enabled: configuredIntervalMs !== null,
+          enabled: true,
           schedule: {
             kind: "every",
             everyMs: intervalMs,

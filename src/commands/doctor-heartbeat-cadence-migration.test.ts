@@ -131,19 +131,37 @@ describe("heartbeat cadence cron migration", () => {
     ).resolves.toEqual([]);
   });
 
-  it("preserves a disabled heartbeat as a disabled monitor row", async () => {
-    const fixture = await createFixture("0m");
-
-    const result = await maybeMigrateHeartbeatCadenceToCron({
+  it("removes the monitor row when heartbeat is disabled (#141558)", async () => {
+    const fixture = await createFixture();
+    await maybeMigrateHeartbeatCadenceToCron({
       cfg: fixture.cfg,
+      shouldRepair: true,
+      env: fixture.env,
+    });
+    expect(await loadMainMonitor(fixture.storePath)).toEqual(
+      expect.objectContaining({ enabled: true }),
+    );
+
+    const disabledCfg = {
+      ...fixture.cfg,
+      agents: { ...fixture.cfg.agents, defaults: { heartbeat: { every: "0m" } } },
+    } as OpenClawConfig;
+    const result = await maybeMigrateHeartbeatCadenceToCron({
+      cfg: disabledCfg,
       shouldRepair: true,
       env: fixture.env,
     });
 
     expect(result.warnings).toEqual([]);
-    expect(await loadMainMonitor(fixture.storePath)).toEqual(
-      expect.objectContaining({ enabled: false, payload: { kind: "heartbeat" } }),
-    );
+    expect(result.changes).toEqual(['Remove stale heartbeat monitor for agent "main".']);
+    expect(await loadMainMonitor(fixture.storePath)).toBeUndefined();
+
+    const rerun = await maybeMigrateHeartbeatCadenceToCron({
+      cfg: disabledCfg,
+      shouldRepair: true,
+      env: fixture.env,
+    });
+    expect(rerun).toEqual({ changes: [], warnings: [] });
   });
 
   it("keeps ownerless multi-agent updates scoped to their declared monitors", async () => {
