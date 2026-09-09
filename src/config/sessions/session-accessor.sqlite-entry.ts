@@ -52,6 +52,7 @@ import {
   readLifecycleTargetSnapshot,
   readSessionEntrySelectionSnapshot,
   readSessionIdentitySnapshot,
+  readUnchangedLifecycleTargetSnapshot,
   writeSessionEntry,
 } from "./session-accessor.sqlite-entry-store.js";
 import { listTranscriptInstancesFromDatabase } from "./session-accessor.sqlite-history.js";
@@ -562,8 +563,13 @@ async function patchSqliteSessionEntrySnapshot(
             if (options.shouldCommit?.() === false) {
               return undefined;
             }
-            const fresh = params.readSnapshot(writeDatabase);
-            assertLifecycleTargetSnapshotUnchanged(prepared, fresh, params.operationLabel);
+            // Unchanged raw rows decode identically; only a changed row pays the hydrated
+            // re-read and deep comparison that owns the conflict error.
+            let fresh = readUnchangedLifecycleTargetSnapshot(writeDatabase, prepared);
+            if (!fresh) {
+              fresh = params.readSnapshot(writeDatabase);
+              assertLifecycleTargetSnapshotUnchanged(prepared, fresh, params.operationLabel);
+            }
             options.assertCommitAllowed?.();
             if (!next) {
               result = cloneSessionEntry(writeBase);
@@ -575,6 +581,10 @@ async function patchSqliteSessionEntrySnapshot(
             const persisted = writeSessionEntry(writeDatabase, sessionKey, next, {
               ...(options.consumePendingReset ? { consumePendingReset: true } : {}),
               previousEntry: selectedPreviousEntry,
+              // The validated snapshot already owns this canonical row's decode.
+              ...(fresh[0]?.sessionKey === sessionKey
+                ? { canonicalPreviousEntry: fresh[0].entry }
+                : {}),
             });
             wrote = true;
             // Identity observers only consume sessionId, already owned by this canonical write.

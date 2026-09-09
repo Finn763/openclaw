@@ -3,6 +3,7 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
+  sqliteStringSet,
 } from "../../infra/kysely-sync.js";
 import { getChildLogger } from "../../logging/logger.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
@@ -23,7 +24,7 @@ import {
 } from "./session-accessor.sqlite-entry-equality.js";
 import {
   readExactSessionEntryRow,
-  readSessionEntryRow,
+  readSessionEntryRowScan,
 } from "./session-accessor.sqlite-entry-read.js";
 import {
   clearSessionCollaborationForKey,
@@ -93,10 +94,77 @@ export function readSessionEntrySelectionSnapshot(
   sessionKey: string,
   exact: boolean,
 ): SqliteLifecycleTargetSnapshot {
-  const selected = exact
-    ? readExactSessionEntryRow(database, sessionKey)
-    : readSessionEntryRow(database, sessionKey);
-  return selected ? [{ entry: selected.entry, sessionKey: selected.row.session_key }] : [];
+  if (exact) {
+    const selected = readExactSessionEntryRow(database, sessionKey);
+    return selected
+      ? [
+          {
+            entry: selected.entry,
+            sessionKey: selected.row.session_key,
+            persistedRows: {
+              lookupKeys: [sessionKey.trim()],
+              // SAFETY: session_nodes rows are plain column-value objects; the cast only widens to a generic record for raw comparison.
+              rows: [selected.row as Readonly<Record<string, unknown>>],
+            },
+          },
+        ]
+      : [];
+  }
+  const scanned = readSessionEntryRowScan(database, sessionKey);
+  return scanned?.selected
+    ? [
+        {
+          entry: scanned.selected.entry,
+          sessionKey: scanned.selected.row.session_key,
+          persistedRows: { lookupKeys: scanned.lookupKeys, rows: scanned.rows },
+        },
+      ]
+    : [];
+}
+
+/**
+ * Commit-edge compare-and-swap without rehydrating the row. The prepared snapshot carries the
+ * exact raw rows its entries were decoded from, so an identical raw read proves the prepared
+ * entries are still authoritative. Any difference (or a snapshot without raw rows) returns
+ * undefined and the caller falls back to the hydrated re-read and deep comparison.
+ */
+export function readUnchangedLifecycleTargetSnapshot(
+  database: OpenClawAgentDatabase,
+  prepared: SqliteLifecycleTargetSnapshot,
+): SqliteLifecycleTargetSnapshot | undefined {
+  const persisted = prepared[0]?.persistedRows;
+  if (!persisted || persisted.lookupKeys.length === 0) {
+    return undefined;
+  }
+  const rows = executeSqliteQuerySync(
+    database.db,
+    getSessionKysely(database.db)
+      .selectFrom("session_nodes")
+      .selectAll()
+      .where("session_key", "in", sqliteStringSet(persisted.lookupKeys))
+      .orderBy("session_key", "asc"),
+  ).rows;
+  if (rows.length !== persisted.rows.length) {
+    return undefined;
+  }
+  const unchanged = rows.every((row, index) =>
+    rawSessionEntryRowsEqual(row, persisted.rows[index]!),
+  );
+  return unchanged ? prepared : undefined;
+}
+
+/** Union of keys: an exact row and its selected projection compare on the columns both own. */
+function rawSessionEntryRowsEqual(
+  left: Readonly<Record<string, unknown>>,
+  right: Readonly<Record<string, unknown>>,
+): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (!isDeepStrictEqual(left[key], right[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function resolveLifecyclePrimaryEntry(
@@ -107,7 +175,7 @@ export function resolveLifecyclePrimaryEntry(
   const rows = target.storeKeys.flatMap((key) => {
     const sessionKey = key.trim();
     const row = readExactSessionEntryRow(database, sessionKey);
-    return row ? [{ sessionKey, entry: row.entry }] : [];
+    return row ? [{ sessionKey, entry: row.entry, rawRow: row.row }] : [];
   });
   if (rows.length > 1) {
     throw canonicalSessionKeyMigrationRequiredError(
@@ -120,7 +188,17 @@ export function resolveLifecyclePrimaryEntry(
       `non-canonical persisted row resolves to session key ${target.canonicalKey}`,
     );
   }
-  return row;
+  return row
+    ? {
+        entry: row.entry,
+        sessionKey: row.sessionKey,
+        persistedRows: {
+          lookupKeys: target.storeKeys.map((key) => key.trim()),
+          // SAFETY: session_nodes rows are plain column-value objects; the cast only widens to a generic record for raw comparison.
+          rows: [row.rawRow as Readonly<Record<string, unknown>>],
+        },
+      }
+    : undefined;
 }
 
 export function readLifecycleTargetSnapshot(
@@ -386,6 +464,8 @@ export function writeSessionEntry(
   entry: SessionEntry,
   options: {
     allowStoredAliases?: boolean;
+    /** Persisted canonical row the caller already decoded; null proves the row is absent. */
+    canonicalPreviousEntry?: SessionEntry | null;
     consumePendingReset?: boolean;
     preserveNodeSuggestions?: boolean;
     previousEntry?: SessionEntry | null;
@@ -408,10 +488,13 @@ export function writeSessionEntry(
   }
   // Doctor validated the raw rejected row before entering the transaction and passes its
   // hydrated snapshot explicitly; re-reading it through the runtime parser must stay fail-closed.
+  // Callers that already decoded this canonical row pass canonicalPreviousEntry to skip the read.
   const canonicalPreviousEntry =
-    options.allowStoredAliases && options.previousEntry !== undefined
-      ? (options.previousEntry ?? undefined)
-      : readExactSessionEntryRow(database, sessionKey)?.entry;
+    options.canonicalPreviousEntry !== undefined
+      ? (options.canonicalPreviousEntry ?? undefined)
+      : options.allowStoredAliases && options.previousEntry !== undefined
+        ? (options.previousEntry ?? undefined)
+        : readExactSessionEntryRow(database, sessionKey)?.entry;
   if (canonicalPreviousEntry?.sandbox === "required") {
     if (
       normalizedEntry.sandbox !== "required" ||
