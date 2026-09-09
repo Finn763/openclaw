@@ -275,21 +275,27 @@ function publishProvider(config: ReturnType<typeof createProviderConfig>["config
   setRuntimeConfigSnapshot(config, source);
 }
 
+function fillSyntheticCatalog(provider: ModelProviderConfig, onRead: () => void): void {
+  provider.models = Array.from({ length: 400 }, (_, index) => ({
+    id: `synthetic-${index}`,
+    get name() {
+      onRead();
+      return `Synthetic ${index}`;
+    },
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    maxTokens: 4096,
+  }));
+}
+
 describe("provider auth snapshot comparison", () => {
   it("does not traverse a shared runtime model catalog during repeated auth lookups", () => {
     const { config, provider } = createProviderConfig();
     let catalogReads = 0;
-    provider.models = Array.from({ length: 400 }, (_, index) => ({
-      id: `synthetic-${index}`,
-      get name() {
-        catalogReads += 1;
-        return `Synthetic ${index}`;
-      },
-      reasoning: false,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      maxTokens: 4096,
-    }));
+    fillSyntheticCatalog(provider, () => {
+      catalogReads += 1;
+    });
     publishProvider(config);
     catalogReads = 0;
     const started = performance.now();
@@ -379,6 +385,46 @@ describe("provider config structural comparison", () => {
         provider: "synthetic",
       }),
     ).toBe(false);
+  });
+
+  it("stops comparing an equivalent catalog at the first differing provider entry", () => {
+    const { config, provider } = createProviderConfig();
+    let catalogReads = 0;
+    fillSyntheticCatalog(provider, () => {
+      catalogReads += 1;
+    });
+    const input = structuredClone(config);
+    input.models.providers.synthetic.models[0]!.id = "synthetic-changed";
+    catalogReads = 0;
+    expect(
+      providerConfigMatchesRuntimeSnapshot({
+        inputConfig: input,
+        runtimeConfig: config,
+        provider: "synthetic",
+      }),
+    ).toBe(false);
+    expect(catalogReads).toBe(0);
+  });
+
+  it("matches equivalent providers that share a model catalog without walking it", () => {
+    const { config, provider } = createProviderConfig();
+    let catalogReads = 0;
+    fillSyntheticCatalog(provider, () => {
+      catalogReads += 1;
+    });
+    const input: OpenClawConfig = {
+      ...config,
+      models: { providers: { synthetic: { ...provider } } },
+    };
+    catalogReads = 0;
+    expect(
+      providerConfigMatchesRuntimeSnapshot({
+        inputConfig: input,
+        runtimeConfig: config,
+        provider: "synthetic",
+      }),
+    ).toBe(true);
+    expect(catalogReads).toBe(0);
   });
 });
 
