@@ -31,6 +31,11 @@ import type { RuntimeMsgContext as MsgContext, TemplateContext } from "../templa
 /** Maximum size of one file copied into an agent sandbox or staging workspace. */
 export const SANDBOX_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 const SCP_STDERR_TAIL_CHARS = 16_384;
+/**
+ * Per-transfer deadline for sandbox SCP staging. The shared runner owns the
+ * timer, process-tree termination, and settlement; do not reimplement them here.
+ */
+export const SCP_TRANSFER_TIMEOUT_MS = 30_000;
 
 // Attachment indexes are the staging identity. Callers use this map to detect
 // partial failures without matching rewritten strings back to source paths.
@@ -303,9 +308,10 @@ async function stageRemoteFileIntoRoot(params: {
             tmpPath,
           ],
           {
-            // The runner owns both descendants and settlement before temp cleanup.
+            // The runner owns the deadline, descendants, and settlement before temp cleanup.
             signal: abortSignal,
             killProcessTree: true,
+            timeoutMs: SCP_TRANSFER_TIMEOUT_MS,
             // Four UTF-8 bytes retain the existing UTF-16 diagnostic tail bound.
             maxOutputBytes: { stdout: 1, stderr: SCP_STDERR_TAIL_CHARS * 4 },
           },
