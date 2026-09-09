@@ -270,6 +270,26 @@ function isCmdExeInvocation(argv: string[]): boolean {
   return base === "cmd.exe" || base === "cmd";
 }
 
+// Wrap a pre-built `cmd.exe /d /s /c` command line in one extra quote envelope
+// and mark it verbatim, mirroring Node's own shell:true serialization. Only the
+// canonical five-element shape is touched; everything else passes through (#142847).
+function resolveWindowsCmdPayloadSpawn(
+  argv: string[],
+  platform: NodeJS.Platform = process.platform,
+): { argv: string[]; windowsVerbatimArguments?: boolean } {
+  if (platform !== "win32" || argv.length !== 5 || !isCmdExeInvocation(argv)) {
+    return { argv };
+  }
+  const flags = [argv[1] ?? "", argv[2] ?? "", argv[3] ?? ""].map((flag) =>
+    normalizeLowercaseStringOrEmpty(flag.trim()),
+  );
+  if (flags[0] !== "/d" || flags[1] !== "/s" || flags[2] !== "/c") {
+    return { argv };
+  }
+  const head = [argv[0] ?? "", argv[1] ?? "", argv[2] ?? "", argv[3] ?? ""];
+  return { argv: [...head, `"${argv[4] ?? ""}"`], windowsVerbatimArguments: true };
+}
+
 function resolveExecAsk(value?: string): ExecAsk {
   return value === "off" || value === "on-miss" || value === "always" ? value : DEFAULT_ASK;
 }
@@ -349,7 +369,12 @@ async function runCommand(
   signal?: AbortSignal,
 ): Promise<RunResult> {
   try {
-    const result = await runCommandWithTimeout(argv, {
+    // A pre-built `cmd.exe /d /s /c` command line must travel verbatim inside
+    // one extra quote envelope: Node's default per-argument quoting would
+    // otherwise backslash-escape the payload's quotes, and cmd's /s handling
+    // strips the outer pair (#142847).
+    const spawn = resolveWindowsCmdPayloadSpawn(argv);
+    const result = await runCommandWithTimeout(spawn.argv, {
       baseEnv: env,
       cwd,
       killProcessTree: true,
@@ -359,6 +384,7 @@ async function runCommand(
       input: Buffer.alloc(0),
       signal,
       timeoutMs: timeoutMs && timeoutMs > 0 ? timeoutMs : undefined,
+      ...(spawn.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
     });
     const timedOut = result.termination === "timeout";
     const exitCode = result.code ?? undefined;
@@ -1120,6 +1146,7 @@ async function sendNodeEvent(client: NodeHostClient, event: string, payload: unk
 
 const testing = {
   clarifyNodeExecCwdSpawnError,
+  resolveWindowsCmdPayloadSpawn,
   runCommand,
 } as const;
 

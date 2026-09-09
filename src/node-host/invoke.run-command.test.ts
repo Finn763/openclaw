@@ -4,6 +4,77 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testing } from "./invoke.test-support.js";
 
+describe("runCommand windows cmd payload (#142847)", () => {
+  it("wraps the canonical cmd /d /s /c payload verbatim on win32", () => {
+    expect(
+      testing.resolveWindowsCmdPayloadSpawn(
+        ["cmd.exe", "/d", "/s", "/c", 'echo "https://x/"'],
+        "win32",
+      ),
+    ).toEqual({
+      argv: ["cmd.exe", "/d", "/s", "/c", '"echo "https://x/""'],
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("matches full cmd paths and case-insensitive switches", () => {
+    expect(
+      testing.resolveWindowsCmdPayloadSpawn(
+        ["C:\\Windows\\System32\\cmd.exe", "/D", "/S", "/C", 'echo "a"'],
+        "win32",
+      ),
+    ).toEqual({
+      argv: ["C:\\Windows\\System32\\cmd.exe", "/D", "/S", "/C", '"echo "a""'],
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("leaves non-canonical argv and non-Windows hosts untouched", () => {
+    expect(
+      testing.resolveWindowsCmdPayloadSpawn(["cmd.exe", "/d", "/s", "/c", 'echo "a"'], "linux"),
+    ).toEqual({ argv: ["cmd.exe", "/d", "/s", "/c", 'echo "a"'] });
+    expect(
+      testing.resolveWindowsCmdPayloadSpawn(["powershell.exe", "-c", 'echo "a"'], "win32"),
+    ).toEqual({
+      argv: ["powershell.exe", "-c", 'echo "a"'],
+    });
+    expect(
+      testing.resolveWindowsCmdPayloadSpawn(["cmd.exe", "/d", "/c", 'echo "a"'], "win32"),
+    ).toEqual({ argv: ["cmd.exe", "/d", "/c", 'echo "a"'] });
+    expect(testing.resolveWindowsCmdPayloadSpawn(["cmd.exe"], "win32")).toEqual({
+      argv: ["cmd.exe"],
+    });
+  });
+
+  it.runIf(process.platform === "win32")(
+    "preserves quoted args through the real spawn",
+    async () => {
+      const quoted = await testing.runCommand(
+        ["cmd.exe", "/d", "/s", "/c", 'echo "https://tenant.example.com/"'],
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(quoted.success).toBe(true);
+      expect(quoted.stdout.trim()).toBe('"https://tenant.example.com/"');
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "runs a quoted executable payload end to end",
+    async () => {
+      const nested = await testing.runCommand(
+        ["cmd.exe", "/d", "/s", "/c", '"C:\\Windows\\System32\\cmd.exe" /c echo "tail"'],
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(nested.success).toBe(true);
+      expect(nested.stdout.trim()).toBe('"tail"');
+    },
+  );
+});
+
 describe("runCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();

@@ -3,6 +3,10 @@ import "./invoke.js";
 
 type NodeHostInvokeTestApi = {
   clarifyNodeExecCwdSpawnError(error: NodeJS.ErrnoException, cwd: string | undefined): string;
+  resolveWindowsCmdPayloadSpawn(
+    argv: string[],
+    platform?: NodeJS.Platform,
+  ): { argv: string[]; windowsVerbatimArguments?: boolean };
   runCommand(
     argv: string[],
     cwd: string | undefined,
@@ -21,6 +25,9 @@ function getTestApi(): NodeHostInvokeTestApi {
 export const testing: NodeHostInvokeTestApi = {
   clarifyNodeExecCwdSpawnError(error, cwd) {
     return getTestApi().clarifyNodeExecCwdSpawnError(error, cwd);
+  },
+  resolveWindowsCmdPayloadSpawn(argv, platform) {
+    return getTestApi().resolveWindowsCmdPayloadSpawn(argv, platform);
   },
   runCommand(argv, cwd, env, timeoutMs, signal) {
     return getTestApi().runCommand(argv, cwd, env, timeoutMs, signal);
