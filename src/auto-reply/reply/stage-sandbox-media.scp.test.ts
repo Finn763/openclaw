@@ -28,6 +28,7 @@ import type { RuntimeMsgContext, TemplateContext } from "../templating.js";
 import { stageSandboxMedia } from "./stage-sandbox-media.js";
 
 const SCP_STDERR_TAIL_CHARS = 16_384;
+const SCP_TRANSFER_TIMEOUT_MS = 30_000;
 const REMOTE_PATH = "/synthetic/attachments/report with spaces.txt";
 const SUCCESS = {
   code: 0,
@@ -207,6 +208,7 @@ describe("stageSandboxMedia SCP", () => {
           download,
         ],
         expect.objectContaining({
+          timeoutMs: SCP_TRANSFER_TIMEOUT_MS,
           maxOutputBytes: { stdout: 1, stderr: SCP_STDERR_TAIL_CHARS * 4 },
         }),
       );
@@ -666,5 +668,103 @@ describe("stageSandboxMedia SCP", () => {
         );
       });
     },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "bounds an unattended SCP hang with the shared runner deadline",
+    async () => {
+      await withOpenClawTestState({ label: "scp-hung-timeout" }, async (state) => {
+        const params = remoteStageParams(state);
+        const before = structuredClone([params.ctx, params.sessionCtx]);
+        const binDir = state.path("bin");
+        const attemptsPath = state.path("attempts");
+        const parentPidPath = state.path("parent.pid");
+        const descendantPidPath = state.path("descendant.pid");
+        const readyPath = state.path("ready.pid");
+        const cleanupPath = state.path("cleanup");
+        const downloadPath = state.path("download-path");
+        await fs.mkdir(binDir);
+        const descendantSource = [
+          "const fs = require('node:fs')",
+          `const cleanup = () => { if (fs.existsSync(${JSON.stringify(cleanupPath)})) process.exit(0) }`,
+          "process.on('disconnect', cleanup); cleanup()",
+          "process.on('SIGTERM', () => {})",
+          "setInterval(() => {}, 1000)",
+          "process.send('ready')",
+        ].join(";");
+        await fs.writeFile(
+          path.join(binDir, "scp"),
+          [
+            `#!${process.execPath}`,
+            "const fs = require('node:fs'); const { spawn } = require('node:child_process');",
+            `const retried = fs.existsSync(${JSON.stringify(attemptsPath)});`,
+            `fs.appendFileSync(${JSON.stringify(attemptsPath)}, 'attempt\\n');`,
+            `if (retried || fs.existsSync(${JSON.stringify(cleanupPath)})) process.exit(1);`,
+            `fs.writeFileSync(${JSON.stringify(parentPidPath)}, String(process.pid));`,
+            `fs.writeFileSync(${JSON.stringify(downloadPath)}, process.argv.at(-1));`,
+            "process.on('SIGTERM', () => {});",
+            `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantSource)}], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });`,
+            `fs.writeFileSync(${JSON.stringify(descendantPidPath)}, String(child.pid));`,
+            `child.once('message', () => fs.writeFileSync(${JSON.stringify(readyPath)}, String(process.pid)));`,
+            "setInterval(() => {}, 1000);",
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+
+        await withEnvAsync(
+          { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` },
+          async () => {
+            const spawn = vi.spyOn(execSpawn, "spawnCommandWithInvocation");
+            let parentPid: number | undefined;
+            let descendantPid: number | undefined;
+            // No cancellation: only the shared runner deadline can settle this transfer.
+            const settled = stageSandboxMedia(params).then(
+              (value) => ({ value }),
+              (error: unknown) => ({ error }),
+            );
+            let reapedByDeadline: boolean[] = [];
+            let temporaryDirectoryRemoved = false;
+            // Sandbox setup can be slow under load; the transfer deadline is the behavior under test.
+            const spawnReadyTimeoutMs = 60_000;
+            try {
+              parentPid = await waitForPidFile(parentPidPath, spawnReadyTimeoutMs);
+              descendantPid = await waitForPidFile(descendantPidPath, spawnReadyTimeoutMs);
+              expect(await waitForPidFile(readyPath, spawnReadyTimeoutMs)).toBe(parentPid);
+              expect(isPidAlive(parentPid)).toBe(true);
+              expect(isPidAlive(descendantPid)).toBe(true);
+              reapedByDeadline = await Promise.all([
+                waitForPidToExit(parentPid, SCP_TRANSFER_TIMEOUT_MS + 5_000),
+                waitForPidToExit(descendantPid, SCP_TRANSFER_TIMEOUT_MS + 5_000),
+              ]);
+            } finally {
+              // Stop any late attempt, then drain the owner before removing its fixture.
+              await fs.writeFile(cleanupPath, "cleanup");
+              for (const [index, result] of spawn.mock.results.entries()) {
+                if (spawn.mock.calls[index]?.[0][0] === "scp" && result.type === "return") {
+                  killPidIfAlive(result.value.child.nodeChildProcess.pid);
+                }
+              }
+              descendantPid ??= await readPidFile(descendantPidPath).catch(() => undefined);
+              killPidIfAlive(descendantPid);
+              await settled;
+              if (existsSync(downloadPath)) {
+                const download = await fs.readFile(downloadPath, "utf8");
+                const temporaryDirectory = path.dirname(download);
+                temporaryDirectoryRemoved = !existsSync(temporaryDirectory);
+                await fs.rm(temporaryDirectory, { recursive: true, force: true });
+              }
+            }
+
+            expect(reapedByDeadline).toEqual([true, true]);
+            // The bounded retry loop exhausts instead of publishing failed media.
+            expect(await settled).toEqual({ value: { staged: new Map() } });
+            expect(await fs.readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(3));
+            expect([params.ctx, params.sessionCtx]).toEqual(before);
+            expect(temporaryDirectoryRemoved).toBe(true);
+          },
+        );
+      });
+    },
+    180_000,
   );
 });
