@@ -184,10 +184,20 @@ export async function start(state: CronServiceState): Promise<void> {
   for (const interrupted of interruptedRuns) {
     emitInterruptedRun(state, interrupted);
   }
-  await runMissedJobs(state, {
-    skipJobIds: skipJobIds.size > 0 ? skipJobIds : undefined,
-    deferAgentTurnJobs: true,
-  });
+  // Startup catch-up runs untrusted job work and storage writes before the
+  // periodic timer exists. Its failure must not strand the scheduler: log it
+  // and continue so the timer below still arms (#141633).
+  try {
+    await runMissedJobs(state, {
+      skipJobIds: skipJobIds.size > 0 ? skipJobIds : undefined,
+      deferAgentTurnJobs: true,
+    });
+  } catch (err) {
+    state.deps.log.error(
+      { err: String(err) },
+      "cron: startup catch-up failed; continuing with periodic scheduling",
+    );
+  }
 
   await locked(state, async () => {
     await ensureLoaded(state, { forceReload: true, skipRecompute: true });
@@ -195,9 +205,18 @@ export async function start(state: CronServiceState): Promise<void> {
       return;
     }
     if (listForeignReceipts(state).length === 0) {
-      const maintenance = recomputeUnownedCronSchedules(state, { recomputeExpired: true });
-      runPostPersistCronNotifications(state, maintenance.notifications);
-      applyCronRuntimeRowsToState(state, maintenance.jobs);
+      // Same stranding hazard as catch-up above: maintenance writes must not
+      // take the periodic timer down with them (#141633).
+      try {
+        const maintenance = recomputeUnownedCronSchedules(state, { recomputeExpired: true });
+        runPostPersistCronNotifications(state, maintenance.notifications);
+        applyCronRuntimeRowsToState(state, maintenance.jobs);
+      } catch (err) {
+        state.deps.log.error(
+          { err: String(err) },
+          "cron: startup schedule maintenance failed; continuing with periodic scheduling",
+        );
+      }
     }
     armTimer(state);
     resumeForeignReceiptMonitor(state);
