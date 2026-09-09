@@ -28,6 +28,12 @@ export type GlobalOnlyModelCommandName =
   | "aliases list"
   | "aliases add"
   | "aliases remove"
+  | "fallbacks add"
+  | "fallbacks remove"
+  | "fallbacks clear"
+  | "image-fallbacks add"
+  | "image-fallbacks remove"
+  | "image-fallbacks clear"
   | "refresh";
 
 export function rejectAgentScopedModelCommand(

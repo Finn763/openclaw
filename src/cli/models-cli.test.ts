@@ -134,6 +134,7 @@ describe("models cli", () => {
     modelsSetCommand.mockClear();
     modelsSetImageCommand.mockClear();
     modelsStatusCommand.mockClear();
+    mocks.noopAsync.mockClear();
     mocks.modelsAccountsListCommand.mockClear();
     mocks.modelsAccountsLoginCommand.mockClear();
     mocks.modelsAccountsUseCommand.mockClear();
@@ -595,6 +596,36 @@ describe("models cli", () => {
       label: "aliases remove",
       args: ["aliases", "remove", "zzz"],
       command: modelsAliasesRemoveCommand,
+    },
+    {
+      label: "fallbacks add",
+      args: ["fallbacks", "add", "soraka/grok-4.6"],
+      command: mocks.noopAsync,
+    },
+    {
+      label: "fallbacks remove",
+      args: ["fallbacks", "remove", "soraka/grok-4.6"],
+      command: mocks.noopAsync,
+    },
+    {
+      label: "fallbacks clear",
+      args: ["fallbacks", "clear"],
+      command: mocks.noopAsync,
+    },
+    {
+      label: "image-fallbacks add",
+      args: ["image-fallbacks", "add", "soraka/grok-4.6"],
+      command: mocks.noopAsync,
+    },
+    {
+      label: "image-fallbacks remove",
+      args: ["image-fallbacks", "remove", "soraka/grok-4.6"],
+      command: mocks.noopAsync,
+    },
+    {
+      label: "image-fallbacks clear",
+      args: ["image-fallbacks", "clear"],
+      command: mocks.noopAsync,
     },
     {
       label: "scan",

@@ -263,10 +263,12 @@ export function registerModelsCli(program: Command) {
         .command(action)
         .description(`${action === "add" ? "Add" : "Remove"} ${article} ${noun} model`)
         .argument("<model>", "Model id or alias")
-        .action(async (model: string) => {
-          await withModelsRuntime(async ({ defaultRuntime }) => {
+        .action(async (model: string, _opts: unknown, command: Command) => {
+          const runtime = await loadModelsRuntime();
+          runtime.rejectAgentScopedModelCommand(command, `${name} ${action}`);
+          await runtime.runModelsCommand(async () => {
             const commands = await loadModelsFallbacksCommands();
-            await commands[handler](params, model, defaultRuntime);
+            await commands[handler](params, model, runtime.defaultRuntime);
           });
         });
     }
@@ -274,10 +276,12 @@ export function registerModelsCli(program: Command) {
     group
       .command("clear")
       .description(`Clear all ${noun} models`)
-      .action(async () => {
-        await withModelsRuntime(async ({ defaultRuntime }) => {
+      .action(async (_opts: unknown, command: Command) => {
+        const runtime = await loadModelsRuntime();
+        runtime.rejectAgentScopedModelCommand(command, `${name} clear`);
+        await runtime.runModelsCommand(async () => {
           const { clearFallbacksCommand } = await loadModelsFallbacksCommands();
-          await clearFallbacksCommand(params, defaultRuntime);
+          await clearFallbacksCommand(params, runtime.defaultRuntime);
         });
       });
   }
