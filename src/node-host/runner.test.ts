@@ -710,6 +710,83 @@ describe("runNodeHost", () => {
       workerHost: {
         enabled: true,
         capacity: { total: 5, available: 5 },
+        bundlePrewarm: 1,
+      },
+    });
+  });
+
+  it("omits bundleFormat for a previous Gateway that does not advertise the capability", async () => {
+    mocks.getRuntimeConfig.mockReturnValue({
+      gateway: { handshakeTimeoutMs: 1_000 },
+      nodeHost: { workerRuns: { enabled: true, capacity: 5 } },
+    } as never);
+    await expectNodeHostEventLoopTimeout();
+    const options = mocks.capturedGatewayClientOptions[0];
+    const client = mocks.capturedGatewayClients[0];
+
+    // A previous v6 Gateway advertises bundle retention/status but not the new
+    // bundle-format capability, so the current node must stay within the five
+    // worker-host keys that the previous strict declaration parser permits.
+    options?.onHelloOk?.({
+      protocol: 4,
+      features: {
+        methods: [],
+        events: [],
+        capabilities: [
+          GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_RETENTION,
+          GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_STATUS,
+        ],
+      },
+    } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
+
+    expect(client?.request).toHaveBeenCalledWith(NODE_RUNNER_INVENTORY_UPDATE_METHOD, {
+      protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+      workerHost: {
+        enabled: true,
+        capacity: { total: 5, available: 5 },
+        bundlePrewarm: 1,
+        bundleRetention: 1,
+        bundleStatus: 1,
+      },
+    });
+
+    const inventoryCall = client?.request.mock.calls.find(
+      ([method]) => method === NODE_RUNNER_INVENTORY_UPDATE_METHOD,
+    );
+    const publishedWorkerHost = (inventoryCall?.[1] as { workerHost?: Record<string, unknown> })
+      ?.workerHost;
+    expect(Object.keys(publishedWorkerHost ?? {}).sort()).toEqual([
+      "bundlePrewarm",
+      "bundleRetention",
+      "bundleStatus",
+      "capacity",
+      "enabled",
+    ]);
+  });
+
+  it("advertises bundleFormat once the Gateway advertises the capability", async () => {
+    mocks.getRuntimeConfig.mockReturnValue({
+      gateway: { handshakeTimeoutMs: 1_000 },
+      nodeHost: { workerRuns: { enabled: true, capacity: 5 } },
+    } as never);
+    await expectNodeHostEventLoopTimeout();
+    const options = mocks.capturedGatewayClientOptions[0];
+    const client = mocks.capturedGatewayClients[0];
+
+    options?.onHelloOk?.({
+      protocol: 4,
+      features: {
+        methods: [],
+        events: [],
+        capabilities: [GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_FORMAT],
+      },
+    } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
+
+    expect(client?.request).toHaveBeenCalledWith(NODE_RUNNER_INVENTORY_UPDATE_METHOD, {
+      protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+      workerHost: {
+        enabled: true,
+        capacity: { total: 5, available: 5 },
         bundleFormat: 2,
         bundlePrewarm: 1,
       },
@@ -739,7 +816,6 @@ describe("runNodeHost", () => {
         workerHost: {
           enabled: true,
           capacity: { total: 2, available: 2 },
-          bundleFormat: 2,
           bundlePrewarm: 1,
           bundleRetention: 1,
         },
@@ -752,6 +828,7 @@ describe("runNodeHost", () => {
         methods: [],
         events: [],
         capabilities: [
+          GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_FORMAT,
           GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_RETENTION,
           GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_STATUS,
         ],

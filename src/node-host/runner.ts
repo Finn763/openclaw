@@ -291,6 +291,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
   let consecutivePermanentGatewayRejections = 0;
   let gatewayConnectionGeneration = 0;
   let connectedGatewayProtocol = 0;
+  let gatewaySupportsBundleFormat = false;
   let gatewaySupportsBundleRetention = false;
   let gatewaySupportsBundleStatus = false;
   let optionalPublicationStates = new Map<
@@ -309,6 +310,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
     gatewayConnectionGeneration += 1;
     gatewayHelloReceived = false;
     connectedGatewayProtocol = 0;
+    gatewaySupportsBundleFormat = false;
     gatewaySupportsBundleRetention = false;
     gatewaySupportsBundleStatus = false;
     retireOptionalPublications();
@@ -508,7 +510,9 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
             ? {
                 enabled: true,
                 capacity: workerCapacity,
-                bundleFormat: WORKER_BUNDLE_FORMAT_VERSION,
+                ...(gatewaySupportsBundleFormat
+                  ? { bundleFormat: WORKER_BUNDLE_FORMAT_VERSION }
+                  : {}),
                 bundlePrewarm: WORKER_BUNDLE_PREWARM_VERSION,
                 ...(gatewaySupportsBundleRetention
                   ? { bundleRetention: NODE_WORKER_BUNDLE_RETENTION_VERSION }
@@ -594,6 +598,9 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
       gatewayConnectionGeneration += 1;
       gatewayHelloReceived = true;
       connectedGatewayProtocol = hello.protocol;
+      gatewaySupportsBundleFormat =
+        hello.features?.capabilities?.includes(GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_FORMAT) ===
+        true;
       gatewaySupportsBundleRetention =
         hello.features?.capabilities?.includes(GATEWAY_SERVER_CAPS.NODE_WORKER_BUNDLE_RETENTION) ===
         true;
