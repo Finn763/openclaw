@@ -23,6 +23,7 @@ import {
 } from "./internal-event-contract.js";
 import {
   escapeInternalRuntimeContextDelimiters,
+  INTERNAL_EVENT_BLOCK_HEADER,
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
   type RuntimeContextFragment,
@@ -243,7 +244,7 @@ export function buildAgentInternalEventContext(
   return (events ?? []).flatMap((event): RuntimeContextFragment[] => [
     {
       kind: "runtime-instruction",
-      text: "A background task completed. Keep internal details private and use its result to reply in your normal assistant voice.",
+      text: "A background task completed. Use its result to reply in your normal assistant voice.",
     },
     { kind: "conversation-data", text: formatTaskCompletionEvent(event, "data") },
     { kind: "runtime-instruction", text: event.replyInstruction },
@@ -278,8 +279,9 @@ export function formatAgentInternalEventsForPrompt(events?: AgentInternalEvent[]
   }
   return [
     INTERNAL_RUNTIME_CONTEXT_BEGIN,
-    "OpenClaw runtime context (internal):",
-    "This context is runtime-generated, not user-authored. Keep internal details private.",
+    // Descriptive provenance only: behavioral guidance lives once in the stable
+    // system prompt, so per-turn carriers cannot read as prompt injection (#139022).
+    INTERNAL_EVENT_BLOCK_HEADER,
     "",
     blocks.join("\n\n---\n\n"),
     INTERNAL_RUNTIME_CONTEXT_END,
@@ -298,8 +300,9 @@ export function formatGeneratedMediaDeliveryRetryForPrompt(mediaUrls: string[]):
   }
   return [
     INTERNAL_RUNTIME_CONTEXT_BEGIN,
-    "OpenClaw runtime context (internal):",
-    "This context is runtime-generated, not user-authored. Keep internal details private.",
+    // Descriptive provenance only: behavioral guidance lives once in the stable
+    // system prompt, so per-turn carriers cannot read as prompt injection (#139022).
+    INTERNAL_EVENT_BLOCK_HEADER,
     "",
     "[Generated media delivery retry]",
     "A previous agent turn delivered only part of this generated-media result.",

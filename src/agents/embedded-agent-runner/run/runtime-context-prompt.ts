@@ -6,7 +6,6 @@ import {
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
   OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE,
-  OPENCLAW_RUNTIME_CONTEXT_NOTICE,
   OPENCLAW_RUNTIME_EVENT_HEADER,
   type RuntimeContextFragment,
 } from "../../internal-runtime-context.js";
@@ -95,12 +94,12 @@ export function buildRuntimeContextMessageContent(params: {
 }): string {
   // Next-turn carriers carry only the delimited body: the stable system prompt
   // explains the markers once, and the delimiters are what hasInternalRuntimeContext
-  // and the leak strippers key on. Runtime events keep their preface because the
-  // model receives no user message alongside them.
+  // and the leak strippers key on. Runtime events keep a descriptive header
+  // because the model receives no user message alongside them; behavioral
+  // guidance stays in the stable system prompt so the carrier cannot read as
+  // prompt injection (#139022).
   return [
-    ...(params.kind === "runtime-event"
-      ? [OPENCLAW_RUNTIME_EVENT_HEADER, OPENCLAW_RUNTIME_CONTEXT_NOTICE, ""]
-      : []),
+    ...(params.kind === "runtime-event" ? [OPENCLAW_RUNTIME_EVENT_HEADER, ""] : []),
     INTERNAL_RUNTIME_CONTEXT_BEGIN,
     params.runtimeContext,
     INTERNAL_RUNTIME_CONTEXT_END,

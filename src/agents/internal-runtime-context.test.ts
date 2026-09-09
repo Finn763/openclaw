@@ -63,6 +63,18 @@ describe("internal runtime context codec", () => {
     expect(stripInternalRuntimeContext(input)).toBe("Visible intro\n\nVisible outro");
   });
 
+  it("strips new-format unmarked event blocks without the notice line (#139022)", () => {
+    const input = [
+      "OpenClaw runtime context (internal):",
+      "",
+      "[Internal task completion event]",
+      "source: subagent",
+    ].join("\n");
+
+    expect(hasInternalRuntimeContext(input)).toBe(true);
+    expect(stripInternalRuntimeContext(input)).toBe("");
+  });
+
   it("strips multiple marked internal runtime blocks and preserves surrounding text", () => {
     const first = [
       INTERNAL_RUNTIME_CONTEXT_BEGIN,

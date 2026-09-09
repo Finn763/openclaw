@@ -27,8 +27,31 @@ export type RuntimeContextFragment = {
   text: string;
 };
 
+/** Descriptive header for protected event blocks; per-turn carriers stay imperative-free (#139022). */
+export const INTERNAL_EVENT_BLOCK_HEADER = "OpenClaw runtime context (internal):";
+
 const LEGACY_INTERNAL_CONTEXT_HEADER =
-  ["OpenClaw runtime context (internal):", OPENCLAW_RUNTIME_CONTEXT_NOTICE, ""].join("\n") + "\n";
+  [INTERNAL_EVENT_BLOCK_HEADER, OPENCLAW_RUNTIME_CONTEXT_NOTICE, ""].join("\n") + "\n";
+
+/** Undelimited event-block headers, oldest format first; emitters use the bare header. */
+const INTERNAL_EVENT_BLOCK_HEADERS = [
+  LEGACY_INTERNAL_CONTEXT_HEADER,
+  `${INTERNAL_EVENT_BLOCK_HEADER}\n\n`,
+];
+
+function findInternalEventBlockHeader(
+  text: string,
+  from: number,
+): { start: number; length: number } | null {
+  let best: { start: number; length: number } | null = null;
+  for (const header of INTERNAL_EVENT_BLOCK_HEADERS) {
+    const start = text.indexOf(header, from);
+    if (start !== -1 && (best === null || start < best.start)) {
+      best = { start, length: header.length };
+    }
+  }
+  return best;
+}
 
 const LEGACY_INTERNAL_EVENT_MARKER = "[Internal task completion event]";
 const LEGACY_INTERNAL_EVENT_SEPARATOR = "\n\n---\n\n";
@@ -173,12 +196,12 @@ function stripLegacyInternalRuntimeContext(text: string): string {
   let next = text;
   let searchFrom = 0;
   for (;;) {
-    const headerStart = next.indexOf(LEGACY_INTERNAL_CONTEXT_HEADER, searchFrom);
-    if (headerStart === -1) {
+    const found = findInternalEventBlockHeader(next, searchFrom);
+    if (found === null) {
       return next;
     }
 
-    const eventStart = headerStart + LEGACY_INTERNAL_CONTEXT_HEADER.length;
+    const eventStart = found.start + found.length;
     if (!next.startsWith(LEGACY_INTERNAL_EVENT_MARKER, eventStart)) {
       searchFrom = eventStart;
       continue;
@@ -204,7 +227,7 @@ function stripLegacyInternalRuntimeContext(text: string): string {
       }
     }
 
-    const before = next.slice(0, headerStart).trimEnd();
+    const before = next.slice(0, found.start).trimEnd();
     const after = next.slice(blockEnd).trimStart();
     next = before && after ? `${before}\n\n${after}` : `${before}${after}`;
     searchFrom = Math.max(0, before.length - 1);
@@ -262,12 +285,13 @@ export function stripInternalRuntimeContext(
       text = text.slice(0, lineStart).trimEnd();
     }
   }
-  // All removable formats contain a delimiter or the whitespace-tolerant runtime notice.
-  // Skip delimiter scans and line parsing for ordinary display text.
+  // All removable formats contain a delimiter, the whitespace-tolerant runtime
+  // notice, or a known event-block header. Skip scans for ordinary display text.
   if (
     !text.includes(INTERNAL_RUNTIME_CONTEXT_BEGIN) &&
     !text.includes(INTERNAL_RUNTIME_CONTEXT_END) &&
-    !RUNTIME_CONTEXT_NOTICE_PATTERN.test(text)
+    !RUNTIME_CONTEXT_NOTICE_PATTERN.test(text) &&
+    !INTERNAL_EVENT_BLOCK_HEADERS.some((header) => text.includes(header))
   ) {
     return text;
   }
@@ -287,7 +311,7 @@ export function hasInternalRuntimeContext(text: string): boolean {
   }
   return (
     findDelimitedTokenIndex(text, BEGIN_DELIMITER, 0) !== -1 ||
-    text.includes(LEGACY_INTERNAL_CONTEXT_HEADER) ||
+    INTERNAL_EVENT_BLOCK_HEADERS.some((header) => text.includes(header)) ||
     RUNTIME_CONTEXT_PROMPT_HEADERS.some((header) =>
       text.includes(`${header}\n${OPENCLAW_RUNTIME_CONTEXT_NOTICE}`),
     )

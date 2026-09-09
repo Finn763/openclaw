@@ -9,6 +9,7 @@ import {
 import {
   buildCurrentInboundPrompt,
   buildRuntimeContextCustomMessage,
+  buildRuntimeContextMessageContent,
   resolveRuntimeContextPromptParts,
   prependRuntimeContextForModel,
 } from "./runtime-context-prompt.js";
@@ -151,5 +152,18 @@ describe("per-request runtime instructions", () => {
     ]);
     expect(messages).toHaveLength(1);
     expect(prependRuntimeContextForModel(messages, "")).toBe(messages);
+  });
+
+  it("keeps runtime-event carrier prefaces free of instruction-like directives (#139022)", () => {
+    const content = buildRuntimeContextMessageContent({
+      runtimeContext: "event body",
+      kind: "runtime-event",
+    });
+
+    expect(content).toContain("OpenClaw runtime event.");
+    expect(content).not.toContain("not user-authored");
+    expect(content).not.toContain("Keep internal details private");
+    expect(content).not.toContain("Do not reply");
+    expect(content).not.toContain("Do not wait");
   });
 });

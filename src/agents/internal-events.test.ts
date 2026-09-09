@@ -4,6 +4,7 @@ import {
   buildAgentInternalEventContext,
   buildGeneratedMediaDeliveryContext,
   formatAgentInternalEventsForPrompt,
+  formatGeneratedMediaDeliveryRetryForPrompt,
   type AgentInternalEvent,
   prependInternalEventContext,
   resolveAcpPromptBody,
@@ -234,6 +235,64 @@ describe("attempt execution prompt materialization", () => {
       expect(plain.split("child result")).toHaveLength(2);
       expect(plain).toContain("sourceTool=subagent_announce isUser=false");
       expect(plain.endsWith("Follow up.")).toBe(true);
+    }
+  });
+});
+
+describe("runtime context carrier phrasing (#139022)", () => {
+  // Per-turn carriers serialize as user-role messages, so imperative
+  // secrecy/suppression wording reads as prompt injection to models with
+  // anti-injection guidance. Behavioral guidance lives once in the stable
+  // system prompt; carriers must stay purely descriptive.
+  const INJECTION_LIKE_PHRASES = [
+    "Do not reply to or describe",
+    "Do not wait for another message",
+    "not user-authored",
+    "Keep internal details private",
+  ];
+
+  it("phrases protected event blocks as data, not instructions", () => {
+    const prompt = formatAgentInternalEventsForPrompt([taskCompletionEvent("child result")]);
+
+    for (const phrase of INJECTION_LIKE_PHRASES) {
+      expect(prompt).not.toContain(phrase);
+    }
+    expect(prompt).toContain(INTERNAL_RUNTIME_CONTEXT_BEGIN);
+    expect(prompt).toContain("OpenClaw runtime context (internal):");
+    expect(prompt).toContain("[Internal task completion event]");
+    expect(prompt).toContain(INTERNAL_RUNTIME_CONTEXT_END);
+  });
+
+  it("phrases media retry blocks as data, not instructions", () => {
+    const prompt = formatGeneratedMediaDeliveryRetryForPrompt(["https://example.test/report.png"]);
+
+    for (const phrase of INJECTION_LIKE_PHRASES) {
+      expect(prompt).not.toContain(phrase);
+    }
+    expect(prompt).toContain(INTERNAL_RUNTIME_CONTEXT_BEGIN);
+    expect(prompt).toContain("OpenClaw runtime context (internal):");
+    expect(prompt).toContain(INTERNAL_RUNTIME_CONTEXT_END);
+  });
+
+  it("phrases background-task fragments without secrecy directives", () => {
+    const instructions = buildAgentInternalEventContext([taskCompletionEvent("child result")])
+      .filter((fragment) => fragment.kind === "runtime-instruction")
+      .map((fragment) => fragment.text)
+      .join("\n");
+
+    expect(instructions).toContain("A background task completed.");
+    for (const phrase of INJECTION_LIKE_PHRASES) {
+      expect(instructions).not.toContain(phrase);
+    }
+  });
+
+  it("prepends the descriptive block ahead of the user prompt body", () => {
+    const body = prependInternalEventContext("Follow up.", [taskCompletionEvent("child result")]);
+
+    expect(body.startsWith(INTERNAL_RUNTIME_CONTEXT_BEGIN)).toBe(true);
+    expect(body).toContain("Follow up.");
+    for (const phrase of INJECTION_LIKE_PHRASES) {
+      expect(body).not.toContain(phrase);
     }
   });
 });
