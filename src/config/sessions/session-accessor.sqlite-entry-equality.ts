@@ -1,6 +1,17 @@
 import type { SessionEntry } from "./types.js";
 
-export type SqliteLifecycleTargetSnapshot = Array<{ entry: SessionEntry; sessionKey: string }>;
+export type SqliteLifecycleTargetSnapshot = Array<{
+  entry: SessionEntry;
+  sessionKey: string;
+  /**
+   * Raw persisted rows the preparation scanned, kept so the commit edge can prove the row is
+   * unchanged without decoding it again. Absent = the caller must re-read hydrated rows.
+   */
+  persistedRows?: {
+    lookupKeys: readonly string[];
+    rows: readonly Readonly<Record<string, unknown>>[];
+  };
+}>;
 
 class SqliteSessionMutationConflictError extends Error {
   constructor(operationLabel: string) {
