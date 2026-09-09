@@ -4,7 +4,9 @@
 import { sanitizePendingFinalDeliveryText } from "../../../auto-reply/reply/pending-final-delivery-state.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { waitForGatewayDispatch } from "../../../gateway/server-in-process-dispatch.js";
+import { normalizeOutboundReplyPayloadCore } from "../../../infra/outbound/reply-payload-normalize.js";
 import { sourceDeliveryTargetsMatch } from "../../../infra/outbound/source-delivery-plan.js";
+import { splitMediaFromOutput } from "../../../media/parse.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../../sessions/input-provenance.js";
 import { deriveSessionChatTypeFromKey } from "../../../sessions/session-chat-type-shared.js";
 import { isNonTerminalAgentRunStatus } from "../../../shared/agent-run-status.js";
@@ -15,10 +17,12 @@ import {
   hasUnaccountedMessagingToolAggregateEvidence,
   resolveExplicitFinalSourceReplyDeliveryEvidence,
 } from "../../embedded-agent-runner/delivery-evidence.js";
+import { hasVisibleAgentPayload } from "../../embedded-agent-runner/message-visibility.js";
 import { hasVisibleCompletionResult } from "../../internal-event-contract.js";
-import type { AgentInternalEvent } from "../../internal-events.js";
+import { collectAgentInternalEventMedia, type AgentInternalEvent } from "../../internal-events.js";
 import { createAgentRunDirectAbortError } from "../../run-termination.js";
 import {
+  hasAnnounceSendEvidence,
   SourceOwnerChangedError,
   sourceOwnerChangedResult,
   summarizeDeliveryError,
@@ -122,31 +126,89 @@ export function isDirectMessageDeliveryTarget(
   return deriveSessionChatTypeFromKey(requesterSessionKey) === "direct";
 }
 
-function resolveTextCompletionDirectFallback(
-  events: readonly AgentInternalEvent[] | undefined,
-  contentKind: "completed_result" | "failed_notice",
-) {
-  if (contentKind === "failed_notice") {
-    return FAILED_COMPLETION_NOTICE;
+type DirectCompletionContent = { content: string; mediaUrls: string[]; audioAsVoice?: boolean };
+
+function collectDirectCompletionContent(params: {
+  agentResult?: { payloads?: unknown };
+  events: readonly AgentInternalEvent[] | undefined;
+  contentKind: "completed_result" | "failed_notice";
+}): DirectCompletionContent | undefined {
+  if (params.contentKind === "failed_notice") {
+    return { content: FAILED_COMPLETION_NOTICE, mediaUrls: [] };
   }
-  for (let index = (events?.length ?? 0) - 1; index >= 0; index -= 1) {
-    const event = events?.[index];
-    if (event?.type !== "task_completion" || event.source !== "subagent") {
-      continue;
+  const collect = (payloads: readonly unknown[]): DirectCompletionContent | undefined => {
+    const textParts: string[] = [];
+    const mediaUrls = new Set<string>();
+    let audioAsVoice = false;
+    for (const payload of payloads) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        continue;
+      }
+      // SAFETY: The object/array guard above narrows payload to a plain record boundary.
+      const record = payload as Record<string, unknown>;
+      if (
+        !hasVisibleAgentPayload(
+          { payloads: [record] },
+          {
+            includeErrorPayloads: false,
+            includeReasoningPayloads: false,
+            includeSilentReplyPayloads: false,
+            requireTerminalContent: true,
+          },
+        )
+      ) {
+        continue;
+      }
+      const normalized = normalizeOutboundReplyPayloadCore(record);
+      const parsed = splitMediaFromOutput(normalized.text ?? "");
+      if (parsed.audioAsVoice === true || record.audioAsVoice === true) {
+        audioAsVoice = true;
+      }
+      const text = sanitizeAgentRunTerminalReplyText(sanitizePendingFinalDeliveryText(parsed.text));
+      if (text && text !== "(no output)") {
+        textParts.push(text);
+      }
+      for (const mediaUrl of [
+        ...(normalized.mediaUrl ? [normalized.mediaUrl] : []),
+        ...(normalized.mediaUrls ?? []),
+        ...(parsed.mediaUrls ?? []),
+      ]) {
+        mediaUrls.add(mediaUrl);
+      }
     }
-    if (event.status !== "ok") {
+    return textParts.length > 0 || mediaUrls.size > 0
+      ? {
+          content: textParts.join("\n\n"),
+          mediaUrls: [...mediaUrls],
+          ...(audioAsVoice ? { audioAsVoice: true as const } : {}),
+        }
+      : undefined;
+  };
+
+  const payloadContent = Array.isArray(params.agentResult?.payloads)
+    ? collect(params.agentResult.payloads)
+    : undefined;
+  if (payloadContent && payloadContent.mediaUrls.length > 0) {
+    return payloadContent;
+  }
+  for (let index = (params.events?.length ?? 0) - 1; index >= 0; index -= 1) {
+    const event = params.events?.[index];
+    if (event?.type !== "task_completion" || event.source !== "subagent" || event.status !== "ok") {
       continue;
     }
     // Placeholder copy for an absent child result is not deliverable content.
     if (!hasVisibleCompletionResult(event)) {
       continue;
     }
-    const result =
-      typeof event.result === "string"
-        ? sanitizeAgentRunTerminalReplyText(sanitizePendingFinalDeliveryText(event.result))
-        : "";
-    if (result) {
-      return result;
+    const parsedEvent = collect([{ text: event.result }]);
+    const eventMediaUrls = collectAgentInternalEventMedia([event]).mediaUrls;
+    const mediaUrls = new Set([...(parsedEvent?.mediaUrls ?? []), ...eventMediaUrls]);
+    if (parsedEvent || mediaUrls.size > 0) {
+      return {
+        content: parsedEvent?.content ?? "",
+        mediaUrls: [...mediaUrls],
+        ...(parsedEvent?.audioAsVoice ? { audioAsVoice: true as const } : {}),
+      };
     }
   }
   return undefined;
@@ -167,12 +229,21 @@ export async function deliverCompletionDirect(params: {
   internalEvents?: readonly AgentInternalEvent[];
   contentKind: "completed_result" | "failed_notice";
   signal?: AbortSignal;
+  agentResult?: { payloads?: unknown };
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   isSourceSessionEffectsAllowed?: () => boolean;
 }): Promise<SubagentAnnounceDeliveryResult | undefined> {
-  const content = resolveTextCompletionDirectFallback(params.internalEvents, params.contentKind);
+  const completionContent = collectDirectCompletionContent({
+    agentResult: params.agentResult,
+    events: params.internalEvents,
+    contentKind: params.contentKind,
+  });
+  // A failed completion must not deliver partial child media as its result.
+  const content = completionContent?.content;
+  const mediaUrls = completionContent?.mediaUrls ?? [];
+  const audioAsVoice = completionContent?.audioAsVoice === true;
   if (
-    !content ||
+    (!content && mediaUrls.length === 0) ||
     !params.deliveryTarget.deliver ||
     !params.deliveryTarget.channel ||
     !params.deliveryTarget.to ||
@@ -206,7 +277,9 @@ export async function deliverCompletionDirect(params: {
       requesterSessionKey: params.requesterSessionKey,
       agentId,
       conversationType: "direct",
-      content,
+      content: content ?? "",
+      ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
+      ...(audioAsVoice ? { asVoice: true } : {}),
       idempotencyKey,
       skipQueue: true,
       abortSignal: params.signal,
@@ -220,8 +293,15 @@ export async function deliverCompletionDirect(params: {
         if (committedDelivery) {
           return;
         }
-        // Platform identity is committed before transcript mirroring, which
-        // may wait behind the requester's still-active SQLite writer.
+        if (mediaUrls.length > 0) {
+          // ponytail: defer commit until the media batch settles; an early
+          // commit would mask a partial post-send failure as delivered.
+          return;
+        }
+        // onDeliveryResult fires on identified platform evidence, before
+        // deliver-core awaits transcript mirroring (see mirrorDeliveredPayloads).
+        // Commit here so a blocked requester writer holding the mirror cannot
+        // keep a fully delivered media batch pending.
         committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
         params.onDeliveryResult?.(committedDelivery);
       },
@@ -248,6 +328,13 @@ export async function deliverCompletionDirect(params: {
           : { disposition: "intentional_non_delivery" as const, terminal: true }),
       };
     }
+    if (mediaUrls.length > 0) {
+      // Commit only after the media batch settled; a partial failure must stay
+      // visible instead of being reported as delivered.
+      committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
+      params.onDeliveryResult?.(committedDelivery);
+      return committedDelivery;
+    }
     return { delivered: true, path: "direct" };
   } catch (err) {
     if (committedDelivery) {
@@ -257,6 +344,18 @@ export async function deliverCompletionDirect(params: {
     }
     if (err instanceof SourceOwnerChangedError) {
       return sourceOwnerChangedResult();
+    }
+    if (hasAnnounceSendEvidence(err)) {
+      // A platform send already began, so another attempt could duplicate the
+      // visible completion; report the unconfirmed media instead.
+      return {
+        delivered: false,
+        path: "direct",
+        terminal: true,
+        disposition: "ambiguous",
+        error: `text completion direct delivery partially failed: ${summarizeDeliveryError(err)}`,
+        ...(mediaUrls.length > 0 ? { missingMediaUrls: mediaUrls } : {}),
+      };
     }
     if (params.signal?.aborted) {
       return { delivered: false, path: "none" };
