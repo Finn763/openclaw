@@ -346,7 +346,7 @@ describe("exec security floor", () => {
     expect(buildExecSpec).not.toHaveBeenCalled();
   });
 
-  it("lets normalized auto mode run implicit sandbox execution", async () => {
+  it("denies non-allowlisted sandbox commands in normalized auto mode (fail-closed, #141300)", async () => {
     const buildExecSpec = vi.fn(async () => ({
       argv: ["/bin/sh", "-lc", "printf sandbox-auto-ok"],
       env: process.env,
@@ -367,10 +367,10 @@ describe("exec security floor", () => {
       command: "echo sandbox-auto-ok",
     });
 
-    expect(buildExecSpec).toHaveBeenCalledTimes(1);
-    expect(result.content[0]?.type).toBe("text");
+    expect(buildExecSpec).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({ status: "failed" });
     const text = (result.content[0] as { text?: string }).text ?? "";
-    expect(text).toContain("sandbox-auto-ok");
+    expect(text).toMatch(/approval_required|exec denied/i);
   });
 
   it("intersects normalized gateway auto mode with host approval deny defaults", async () => {

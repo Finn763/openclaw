@@ -6,11 +6,14 @@ import { resolveStateDir } from "../config/paths.js";
 import { createAbortError } from "../infra/abort-signal.js";
 import {
   type ExecHost,
+  evaluateShellAllowlistWithAuthorization,
+  hasDurableExecApproval,
   loadExecApprovals,
   maxAsk,
   minSecurity,
   normalizeExecAsk,
   requireValidExecTarget,
+  requiresExecApproval,
   resolveExecApprovalsFromFile,
   resolveExecModePolicy,
 } from "../infra/exec-approvals.js";
@@ -567,6 +570,71 @@ export function createExecTool(
           execCommandOverride = gatewayResult.allowWithoutEnforcedCommand
             ? undefined
             : gatewayResult.execCommandOverride;
+        }
+
+        if (host === "sandbox" && !bypassApprovals && (security === "allowlist" || ask !== "off")) {
+          // Sandbox executions previously skipped allowlist/ask evaluation
+          // entirely (#141300): an isolated/cron session with a restrictive
+          // tools.exec policy still ran arbitrary commands. Enforce the same
+          // allowlist/ask contract as gateway/node here. The sandbox has no
+          // interactive approval route, so anything requiring approval fails
+          // closed instead of prompting.
+          const sandboxApprovals = resolveExecApprovalsFromFile({
+            file: loadExecApprovals(),
+            agentId,
+            overrides: {
+              security: "full",
+              ask: "off",
+            },
+          });
+          const sandboxAllowlistEval = await evaluateShellAllowlistWithAuthorization({
+            command: params.command,
+            allowlist: sandboxApprovals.allowlist,
+            safeBins,
+            safeBinProfiles,
+            cwd: workdir,
+            env,
+            platform: process.platform,
+            trustedSafeBinDirs,
+          });
+          const sandboxDurableSatisfied = hasDurableExecApproval({
+            analysisOk: sandboxAllowlistEval.analysisOk,
+            segmentAllowlistEntries: sandboxAllowlistEval.segmentAllowlistEntries,
+            allowlist: sandboxApprovals.allowlist,
+            commandText: params.command,
+          });
+          if (
+            requiresExecApproval({
+              ask,
+              security,
+              analysisOk: sandboxAllowlistEval.analysisOk,
+              allowlistSatisfied: sandboxAllowlistEval.allowlistSatisfied,
+              durableApprovalSatisfied: sandboxDurableSatisfied,
+            })
+          ) {
+            const deniedText = `Exec denied (approval_required): ${params.command}`;
+            return {
+              content: [{ type: "text", text: deniedText }],
+              details: {
+                status: "failed",
+                exitCode: null,
+                failureKind: "approval_required",
+                durationMs: 0,
+                aggregated: deniedText,
+                timedOut: false,
+                cwd: workdir,
+              },
+            };
+          }
+          if (
+            security === "allowlist" &&
+            !(
+              sandboxDurableSatisfied ||
+              (sandboxAllowlistEval.analysisOk && sandboxAllowlistEval.allowlistSatisfied)
+            )
+          ) {
+            throw new Error("exec denied: host=sandbox allowlist miss (ask=off)");
+          }
         }
 
         // Pending approvals have not started the command. Add fallback warnings only
