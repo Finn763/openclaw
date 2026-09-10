@@ -1,4 +1,8 @@
 import { isSensitiveUrlQueryParamName } from "@openclaw/net-policy/redact-sensitive-url";
+import {
+  hasRedactionProvenance,
+  markRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 // Redaction helpers scrub secrets and sensitive identifiers from log output.
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import {
@@ -52,6 +56,27 @@ const formAwareEqualsAssignmentPatterns = new WeakSet<RegExp>();
 const sourceAssignmentPatterns = new WeakSet<RegExp>();
 let defaultResolvedPatterns: RegExp[] | undefined;
 let toolPayloadResolvedPatterns: RegExp[] | undefined;
+
+// Persistence opts in so stored masks carry explicit provenance (#142821); log and UI
+// masking keeps the bare mask, and the default path stays byte-identical.
+let maskProvenanceDepth = 0;
+
+/**
+ * Runs `run` with every mask it produces wrapped in redaction provenance markers.
+ * Synchronous by design: the flag is process state, and redaction never awaits.
+ */
+export function withRedactionProvenance<T>(run: () => T): T {
+  maskProvenanceDepth += 1;
+  try {
+    return run();
+  } finally {
+    maskProvenanceDepth -= 1;
+  }
+}
+
+function maskProvenance(mask: string): string {
+  return maskProvenanceDepth > 0 ? markRedactionProvenance(mask) : mask;
+}
 
 const FORM_BODY_KEY_OBFUSCATION_RE = new RegExp(
   String.raw`[${FORM_BODY_KEY_INVISIBLE_CHARS}+]`,
@@ -225,15 +250,22 @@ function usesBuiltInRedactPatterns(value?: readonly RedactPattern[]): boolean {
 }
 
 function maskToken(token: string): string {
+  // A marked token is redaction output from an earlier persistence pass; re-masking
+  // its hint bytes would shred it, so it passes through (#142821).
+  if (hasRedactionProvenance(token)) {
+    return token;
+  }
   if (token === "***") {
+    // Already-masked input is not a mask this pass produced, so it carries no
+    // provenance: only bytes we redact now can claim to be redaction output.
     return token;
   }
   if (token.length < DEFAULT_REDACT_MIN_LENGTH) {
-    return "***";
+    return maskProvenance("***");
   }
   const start = sliceUtf16Safe(token, 0, DEFAULT_REDACT_KEEP_START);
   const end = sliceUtf16Safe(token, -DEFAULT_REDACT_KEEP_END);
-  return `${start}…${end}`;
+  return maskProvenance(`${start}…${end}`);
 }
 
 function splitSecretValueForMask(token: string): {
@@ -297,7 +329,7 @@ function splitFormAwareCredentialValue(token: string): { secret: string; suffix:
 
 function maskSecretValue(token: string, options?: { hinted?: boolean }): string {
   const { maskable, suffix } = splitSecretValueForMask(token);
-  return `${options?.hinted ? maskToken(maskable) : "***"}${suffix}`;
+  return `${options?.hinted ? maskToken(maskable) : maskProvenance("***")}${suffix}`;
 }
 
 function normalizeSensitiveKeyName(value: string): string {
@@ -393,7 +425,10 @@ function redactAssignmentValues(text: string, kind: SensitiveAssignmentKind): st
   const parts: string[] = [];
   let cursor = 0;
   visitSensitiveAssignments(text, kind, (start, end, maskable) => {
-    parts.push(text.slice(cursor, start), kind === "url" ? maskToken(maskable) : "***");
+    parts.push(
+      text.slice(cursor, start),
+      kind === "url" ? maskToken(maskable) : maskProvenance("***"),
+    );
     cursor = end;
   });
   return parts.length > 0 ? parts.join("") + text.slice(cursor) : text;
@@ -670,7 +705,7 @@ function redactText(
 ): string {
   let next = text;
   if (options?.redactStructuredAuthHeaders) {
-    next = redactStructuredAuthHeaders(next, "***");
+    next = redactStructuredAuthHeaders(next, maskProvenance("***"));
   }
   if (options?.redactFormBodies) {
     next = redactAssignmentValues(next, "url");
@@ -1064,7 +1099,7 @@ function redactStructuredSecretValue(
     return value;
   }
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return shouldRedactStructuredPrimitiveField(key, path) ? "***" : value;
+    return shouldRedactStructuredPrimitiveField(key, path) ? maskProvenance("***") : value;
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) {
