@@ -1055,5 +1055,4 @@ describe("web monitor inbox delivery and dedupe", () => {
       sock.end.mock.invocationCallOrder.at(0),
     );
   });
-
 });
