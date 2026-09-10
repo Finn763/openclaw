@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { rawDataToString } from "@openclaw/gateway-client/websocket-data";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket, type RawData } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
@@ -506,7 +507,7 @@ describe("gateway server chat", () => {
         const terminalFrames: unknown[] = [];
         const deltaFrames: unknown[] = [];
         const recordFollowup = (raw: RawData) => {
-          const frame = JSON.parse(raw.toString());
+          const frame = JSON.parse(rawDataToString(raw));
           if (
             frame.event === "chat" &&
             frame.payload?.runId === followupRunId &&
