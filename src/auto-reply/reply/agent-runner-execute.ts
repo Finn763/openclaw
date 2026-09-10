@@ -544,12 +544,8 @@ export function createReplyAgentRestartRecoveryController(
   });
   const admitUserTurnWithSourceBinding: typeof admitUserTurn = async (...args) => {
     const result = await admitUserTurn(...args);
-    // The owning runner just admitted its delivery claim; record the active
-    // source-turn identity so the gateway and steer admission paths can scope
-    // terminal-tombstone fences to this exact source instead of any retained
-    // historical tombstone.
-    if (result === "admitted" && restartRecoverySourceTurnId && sessionKey) {
-      replyRunRegistry.bindSourceTurnId(sessionKey, restartRecoverySourceTurnId);
+    if (result === "admitted" && restartRecoverySourceTurnId) {
+      replyRunRegistry.bindSourceTurnId(replyOperation, restartRecoverySourceTurnId);
     }
     return result;
   };

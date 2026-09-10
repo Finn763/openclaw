@@ -14,7 +14,7 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
+import { createDeferred, withTestTimeout } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { buildCurrentRunRestartRecoveryClaim } from "../../agents/agent-command-restart-recovery.js";
 import { buildEmbeddedRunPayloads } from "../../agents/embedded-agent-runner/run/payloads.js";
@@ -45,22 +45,26 @@ import {
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import type { TemplateContext } from "../templating.js";
+import { createReplyAgentRestartRecoveryController } from "./agent-runner-execute.js";
 import { resolveActiveExplicitSteerSessionKey } from "./explicit-steer-routing.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import {
   clearSessionQueues,
   enqueueFollowupRun,
+  parkSteerCandidate,
   refreshQueuedFollowupSession,
   scheduleFollowupDrain,
   type FollowupRun,
   type QueueSettings,
 } from "./queue.js";
+import { getExistingFollowupQueue } from "./queue/state.js";
 import {
   REPLY_OPERATION_RUN_STATE,
   resolveReplyOperationAgentTurn,
   type ReplyOperationRunState,
 } from "./reply-operation-run-state.js";
 import {
+  clearReplyRunForResetBySessionId,
   createReplyOperation,
   type ReplyOperation,
   replyRunRegistry,
@@ -648,6 +652,224 @@ describe("runReplyAgent active steering", () => {
     active.complete();
   });
 
+  it("keeps the replacement source when retired admission completes", async () => {
+    const { sessionEntry, sessionStore, storePath } = await makeSessionFixture();
+    const sourceContext = {
+      Provider: "discord",
+      OriginatingChannel: "discord",
+      OriginatingTo: "channel:24680",
+      MessageSid: "first-source-message",
+    };
+    const { followupRun } = createMinimalRun({ sessionCtx: sourceContext });
+    const first = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    first.setPhase("running");
+    const createController = (
+      operation: ReplyOperation,
+      initialEntry: SessionEntry,
+      sourceTurnId: string,
+    ) => {
+      let entry = initialEntry;
+      return createReplyAgentRestartRecoveryController({
+        activeSessionStore: sessionStore,
+        cfg: {},
+        followupRun: {
+          ...followupRun,
+          run: { ...followupRun.run, sessionId: operation.sessionId },
+        },
+        getActiveSessionEntry: () => entry,
+        opts: undefined,
+        replyOperation: operation,
+        restartRecoverySourceTurnId: sourceTurnId,
+        runtimePolicySessionKey: undefined,
+        sessionCtx: sourceContext,
+        sessionKey: "main",
+        setActiveSessionEntry: (nextEntry) => {
+          entry = nextEntry;
+        },
+        storePath,
+      });
+    };
+    const firstController = createController(first, sessionEntry, "source-first");
+    attachSourceTurnRecorder({
+      followupRun,
+      sessionEntry,
+      sessionStore,
+      sourceTurnId: "source-first",
+      storePath,
+      text: "first source input",
+    });
+    const recorder = followupRun.userTurnTranscriptRecorder;
+    if (!recorder) {
+      throw new Error("expected the source recorder");
+    }
+    const committed = createDeferred();
+    const returnAdmission = createDeferred();
+    const persistApproved = recorder.persistApproved.bind(recorder);
+    const persistence = vi
+      .spyOn(recorder, "persistApproved")
+      .mockImplementation(async (...args) => {
+        const result = await persistApproved(...args);
+        committed.resolve();
+        await returnAdmission.promise;
+        return result;
+      });
+    const firstAdmission = firstController.admitUserTurn(recorder);
+    // A retired admission may reject; its successor must keep the same source either way.
+    const firstSettled = firstAdmission.then(
+      () => undefined,
+      () => undefined,
+    );
+    let replacement: ReplyOperation | undefined;
+    try {
+      await withTestTimeout(committed.promise, 5_000, "first source admission did not persist");
+      expect(requireStoredSessionEntry(storePath).restartRecoveryDeliverySourceRunId).toBe(
+        "source-first",
+      );
+      clearReplyRunForResetBySessionId("session");
+      const replacementEntry = makeSessionEntry({ sessionId: "replacement-session" });
+      await replaceSessionEntry({ storePath, sessionKey: "main" }, replacementEntry);
+      sessionStore.main = replacementEntry;
+      replacement = createReplyOperation({
+        sessionKey: "main",
+        sessionId: "replacement-session",
+        resetTriggered: true,
+      });
+      replacement.setPhase("running");
+      replacement.attachBackend({
+        kind: "embedded",
+        runId: "replacement-backend",
+        cancel: vi.fn(),
+        messageInjection: {
+          isAvailable: () => true,
+          queueMessage: async () => {},
+        },
+      });
+      const replacementRecorder = createUserTurnTranscriptRecorder({
+        input: { text: "replacement source input", idempotencyKey: "source-replacement" },
+        target: {
+          agentId: "main",
+          config: {},
+          cwd: "/tmp",
+          sessionEntry: replacementEntry,
+          sessionId: "replacement-session",
+          sessionKey: "main",
+          sessionStore,
+          storePath,
+        },
+      });
+      await createController(replacement, replacementEntry, "source-replacement").admitUserTurn(
+        replacementRecorder,
+      );
+      expect(replyRunRegistry.resolveCurrentMessageInjectionTarget("main")).toMatchObject({
+        sourceTurnId: "source-replacement",
+      });
+
+      returnAdmission.resolve();
+      await firstSettled;
+
+      expect(replyRunRegistry.get("main")).toBe(replacement);
+      expect(replyRunRegistry.resolveCurrentMessageInjectionTarget("main")).toMatchObject({
+        sourceTurnId: "source-replacement",
+      });
+    } finally {
+      returnAdmission.resolve();
+      await firstSettled;
+      persistence.mockRestore();
+      first.complete();
+      replacement?.complete();
+    }
+  });
+
+  it("queues a waiting steer when its predecessor outlives terminal delivery", async () => {
+    const actualQueue = await vi.importActual<typeof import("./queue.js")>("./queue.js");
+    vi.mocked(parkSteerCandidate).mockImplementation(actualQueue.parkSteerCandidate);
+    const { sessionEntry, sessionStore, storePath } = await makeSessionFixture({
+      status: "running",
+      restartRecoveryDeliveryRunId: "active-recovery",
+      restartRecoveryDeliverySourceRunId: "active-source",
+    });
+    const active = createReplyOperation({
+      sessionKey: "main",
+      sessionId: "session",
+      resetTriggered: false,
+    });
+    active.setPhase("running");
+    const firstEntered = createDeferred();
+    const firstAcceptance = createDeferred<boolean>();
+    const secondParked = createDeferred();
+    state.queueEmbeddedAgentMessageMock.mockReturnValue(true);
+    state.queueEmbeddedAgentMessageMock.mockImplementationOnce(() => {
+      firstEntered.resolve();
+      return firstAcceptance.promise;
+    });
+    const common = {
+      isActive: true,
+      shouldSteer: true,
+      shouldFollowup: true,
+      resolvedQueueMode: "steer",
+      sessionEntry,
+      sessionStore,
+      storePath,
+    };
+    const first = createMinimalRun({
+      ...common,
+      sessionCtx: { MessageSid: "first-parked-input" },
+    });
+    first.followupRun.messageId = "first-parked-input";
+    const secondState: ReplyOperationRunState = {};
+    const second = createMinimalRun({
+      ...common,
+      bindActiveAuthority: false,
+      attachSteerBackend: false,
+      sessionCtx: { MessageSid: "second-parked-input" },
+      opts: {
+        [REPLY_OPERATION_RUN_STATE]: secondState,
+        turnAdoptionLifecycle: {
+          onDeferred: () => secondParked.resolve(),
+          onAdopted: async () => {},
+        },
+      },
+    });
+    second.followupRun.messageId = "second-parked-input";
+    second.followupRun.prompt = "answer the second input";
+    const firstRun = first.run();
+    let secondRun: Promise<unknown> | undefined;
+    try {
+      await withTestTimeout(firstEntered.promise, 5_000, "first steer never reached its backend");
+      secondRun = second.run();
+      await withTestTimeout(secondParked.promise, 5_000, "second steer was not parked");
+      await replaceSessionEntry(
+        { storePath, sessionKey: "main" },
+        {
+          ...sessionEntry,
+          restartRecoveryDeliveryReceiptState: "delivered-terminal",
+          restartRecoveryDeliveryToolCallId: "terminal-message-call",
+        },
+      );
+
+      firstAcceptance.resolve(true);
+      await Promise.all([firstRun, secondRun]);
+
+      expect(state.queueEmbeddedAgentMessageMock).toHaveBeenCalledOnce();
+      expect(secondState.admission).toEqual({ status: "accepted", mode: "followup" });
+      expect(getExistingFollowupQueue("main")?.items).toEqual([
+        expect.objectContaining({
+          messageId: "second-parked-input",
+          prompt: "answer the second input",
+        }),
+      ]);
+    } finally {
+      firstAcceptance.resolve(true);
+      await Promise.allSettled([firstRun, ...(secondRun ? [secondRun] : [])]);
+      clearSessionQueues(["main"]);
+      active.complete();
+    }
+  });
+
   for (const receiptState of ["terminal-pending", "delivered-terminal"] as const) {
     it(`queues instead of steering while the active turn holds a ${receiptState} source-reply receipt`, async () => {
       const sessionEntry = makeSessionEntry({
@@ -714,7 +936,7 @@ describe("runReplyAgent active steering", () => {
     });
     // The owning registry records the active source turn when the run admits
     // its delivery claim; this tombstone belongs to that exact source.
-    replyRunRegistry.bindSourceTurnId("main", "source-turn-1");
+    replyRunRegistry.bindSourceTurnId(active, "source-turn-1");
     active.setPhase("running");
     state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
     const runState: ReplyOperationRunState = {};
@@ -761,7 +983,7 @@ describe("runReplyAgent active steering", () => {
     });
     // The active run owns a different source turn ("source-turn-2"); the
     // retained tombstone belongs to an unrelated earlier turn.
-    replyRunRegistry.bindSourceTurnId("main", "source-turn-2");
+    replyRunRegistry.bindSourceTurnId(active, "source-turn-2");
     active.setPhase("running");
     state.queueEmbeddedAgentMessageMock.mockReturnValueOnce(true);
     const runState: ReplyOperationRunState = {};
@@ -880,11 +1102,8 @@ describe("runReplyAgent active steering", () => {
     active.complete();
   });
 
-  it("promotes an accepted-as-steer injection to the next turn while the active turn holds a terminal receipt", async () => {
-    // The gateway accepted the inbound as a steer into a live turn whose
-    // terminal source-reply receipt is fail-closed. The inbound must be
-    // promoted to the next ordered turn instead of being recorded as an
-    // accepted steer that would lose its reply (#128971).
+  it("does not replay an accepted steer after terminal delivery", async () => {
+    // Accepted input is already owned by its injection target. A later receipt cannot authorize replay.
     const sessionEntry = makeSessionEntry({
       status: "running",
       restartRecoveryDeliveryRunId: "recovery-run-1",
@@ -917,10 +1136,10 @@ describe("runReplyAgent active steering", () => {
 
     await expect(run()).resolves.toBeUndefined();
 
-    expect(runState.admission).toEqual({ status: "accepted", mode: "followup" });
+    expect(runState.admission).toEqual({ status: "accepted", mode: "steer" });
     expect(state.queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
     expect(state.runEmbeddedAgentMock).not.toHaveBeenCalled();
-    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledOnce();
+    expect(vi.mocked(enqueueFollowupRun)).not.toHaveBeenCalled();
   });
 
   it("offers a route-only mismatch to the pending-input owner", async () => {

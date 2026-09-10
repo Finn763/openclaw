@@ -282,7 +282,7 @@ describe("createChatSendMessageInjectionStarter admission fence", () => {
     expect(beginReplyMessageInjectionTarget).toHaveBeenCalledOnce();
   });
 
-  it("falls back to the captured entry when the latest reload fails", () => {
+  it("rejects steering when reloading a captured terminal entry fails", () => {
     vi.mocked(loadSessionEntry).mockImplementationOnce(() => {
       throw new Error("store busy");
     });
@@ -471,6 +471,24 @@ describe("createChatSendMessageInjectionStarter", () => {
       logGateway: { warn: () => {} } as never,
     };
   }
+
+  it("rejects steering when the latest session entry cannot be read", () => {
+    const params = makeSteerStarterParams({ body: "follow up after the terminal reply" });
+    params.session.entry = {
+      sessionId: "steer-test-session",
+      updatedAt: 1,
+      status: "running",
+      restartRecoveryDeliveryRunId: "active-recovery",
+      restartRecoveryDeliverySourceRunId: "active-source",
+    };
+    const start = createChatSendMessageInjectionStarter(params);
+    vi.mocked(loadSessionEntry).mockImplementationOnce(() => {
+      throw new Error("session database read failed");
+    });
+
+    expect(start()).toBeUndefined();
+    expect(beginReplyMessageInjectionTarget).not.toHaveBeenCalled();
+  });
 
   it.each([
     {

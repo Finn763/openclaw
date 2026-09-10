@@ -116,17 +116,16 @@ export const replyRunRegistry: ReplyRunRegistry = {
     }
     return replyRunState.activeRunsByKey.has(normalizedSessionKey);
   },
-  /**
-   * Records the channel source-turn identity of the run owning `sessionKey`.
-   * Terminal run ids are accumulated session history, so admission fences must
-   * scope tombstones to this exact identity rather than any retained entry.
-   */
-  bindSourceTurnId(sessionKey, sourceTurnId) {
-    const normalizedSessionKey = normalizeOptionalString(sessionKey);
-    if (!normalizedSessionKey || !sourceTurnId) {
+  bindSourceTurnId(operation, sourceTurnId) {
+    // Durable admission can finish after reset has replaced this operation.
+    if (
+      replyRunState.activeRunsByKey.get(operation.key) !== operation ||
+      operation.result ||
+      operation.abortSignal.aborted
+    ) {
       return;
     }
-    replyRunState.sourceTurnByKey.set(normalizedSessionKey, sourceTurnId);
+    replyRunState.sourceTurnByKey.set(operation.key, sourceTurnId);
   },
   getSourceTurnId(sessionKey) {
     const normalizedSessionKey = normalizeOptionalString(sessionKey);

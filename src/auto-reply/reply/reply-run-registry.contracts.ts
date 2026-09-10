@@ -359,8 +359,8 @@ export type ReplyRunRegistry = {
   }): ReplyOperation;
   get(sessionKey: string): ReplyOperation | undefined;
   isActive(sessionKey: string): boolean;
-  /** Records the channel source-turn identity of the run owning `sessionKey`. */
-  bindSourceTurnId(sessionKey: string, sourceTurnId: string | undefined): void;
+  /** Binds a source only while the exact operation still owns its run slot. */
+  bindSourceTurnId(operation: ReplyOperation, sourceTurnId: string): void;
   getSourceTurnId(sessionKey: string): string | undefined;
   /** Captures the current direct owner without requiring client-supplied run identity. */
   resolveCurrentMessageInjectionTarget(sessionKey: string): ReplyMessageInjectionTarget | undefined;

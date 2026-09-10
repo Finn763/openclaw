@@ -60,18 +60,8 @@ export function createChatSendMessageInjectionStarter(params: {
     if (!params.target || isInternalTextSlashCommandTurn) {
       return undefined;
     }
-    // Admission fence at the injection-start boundary (#128971): a steer
-    // injection may only be queued into a run that can still own a terminal
-    // source-reply send. Once the session entry fail-closes terminal
-    // delivery (delivery receipt, unresolved terminal tool-call id, terminal
-    // tombstone, or stale claim) the steer would reuse the fail-closed claim
-    // and lose the inbound's reply. Reject here — before
-    // beginReplyMessageInjectionTarget synchronously queues the message with
-    // the target runtime — so the inbound falls back to follow-up dispatch
-    // without ever enqueueing a doomed steer. The captured `entry` predates
-    // asynchronous dispatch, so revalidate against the latest persisted
-    // entry; only fall back to the captured entry when the reload fails or
-    // nothing is persisted yet.
+    // Preparation can outlive terminal delivery. Recheck before the backend
+    // takes this input; an unreadable receipt cannot authorize steering.
     let fenceEntry = entry;
     if (sessionKey) {
       try {
@@ -85,6 +75,7 @@ export function createChatSendMessageInjectionStarter(params: {
         params.logGateway.warn(
           `failed to reload session entry before steering fence on ${sessionKey}: ${String(error)}`,
         );
+        return undefined;
       }
     }
     // Terminal run ids are accumulated session history; compare the fence

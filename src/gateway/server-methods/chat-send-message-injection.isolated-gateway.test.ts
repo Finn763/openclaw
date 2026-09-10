@@ -273,7 +273,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
           queueMessage: async () => {},
         },
       });
-      replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
+      replyRunRegistry.bindSourceTurnId(operation, SOURCE_TURN_ID);
 
       const registrySpy = vi.spyOn(replyRunRegistryModule, "beginReplyMessageInjectionTarget");
 
@@ -573,7 +573,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
         },
       });
       // Bind a different active source turn than the tombstoned one.
-      replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
+      replyRunRegistry.bindSourceTurnId(operation, SOURCE_TURN_ID);
 
       // Spy and resolve so the steer path is observable. Return a valid
       // attempt with acceptance=true so the chat-send handler treats the
@@ -652,7 +652,7 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
           queueMessage: async () => {},
         },
       });
-      replyRunRegistry.bindSourceTurnId(SESSION_KEY, SOURCE_TURN_ID);
+      replyRunRegistry.bindSourceTurnId(operation, SOURCE_TURN_ID);
 
       // Simulate the pre-fix classifier: never fail-closed.
       const receiptModule = await import("../../config/sessions/restart-recovery-receipt.js");
