@@ -19,6 +19,18 @@ successor to `healthState`. Existing plugins may keep publishing `healthState`
 during adoption, and core-derived policy writes remain supported. There is no
 removal date; removal waits for external channel-plugin adoption.
 
+A terminal report (`lifecycle: "blocked"` with `terminalDisconnect: true`) stops
+the account and keeps its diagnosis for operator action. Only the channel that
+observed the failure can tell a retryable session collision — a replacement
+handshake losing against its own not-yet-released predecessor session — apart
+from rejected credentials or invalid configuration, so that classification stays
+transport-authored: `ChannelAccountSnapshot.retryableCollision` marks the
+terminal report the channel itself classified as retryable. The Gateway never
+infers that classification, and a classified report reaches the bounded crash
+supervisor only for a replacement it admitted after stopping an account that was
+still running. A start that fails without a terminal report is already a
+recoverable failure and keeps its existing backoff retry.
+
 ## Typing indicators
 
 If your channel supports typing indicators outside inbound replies, expose

@@ -130,6 +130,11 @@ type ChannelRuntimeStore = {
   stops: Map<string, ChannelAccountStopState>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
+  // Whether the account was still up when the gateway last stopped it. Stopping
+  // clears `running`, and `lastConnectedAt` records connection establishment
+  // rather than ongoing health, so a replacement's recovery decision needs this
+  // pre-stop fact instead of the post-stop runtime row.
+  preStopHealthy: Map<string, boolean>;
 };
 
 function sanitizeAbortedTaskStatusPatch(
@@ -191,6 +196,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
     stops: new Map(),
     tasks: new Map(),
     runtimes: new Map(),
+    preStopHealthy: new Map(),
   };
 }
 
@@ -720,6 +726,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         const lifetime: ChannelAccountLifetime = { plugin, abort, capabilityLease };
         store.lifetimes.set(id, lifetime);
         let handedOffTask = false;
+        // Only the transport that observed a collision can classify it. The host never
+        // infers one: a terminal verdict stays operator-actionable unless the plugin that
+        // produced it marked that verdict as a retryable session collision.
+        let taskReachedReady = false;
+        let taskReportedRetryableCollision = false;
+        // The recovery decision is scoped to a replacement the gateway admitted for an
+        // account it had stopped while the account was still up. That fact is recorded by
+        // the stop, not read from the runtime row afterwards.
+        const predecessorWasHealthyAtStop = store.preStopHealthy.get(id) === true;
         const log = ensureChannelLog(channelId);
         let scopedChannelRuntime: {
           channelRuntime?: PluginRuntimeChannel;
@@ -924,6 +939,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             // must not poison a new lifecycle before its plugin reports status.
             ingressUnavailable: undefined,
             terminalDisconnect: undefined,
+            retryableCollision: undefined,
             reconnectAttempts: preserveRestartAttempts ? (restarts.get(rKey)?.attempts ?? 0) : 0,
           });
           const task = Promise.resolve().then(async () => {
@@ -976,10 +992,19 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                   return withGatewayNativeApprovalRuntime(opts.getNativeApprovalRuntime?.(), () =>
                     startAccount({
                       ...accountContext,
-                      setStatus: (next) =>
-                        isCurrentTask()
+                      setStatus: (next) => {
+                        if (next.lifecycle === "ready") {
+                          taskReachedReady = true;
+                        }
+                        // Transport-authored classification of this task's own terminal
+                        // verdict; never inherited from the merged runtime row.
+                        if (next.terminalDisconnect === true && next.retryableCollision === true) {
+                          taskReportedRetryableCollision = true;
+                        }
+                        return isCurrentTask()
                           ? setRuntimeFromTaskStatus(channelId, id, next, abort.signal)
-                          : getRuntime(channelId, id),
+                          : getRuntime(channelId, id);
+                      },
                       invalidateDirectoryCache: () =>
                         resetDirectoryCache({ cfg, channel: channelId, accountId: id }),
                       ...(channelRuntimeForTask ? { channelRuntime: channelRuntimeForTask } : {}),
@@ -1061,16 +1086,33 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (getRuntime(channelId, id).terminalDisconnect) {
                 // Authentication/session termination wins over pending recovery.
                 // Leaving recovery state behind would restart a channel that needs user action.
-                recoveryStopTimedOut.delete(rKey);
-                recoveryStartRequested.delete(rKey);
-                restarts.delete(rKey);
-                setRuntime(channelId, id, {
-                  accountId: id,
-                  restartPending: false,
-                  reconnectAttempts: 0,
-                });
-                log.info?.(`[${id}] auto-restart skipped, terminal disconnect`);
-                return;
+                // Exception: the transport owner classified its own pre-ready terminal
+                // verdict as a retryable session collision (its replacement handshake lost
+                // against its own not-yet-released predecessor session) on a replacement the
+                // gateway admitted for an account that was still up when the gateway stopped
+                // it. Only that transport-authored classification reaches the bounded crash
+                // supervisor below; genuine terminal reports (rejected credentials, invalid
+                // config, fatal closes) keep the operator-actionable diagnosis untouched.
+                if (
+                  taskReportedRetryableCollision &&
+                  !taskReachedReady &&
+                  predecessorWasHealthyAtStop
+                ) {
+                  log.info?.(
+                    `[${id}] re-driving transport-classified session collision before first ready`,
+                  );
+                } else {
+                  recoveryStopTimedOut.delete(rKey);
+                  recoveryStartRequested.delete(rKey);
+                  restarts.delete(rKey);
+                  setRuntime(channelId, id, {
+                    accountId: id,
+                    restartPending: false,
+                    reconnectAttempts: 0,
+                  });
+                  log.info?.(`[${id}] auto-restart skipped, terminal disconnect`);
+                  return;
+                }
               }
               if (recoveryStopTimedOut.has(rKey)) {
                 recoveryStopTimedOut.delete(rKey);
@@ -1287,6 +1329,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           if (!abort && !task && !lifetime?.teardown && !fallbackStop) {
             return previousOutcome;
           }
+          // Record the lifecycle fact this stop is ending, before teardown clears
+          // `running` and `connected`: a reload that re-admits the account immediately
+          // would otherwise read a stopped row for a predecessor that was healthy, and
+          // `lastConnectedAt` cannot stand in for ongoing health on a long-lived account.
+          const stoppingRuntime = getRuntime(channelId, id);
+          store.preStopHealthy.set(
+            id,
+            stoppingRuntime.running === true || stoppingRuntime.connected === true,
+          );
           const lease = lifetime?.capabilityLease;
           if (canHandoff && abort && lease && store.routeHandoffs.get(id)?.parkedBy !== abort) {
             const handoff = store.routeHandoffs.get(id)?.handoff ?? createPluginHttpRouteHandoff();
