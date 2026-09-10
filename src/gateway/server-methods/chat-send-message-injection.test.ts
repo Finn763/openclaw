@@ -407,7 +407,7 @@ describe("createChatSendMessageInjectionStarter", () => {
     }));
   });
 
-  function makeStarterParams(params?: {
+  function makeSteerStarterParams(params?: {
     body?: string;
     rawMessage?: string;
     media?: RuntimeMsgContext["media"];
@@ -445,7 +445,13 @@ describe("createChatSendMessageInjectionStarter", () => {
         rawMessage,
         supportsTaskSuggestions: false,
       },
-      session: { cfg: {}, entry: undefined },
+      session: {
+        cfg: {},
+        entry: undefined,
+        sessionKey,
+        storePath: "/tmp/nowhere.json",
+        clientRunId: "active-run",
+      },
       turn: {
         discardUnreferencedMedia: async () => {},
         accountId: undefined,
@@ -462,6 +468,7 @@ describe("createChatSendMessageInjectionStarter", () => {
         input: { text: params?.body ?? rawMessage, media: params?.media },
         target: createTestUserTurnTranscriptTarget({ sessionKey, sessionId }),
       }),
+      logGateway: { warn: () => {} } as never,
     };
   }
 
@@ -480,7 +487,7 @@ describe("createChatSendMessageInjectionStarter", () => {
     },
   ])("retains marker and document text for a $label steer", ({ caption, expectedText }) => {
     const documentText = '<file name="note.txt" mime="text/plain">doc body</file>';
-    const params = makeStarterParams({
+    const params = makeSteerStarterParams({
       body: caption,
       rawMessage: caption,
       media: [
@@ -507,7 +514,7 @@ describe("createChatSendMessageInjectionStarter", () => {
   });
 
   it("keeps the attachment note when document rendering fails", () => {
-    const params = makeStarterParams({
+    const params = makeSteerStarterParams({
       body: "read the attachment",
       media: [{ path: "media://inbound/note.txt", contentType: "text/plain" }],
       documentContext: { status: "failed" },
@@ -525,7 +532,7 @@ describe("createChatSendMessageInjectionStarter", () => {
   });
 
   it("keeps the base text untouched when no document context was rendered", () => {
-    createChatSendMessageInjectionStarter(makeStarterParams({ body: "plain steer" }))();
+    createChatSendMessageInjectionStarter(makeSteerStarterParams({ body: "plain steer" }))();
 
     expect(beginReplyMessageInjectionTarget).toHaveBeenCalledWith(
       expect.anything(),
@@ -535,7 +542,7 @@ describe("createChatSendMessageInjectionStarter", () => {
   });
 
   it("merges extracted page images after the prepared inbound images", () => {
-    const params = makeStarterParams({
+    const params = makeSteerStarterParams({
       body: "see attached",
       media: [
         { path: "media://inbound/photo.png", contentType: "image/png" },
@@ -580,7 +587,7 @@ describe("createChatSendMessageInjectionStarter", () => {
 
   it("injects extracted page images when the steer carries no inbound images", () => {
     createChatSendMessageInjectionStarter(
-      makeStarterParams({
+      makeSteerStarterParams({
         body: "scan attached",
         documentContext: {
           status: "rendered",
@@ -602,7 +609,7 @@ describe("createChatSendMessageInjectionStarter", () => {
   it("returns undefined for internal slash-command turns even with a target", () => {
     expect(
       createChatSendMessageInjectionStarter(
-        makeStarterParams({ isInternalTextSlashCommandTurn: true }),
+        makeSteerStarterParams({ isInternalTextSlashCommandTurn: true }),
       )(),
     ).toBeUndefined();
     expect(beginReplyMessageInjectionTarget).not.toHaveBeenCalled();

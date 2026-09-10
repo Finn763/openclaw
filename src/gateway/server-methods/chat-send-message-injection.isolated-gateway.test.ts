@@ -57,11 +57,9 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RawData, WebSocket } from "ws";
 import { installQueueRuntimeErrorSilencer } from "../../auto-reply/reply/queue.test-helpers.js";
 import * as replyRunRegistryModule from "../../auto-reply/reply/reply-run-registry.js";
-import {
-  forceClearReplyOperation,
-  createReplyOperation,
-} from "../../auto-reply/reply/reply-run-registry.operation.js";
+import { createReplyOperation } from "../../auto-reply/reply/reply-run-registry.operation.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.registry.js";
+import { forceClearReplyOperation } from "../../auto-reply/reply/reply-run-registry.state.js";
 import {
   dispatchInboundMessageMock,
   installGatewayTestHooks,
