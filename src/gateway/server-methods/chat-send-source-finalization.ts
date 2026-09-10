@@ -151,7 +151,7 @@ export function createChatSendLateReplyFinalizer(
         publicationStarted = true;
         broadcastChatTerminal({
           ...broadcastParams,
-          ...(completion.kind !== "progress" ? { stopReason: completion.stopReason } : {}),
+          stopReason: completion.stopReason,
           ...(completion.kind === "failed"
             ? { state: "error", errorMessage: completion.error, errorKind: completion.errorKind }
             : {
