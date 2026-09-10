@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
+import { markRedactionProvenance } from "@openclaw/normalization-core/redaction-provenance";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
@@ -296,7 +297,9 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     expect(raw).not.toContain("sk-abcdef1234567890xyz");
     expect(raw).not.toContain("plainsecretvalue123");
     expect(raw).not.toContain("hunter2");
-    expect(raw).toContain("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    expect(raw).toContain(
+      `OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`,
+    );
     expect(raw).toContain("openclaw health");
 
     const [msg] = readMessages(sessionFile) as Array<{
@@ -322,25 +325,25 @@ describe("appendSessionTranscriptMessage - redaction", () => {
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.command,
-    ).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    ).toBe(`OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`);
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.env.nested[0],
-    ).toBe("token sk-abc…0xyz");
+    ).toBe(`token ${markRedactionProvenance("sk-abc…0xyz")}`);
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.apiKey,
-    ).toBe("plains…e123");
+    ).toBe(markRedactionProvenance("plains…e123"));
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.password,
-    ).toBe("***");
+    ).toBe(markRedactionProvenance("***"));
   });
 
   it("masks secrets in tool-result details before writing to disk", async () => {
@@ -394,14 +397,18 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     expect(JSON.stringify(expectDefined(msg, "msg test invariant").details)).not.toContain(
       "plainsecretvalue123",
     );
-    expect(expectDefined(msg, "msg test invariant").details.apiKey).toBe("plains…e123");
-    expect(expectDefined(msg, "msg test invariant").details.password).toBe("***");
+    expect(expectDefined(msg, "msg test invariant").details.apiKey).toBe(
+      markRedactionProvenance("plains…e123"),
+    );
+    expect(expectDefined(msg, "msg test invariant").details.password).toBe(
+      markRedactionProvenance("***"),
+    );
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").details.nested.accessToken[0],
         "msg.details.nested.accessToken[0] test invariant",
       ),
-    ).toBe("nested…t123");
+    ).toBe(markRedactionProvenance("nested…t123"));
   });
 
   it("preserves env placeholders in persisted tool results", async () => {
