@@ -5,6 +5,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { markRedactionProvenance } from "@openclaw/normalization-core/redaction-provenance";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { serializeRedactionMarker } from "../../logging/redaction-provenance.test-support.js";
 import {
   onInternalSessionTranscriptUpdate,
   onSessionTranscriptUpdate,
@@ -294,11 +295,12 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     });
 
     const raw = fs.readFileSync(sessionFile, "utf-8");
-    expect(raw).not.toContain("sk-abcdef1234567890xyz");
+    expect(raw).not.toContain("sk-abc...0xyz");
     expect(raw).not.toContain("plainsecretvalue123");
     expect(raw).not.toContain("hunter2");
+    // JSON lines escape the marker's escape byte, so compare the serialized form.
     expect(raw).toContain(
-      `OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`,
+      `OPENAI_API_KEY=${serializeRedactionMarker(markRedactionProvenance("sk-abc…0xyz"))} openclaw health`,
     );
     expect(raw).toContain("openclaw health");
 

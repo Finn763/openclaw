@@ -10,6 +10,7 @@ import {
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { describe, expect, it, afterEach, vi } from "vitest";
+import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -303,7 +304,9 @@ describe("tool_result_persist hook", () => {
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult);
-    expect(serialized).toContain(`customsecret=${markRedactionProvenance("abcdef…ghij")}`);
+    expect(serialized).toContain(
+      `customsecret=${serializeRedactionMarker(markRedactionProvenance("abcdef…ghij"))}`,
+    );
     expect(serialized).not.toContain(customSecret);
   });
 
@@ -373,8 +376,8 @@ describe("tool_result_persist hook", () => {
     expect(serialized).toContain("token=");
     // Longer values keep their hint bytes, wrapped in provenance so replay can tell
     // them from literal text; the raw value must never survive (#142821).
-    expect(serialized).toContain(REDACTION_PROVENANCE_START);
-    expect(serialized).toContain(REDACTION_PROVENANCE_END);
+    expect(serialized).toContain(serializeRedactionMarker(REDACTION_PROVENANCE_START));
+    expect(serialized).toContain(serializeRedactionMarker(REDACTION_PROVENANCE_END));
     expect(serialized).toContain("max depth exceeded");
     expect(serialized).not.toContain(tokenValue);
   });
@@ -483,7 +486,9 @@ describe("tool_result_persist hook", () => {
     const serialized = JSON.stringify(toolResult.details);
     expect(requireToolResultText(toolResult)).toBe("visible output stays small");
     expect(toolResult.details.persistedDetailsTruncated).toBe(true);
-    expect(serialized).toContain(`token=${markRedactionProvenance("***")}`);
+    expect(serialized).toContain(
+      `token=${serializeRedactionMarker(markRedactionProvenance("***"))}`,
+    );
     expect(serialized).toContain("partial secret span omitted");
     expect(serialized).toContain("boundary overlap omitted");
     expect(serialized).not.toContain(tokenValue);

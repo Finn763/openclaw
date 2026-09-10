@@ -16,6 +16,7 @@ import { createFileBackedSessionManagerForTest } from "../../test/helpers/sessio
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { makeUserMessage } from "../../test/helpers/user-message.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
 import { attachRuntimeUserTurnTranscriptContext } from "../sessions/user-turn-transcript-runtime-context.js";
 import {
   createUserTurnTranscriptRecorder,
@@ -518,11 +519,17 @@ describe("guardSessionManager integration", () => {
     expect(serialized).not.toContain("peter@dc.io\\n");
     expect(serialized).not.toContain('"/tmp/peter@dc.io"');
     expect(serialized).toContain(
-      `"thinking":"the email is peter@d${markRedactionProvenance("***")}.io"`,
+      `"thinking":"the email is peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
-    expect(serialized).toContain(`"text":"contact peter@d${markRedactionProvenance("***")}.io"`);
-    expect(serialized).toContain(`"text":"peter@d${markRedactionProvenance("***")}.io\\n"`);
-    expect(serialized).toContain(`"/tmp/peter@d${markRedactionProvenance("***")}.io"`);
+    expect(serialized).toContain(
+      `"text":"contact peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
+    );
+    expect(serialized).toContain(
+      `"text":"peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io\\n"`,
+    );
+    expect(serialized).toContain(
+      `"/tmp/peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
+    );
   });
 
   it("can skip plugin write hooks without skipping core transcript redaction", () => {

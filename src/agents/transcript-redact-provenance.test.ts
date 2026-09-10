@@ -5,12 +5,14 @@
 // Persist wraps every mask it produces; replay rewrites exactly those wrapped spans and
 // leaves unmarked bytes alone.
 import {
+  REDACTION_PROVENANCE_END,
   REDACTION_PROVENANCE_START,
   hasRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import { buildSessionContext, type SessionTreeEntry } from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 import { redactTranscriptMessage } from "./transcript-redact.js";
 
@@ -55,22 +57,34 @@ function toolCallMessage(): ReturnType<typeof castAgentMessage> {
   });
 }
 
-function replay(entryMessage: unknown): string {
-  const entry = {
+function replayEntry(entryMessage: unknown): SessionTreeEntry {
+  return {
     type: "message",
     id: "m1",
     parentId: null,
     timestamp: "2026-09-02T00:00:00.000Z",
     message: entryMessage,
   } as unknown as SessionTreeEntry;
-  return JSON.stringify(buildSessionContext([entry]).messages);
+}
+
+function replay(entryMessage: unknown): string {
+  return JSON.stringify(buildSessionContext([replayEntry(entryMessage)]).messages);
+}
+
+/** Replayed message content as bytes, not as JSON escapes. */
+function replayedContent(entryMessage: unknown): string {
+  const messages = buildSessionContext([replayEntry(entryMessage)]).messages as Array<{
+    content?: unknown;
+  }>;
+  return String(messages[0]?.content);
 }
 
 describe("transcript persistence writes redaction provenance (#142821)", () => {
   it("marks every mask it stores and keeps the secret out of the transcript", () => {
     readLoggingConfig.mockReturnValue({});
     const stored = JSON.stringify(redactTranscriptMessage(toolCallMessage(), config));
-    expect(stored).toContain(REDACTION_PROVENANCE_START);
+    // Serialized transcripts are JSON, so the marker's escape byte is escaped there.
+    expect(stored).toContain(serializeRedactionMarker(REDACTION_PROVENANCE_START));
     expect(stored).not.toContain(LONG_SECRET);
     expect(stored).not.toContain("hunter2");
   });
@@ -138,5 +152,33 @@ describe("replay consumes that provenance (#142821)", () => {
     expect(replayed).toContain("value=sk-bug…9f3a");
     expect(replayed).toContain('"***"');
     expect(replayed).not.toContain("re-derive");
+  });
+
+  it("round-trips literal delimiter history that only looks like provenance", () => {
+    readLoggingConfig.mockReturnValue({});
+    const literal = "⟦openclaw:redacted⟧example⟦/openclaw:redacted⟧";
+    const content = `the doc quotes ${literal} verbatim`;
+    const stored = redactTranscriptMessage(
+      castAgentMessage({ role: "user", content, timestamp: 0 }),
+      config,
+    ) as unknown as { content: string };
+    // History that carries no mark stays byte-identical in the transcript.
+    expect(stored.content).toBe(content);
+    expect(replayedContent(stored)).toBe(content);
+  });
+
+  it("escapes literal text that spells the current encoding and restores it on replay", () => {
+    readLoggingConfig.mockReturnValue({});
+    const literal = `${REDACTION_PROVENANCE_START}example${REDACTION_PROVENANCE_END}`;
+    const content = `the doc quotes ${literal} verbatim`;
+    const stored = redactTranscriptMessage(
+      castAgentMessage({ role: "user", content, timestamp: 0 }),
+      config,
+    ) as unknown as { content: string };
+    // Persistence escapes the escape bytes of literal history it did not mark itself.
+    expect(stored.content).not.toBe(content);
+    expect(stored.content.length).toBe(content.length + 2);
+    expect(hasRedactionProvenance(stored.content)).toBe(false);
+    expect(replayedContent(stored)).toBe(content);
   });
 });

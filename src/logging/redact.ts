@@ -1,6 +1,7 @@
 import { isSensitiveUrlQueryParamName } from "@openclaw/net-policy/redact-sensitive-url";
 import {
-  hasRedactionProvenance,
+  containsRedactionProvenanceSyntax,
+  isRedactionProvenanceMask,
   markRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 // Redaction helpers scrub secrets and sensitive identifiers from log output.
@@ -250,9 +251,10 @@ function usesBuiltInRedactPatterns(value?: readonly RedactPattern[]): boolean {
 }
 
 function maskToken(token: string): string {
-  // A marked token is redaction output from an earlier persistence pass; re-masking
-  // its hint bytes would shred it, so it passes through (#142821).
-  if (hasRedactionProvenance(token)) {
+  // Only a value that is nothing but one mask this encoder produced passes through:
+  // an input-controlled substring that looks like a mark is not evidence that masking
+  // already ran, so it is masked like any other value (#142821 review).
+  if (isRedactionProvenanceMask(token)) {
     return token;
   }
   if (token === "***") {
@@ -260,7 +262,9 @@ function maskToken(token: string): string {
     // provenance: only bytes we redact now can claim to be redaction output.
     return token;
   }
-  if (token.length < DEFAULT_REDACT_MIN_LENGTH) {
+  if (token.length < DEFAULT_REDACT_MIN_LENGTH || containsRedactionProvenanceSyntax(token)) {
+    // The grammar reserves its own bytes: a value carrying them is masked whole so no
+    // marker byte can survive into a hint and forge a mark (#142821 review).
     return maskProvenance("***");
   }
   const start = sliceUtf16Safe(token, 0, DEFAULT_REDACT_KEEP_START);
