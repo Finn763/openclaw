@@ -16,7 +16,7 @@ import {
   withRedactionProvenance,
 } from "../logging/redact.js";
 
-export function resolveTranscriptLoggingConfig(cfg?: OpenClawConfig) {
+function resolveTranscriptLoggingConfig(cfg?: OpenClawConfig) {
   const configuredLogging = readLoggingConfig();
   const redactPatterns = cfg?.logging?.redactPatterns ?? configuredLogging?.redactPatterns;
   return redactPatterns ? { redactPatterns } : undefined;

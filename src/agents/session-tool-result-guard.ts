@@ -19,6 +19,7 @@ import {
   isSensitiveFieldKey,
   redactSensitiveFieldValueWithConfig,
   redactToolPayloadTextWithConfig,
+  withRedactionProvenance,
 } from "../logging/redact.js";
 import type {
   PluginHookBeforeMessageWriteEvent,
@@ -191,7 +192,21 @@ function originalDetailsSizeFields(size: BoundedJsonUtf8Bytes): Record<string, n
     : { originalDetailsBytesAtLeast: size.bytes };
 }
 
+/** Persisted-detail masks carry redaction provenance (#142821): this guard writes
+ *  the values replay reads back, so every mask it produces must be identifiable as
+ *  redaction output. Keys stay bare on purpose — replay must never rewrite an
+ *  identifier, and only values are copyable into later tool calls. */
 function redactPersistedDetailString(
+  value: string,
+  maxChars = MAX_PERSISTED_DETAIL_STRING_CHARS,
+  redactionConfig?: ToolResultDetailRedactionConfig,
+): string {
+  return withRedactionProvenance(() =>
+    redactPersistedDetailStringUnmarked(value, maxChars, redactionConfig),
+  );
+}
+
+function redactPersistedDetailStringUnmarked(
   value: string,
   maxChars = MAX_PERSISTED_DETAIL_STRING_CHARS,
   redactionConfig?: ToolResultDetailRedactionConfig,
@@ -245,6 +260,17 @@ function redactedOriginalDetailKeys(
 }
 
 function redactPersistedDetailValue(
+  value: unknown,
+  depth = 0,
+  redactionKey?: string,
+  redactionConfig?: ToolResultDetailRedactionConfig,
+): unknown {
+  return withRedactionProvenance(() =>
+    redactPersistedDetailValueUnmarked(value, depth, redactionKey, redactionConfig),
+  );
+}
+
+function redactPersistedDetailValueUnmarked(
   value: unknown,
   depth = 0,
   redactionKey?: string,
