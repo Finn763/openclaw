@@ -73,4 +73,48 @@ describe("secrets plan validation", () => {
     expect(isSecretsApplyPlan(plan)).toBe(false);
     expect(isSecretsApplyPlan({ ...plan, targets: [{ ...target, agentId: "main" }] })).toBe(true);
   });
+
+  it("accepts explicit auth-profile store owners in plan targets", () => {
+    for (const authProfileStore of ["agent", "shared"]) {
+      const isValid = isSecretsApplyPlan({
+        version: 1,
+        protocolVersion: 1,
+        generatedAt: "2026-02-28T00:00:00.000Z",
+        generatedBy: "manual",
+        targets: [
+          {
+            type: "auth-profiles.api_key.key",
+            path: "profiles.openai:default.key",
+            pathSegments: ["profiles", "openai:default", "key"],
+            agentId: "main",
+            authProfileStore,
+            ref: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+          },
+        ],
+      });
+      expect(isValid, `expected valid plan owner: ${authProfileStore}`).toBe(true);
+    }
+  });
+
+  it("rejects unknown auth-profile store owners in plan targets", () => {
+    for (const authProfileStore of ["main", "", "SHARED"]) {
+      const isValid = isSecretsApplyPlan({
+        version: 1,
+        protocolVersion: 1,
+        generatedAt: "2026-02-28T00:00:00.000Z",
+        generatedBy: "manual",
+        targets: [
+          {
+            type: "auth-profiles.api_key.key",
+            path: "profiles.openai:default.key",
+            pathSegments: ["profiles", "openai:default", "key"],
+            agentId: "main",
+            authProfileStore,
+            ref: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+          },
+        ],
+      });
+      expect(isValid, `expected invalid plan owner: ${authProfileStore}`).toBe(false);
+    }
+  });
 });

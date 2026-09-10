@@ -473,20 +473,20 @@ function resolveAuthStoreForTarget(params: {
   if (!agentId) {
     throw new Error(`Missing required agentId for auth-profiles target ${params.target.path}.`);
   }
-  const scopedEnv = {
-    ...params.env,
-    OPENCLAW_STATE_DIR: params.stateDir,
-    OPENCLAW_AGENT_DIR: undefined,
-  };
-  const agentDir = resolveAgentDir(params.nextConfig, agentId, scopedEnv);
-  const authStoreTarget: Extract<AuthProfileStoreTarget, { kind: "agent" }> = {
-    kind: "agent",
-    agentDir,
-    path: resolveAuthProfileDatabasePath(agentDir),
-  };
+  const authStoreTarget = resolveAuthStoreTarget({
+    nextConfig: params.nextConfig,
+    stateDir: params.stateDir,
+    env: params.env,
+    agentId,
+    authProfileStore: params.target.authProfileStore,
+  });
   const authStorePath = authStoreTarget.path;
   const existing = params.authStoreByPath.get(authStorePath);
-  const loaded = existing ?? loadPersistedAuthProfileStore(authStoreTarget.agentDir);
+  const loaded =
+    existing ??
+    (authStoreTarget.kind === "shared"
+      ? loadPersistedSharedAuthProfileStore(authStoreTarget.env)
+      : loadPersistedAuthProfileStore(authStoreTarget.agentDir));
   const next: Record<string, unknown> = isRecord(loaded) ? loaded : {};
   const profiles = isRecord(next.profiles) ? next.profiles : {};
   if (typeof next.version !== "number" || !Number.isFinite(next.version)) {
@@ -496,6 +496,33 @@ function resolveAuthStoreForTarget(params: {
   params.authStoreByPath.set(authStorePath, store);
   params.authStoreTargetByPath.set(authStorePath, authStoreTarget);
   return { path: authStorePath, store };
+}
+
+function resolveAuthStoreTarget(params: {
+  nextConfig: OpenClawConfig;
+  stateDir: string;
+  env: NodeJS.ProcessEnv;
+  agentId: string;
+  authProfileStore?: string;
+}): AuthProfileStoreTarget {
+  const scopedEnv = {
+    ...params.env,
+    OPENCLAW_STATE_DIR: params.stateDir,
+    OPENCLAW_AGENT_DIR: undefined,
+  };
+  // Explicit shared ownership routes to the canonical shared state database so
+  // apply and audit agree on which store owns the profile. Omitted (and "agent")
+  // preserve legacy agent-database behavior, including v1 local profile creation.
+  if (params.authProfileStore === "shared") {
+    return {
+      kind: "shared",
+      path: resolveSharedAuthStorePath(scopedEnv),
+      env: scopedEnv,
+      stateDir: params.stateDir,
+    };
+  }
+  const agentDir = resolveAgentDir(params.nextConfig, params.agentId, scopedEnv);
+  return { kind: "agent", agentDir, path: resolveAuthProfileDatabasePath(agentDir) };
 }
 
 function ensureAuthProfileContainer(params: {

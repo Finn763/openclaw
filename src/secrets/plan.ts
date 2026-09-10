@@ -34,6 +34,12 @@ export type SecretsPlanTarget = {
    */
   agentId?: string;
   /**
+   * Explicit auth-profile store owner. `"shared"` routes the target to the
+   * canonical shared state database, `"agent"` to the selected agent database.
+   * Omitted preserves legacy agent-database behavior; any other value is rejected.
+   */
+  authProfileStore?: string;
+  /**
    * For provider targets, used to scrub auth-profile/static residues.
    */
   providerId?: string;
@@ -127,6 +133,13 @@ export function isSecretsApplyPlan(value: unknown): value is SecretsApplyPlan {
       !resolved ||
       !candidate.ref ||
       !isValidSecretRef(candidate.ref)
+    ) {
+      return false;
+    }
+    if (
+      candidate.authProfileStore !== undefined &&
+      candidate.authProfileStore !== "agent" &&
+      candidate.authProfileStore !== "shared"
     ) {
       return false;
     }
