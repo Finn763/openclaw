@@ -2,6 +2,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  markRedactionProvenance,
+  REDACTION_PROVENANCE_END,
+  REDACTION_PROVENANCE_START,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { describe, expect, it, afterEach, vi } from "vitest";
@@ -298,7 +303,7 @@ describe("tool_result_persist hook", () => {
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult);
-    expect(serialized).toContain("customsecret=abcdef…ghij");
+    expect(serialized).toContain(`customsecret=${markRedactionProvenance("abcdef…ghij")}`);
     expect(serialized).not.toContain(customSecret);
   });
 
@@ -366,7 +371,10 @@ describe("tool_result_persist hook", () => {
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
     expect(serialized).toContain("token=");
-    expect(serialized).toContain("***");
+    // Longer values keep their hint bytes, wrapped in provenance so replay can tell
+    // them from literal text; the raw value must never survive (#142821).
+    expect(serialized).toContain(REDACTION_PROVENANCE_START);
+    expect(serialized).toContain(REDACTION_PROVENANCE_END);
     expect(serialized).toContain("max depth exceeded");
     expect(serialized).not.toContain(tokenValue);
   });
@@ -475,7 +483,7 @@ describe("tool_result_persist hook", () => {
     const serialized = JSON.stringify(toolResult.details);
     expect(requireToolResultText(toolResult)).toBe("visible output stays small");
     expect(toolResult.details.persistedDetailsTruncated).toBe(true);
-    expect(serialized).toContain("token=***");
+    expect(serialized).toContain(`token=${markRedactionProvenance("***")}`);
     expect(serialized).toContain("partial secret span omitted");
     expect(serialized).toContain("boundary overlap omitted");
     expect(serialized).not.toContain(tokenValue);
@@ -528,7 +536,9 @@ describe("tool_result_persist hook", () => {
     const serialized = JSON.stringify(details);
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.finalDetailsTruncated).toBe(true);
-    expect(details.status).toMatchObject({ token: "***" });
+    const persistedToken = (details.status as { token: string }).token;
+    expect(persistedToken.startsWith(REDACTION_PROVENANCE_START)).toBe(true);
+    expect(persistedToken.endsWith(REDACTION_PROVENANCE_END)).toBe(true);
     expect(details.spilledChars).toBe(2_000_000);
     expect(details.spillTruncated).toBe(true);
     expect(details.spill).toEqual({
