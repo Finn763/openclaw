@@ -25,8 +25,9 @@ import {
   type GatewayRestartSnapshot,
 } from "../daemon-cli/restart-health.js";
 import { runRestartScript } from "./restart-helper.js";
-import type { UpdateCommandOptions } from "./shared.js";
+import { tryWriteCompletionCache, type UpdateCommandOptions } from "./shared.js";
 import { createUpdateConfigSnapshot } from "./update-command-config-snapshot.js";
+import type { PluginUpdateWarning } from "./update-command-plugins-internals.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
 import {
   DEFINITION_DENIAL,
@@ -96,9 +97,22 @@ export function resolvePostUpdateServiceStateReadEnv(params: {
 }
 
 export async function tryInstallShellCompletion(opts: {
+  root: string;
   jsonMode: boolean;
   skipPrompt: boolean;
 }): Promise<void> {
+  try {
+    await tryWriteCompletionCache(opts.root, opts.jsonMode);
+  } catch (err) {
+    if (!opts.jsonMode) {
+      const completionCacheRefreshCommand = formatCliCommand("openclaw completion --write-state");
+      defaultRuntime.log(
+        theme.warn(
+          `Completion cache update failed: ${formatErrorMessage(err)}. Update will continue; retry with: ${completionCacheRefreshCommand}`,
+        ),
+      );
+    }
+  }
   if (opts.jsonMode || !process.stdin.isTTY) {
     return;
   }
@@ -218,6 +232,7 @@ export async function maybeRestartService(params: {
   serviceMutationSkipMessage?: string;
   timeoutMs: number;
   onVerificationFailure?: (reason: string) => void;
+  onPluginWarnings?: (warnings: readonly PluginUpdateWarning[]) => void;
   onVerified?: (verifiedAtMs: number) => void;
 }): Promise<"ok" | "failed" | "restart-health-failed"> {
   const run = params.opts.run;
@@ -333,6 +348,7 @@ export async function maybeRestartService(params: {
           timeoutMs: activation.timeoutMs,
           expectedVersion: expectedGatewayVersion,
           ...(expectedGatewayBuildId ? { expectedBuildId: expectedGatewayBuildId } : {}),
+          requirePluginHealth: false,
           env: activation.serviceEnv,
         });
         assertCurrent();
@@ -345,6 +361,8 @@ export async function maybeRestartService(params: {
     assertCurrent();
     if (!verification.ok) {
       params.onVerificationFailure?.(verification.summary);
+    } else if (verification.pluginWarnings?.length) {
+      params.onPluginWarnings?.(verification.pluginWarnings);
     }
     return verification.ok;
   };
@@ -400,6 +418,7 @@ export async function maybeRestartService(params: {
               timeoutMs: activation.timeoutMs,
               expectedVersion: expectedGatewayVersion,
               ...(expectedGatewayBuildId ? { expectedBuildId: expectedGatewayBuildId } : {}),
+              requirePluginHealth: false,
               env: activation.serviceEnv,
               requireRunningService: true,
               settle: { probes: 12 },
@@ -582,13 +601,18 @@ export async function maybeRestartService(params: {
       if (err instanceof UpdateServiceLoadBoundaryError) {
         throw err;
       }
+      if (err instanceof GatewayRestartHealthError && !updatedInstallRestartNeedsServiceRootProof) {
+        const healthy = await verifyRestartedGateway(
+          normalizeOptionalString(activation.result.after?.version),
+          normalizeOptionalString(activation.result.after?.buildId),
+          { requireRunningService: true },
+        );
+        return healthy ? "ok" : await failed("restart-health-failed");
+      }
       defaultRuntime.error(
         `Gateway: restart failed: ${String(err)}. Code update remains installed; a service stopped for update may still be stopped. ` +
           "Run `openclaw gateway status --deep` and ask its service owner to restart it manually.",
       );
-      if (err instanceof GatewayRestartHealthError && !updatedInstallRestartNeedsServiceRootProof) {
-        return await failed("restart-health-failed");
-      }
       return await failed();
     }
     return "ok";

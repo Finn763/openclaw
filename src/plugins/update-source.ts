@@ -11,11 +11,11 @@ import { unscopedPackageName } from "../infra/install-safe-path.js";
 import type { NpmSpecResolution } from "../infra/install-source-utils.js";
 import { loadNpmPackageVersions, resolveNpmSpecMetadata } from "../infra/install-source-utils.js";
 import {
+  compareOpenClawReleaseVersions,
   isExactSemverVersion,
   isPrereleaseResolutionAllowed,
   isPrereleaseSemverVersion,
   parseRegistryNpmSpec,
-  resolveOpenClawReleaseCohortVersion,
 } from "../infra/npm-registry-spec.js";
 import {
   comparePackageUpdateVersions,
@@ -27,6 +27,7 @@ import { isUnavailableClawHubTarget } from "./clawhub-error-codes.js";
 import type { ExternalizedBundledPluginBridge } from "./externalized-bundled-plugins.js";
 import {
   resolveClawHubInstallSpecsForUpdateChannel,
+  resolveDefaultNpmSpec,
   resolveNpmInstallSpecsForUpdateChannel,
 } from "./install-channel-specs.js";
 import { checkMinHostVersion } from "./min-host-version.js";
@@ -470,43 +471,27 @@ export function isTrustedSourceLinkedOfficialBridgeNpmInstall(params: {
   return Boolean(officialPackageName && requestedPackageName === officialPackageName);
 }
 
-/**
- * Fix #133810: heal a stale official-plugin pin to the gateway cohort on a plain
- * `plugins update <id>` (no explicit override, no official bulk sync), mirroring
- * the drift warning's `resolvePluginVersionDriftUpdateCommand` target. A pin like
- * `@openclaw/discord@2026.7.1` under a `2026.8.x` gateway otherwise reinstalls
- * the stale cohort and leaves the plugin crashed until the operator adds
- * `@latest`. Non-official specs and same-cohort pins pass through untouched.
- */
-function resolveGatewayCohortPinnedOfficialSpec(params: {
-  spec: string;
-  officialPackageName: string | undefined;
-  coreVersion: string | undefined;
-}): string {
-  if (!params.officialPackageName || !params.coreVersion) {
-    return params.spec;
-  }
-  const parsed = parseRegistryNpmSpec(params.spec);
-  if (parsed?.selectorKind !== "exact-version" || parsed.name !== params.officialPackageName) {
-    return params.spec;
-  }
-  const pinnedVersion = parsed.selector;
+/** Older managed releases resume the catalog's update policy after a successful update. */
+function resolveUnpinnedOfficialReleaseSpec(params: {
+  spec?: string;
+  officialSpec?: string;
+  coreVersion?: string;
+}): string | undefined {
+  const recorded = params.spec ? parseRegistryNpmSpec(params.spec) : null;
+  const official = params.officialSpec ? resolveDefaultNpmSpec(params.officialSpec) : null;
+  const pinnedVersion = normalizeExactSemverVersion(recorded?.selector);
+  const coreVersion = normalizeExactSemverVersion(params.coreVersion);
   if (
+    recorded?.selectorKind !== "exact-version" ||
     !pinnedVersion ||
-    !isExactSemverVersion(pinnedVersion) ||
-    !isExactSemverVersion(params.coreVersion) ||
-    !/^2026\.\d+\.\d+/.test(pinnedVersion)
+    !official?.name.startsWith("@openclaw/") ||
+    recorded.name !== official.name ||
+    !coreVersion
   ) {
-    return params.spec;
+    return undefined;
   }
-  const coreCohort = resolveOpenClawReleaseCohortVersion(params.coreVersion);
-  if (resolveOpenClawReleaseCohortVersion(pinnedVersion) === coreCohort) {
-    return params.spec;
-  }
-  const gatewaySpec = `${params.officialPackageName}@${coreCohort}`;
-  return parseRegistryNpmSpec(gatewaySpec)?.selectorKind === "exact-version"
-    ? gatewaySpec
-    : params.spec;
+  const order = compareOpenClawReleaseVersions(pinnedVersion, coreVersion);
+  return order !== null && order <= 0 ? official.raw : undefined;
 }
 
 /** Shares recorded target and catalog replacement precedence with update admission. */
@@ -525,27 +510,23 @@ export function resolveNpmUpdateTarget(params: {
   const official = params.trustedOfficialInstall;
   const specOverride =
     params.specOverride ??
-    (official?.replacementPluginId || official?.replaceNpmPackage ? official.npmSpec : undefined);
+    (official?.replacementPluginId || official?.replaceNpmPackage ? official.npmSpec : undefined) ??
+    resolveUnpinnedOfficialReleaseSpec({
+      spec: params.record.spec,
+      officialSpec: official?.npmSpec,
+      coreVersion: params.coreVersion,
+    });
   const spec =
     specOverride ??
     params.record.spec ??
     (params.syncOfficialPluginInstalls ? official?.npmSpec : undefined);
-  const officialPackageName = resolveNpmSpecPackageName(official?.npmSpec);
-  const healable =
-    spec !== undefined && specOverride === undefined && !params.syncOfficialPluginInstalls;
   return {
     specOverride,
     target: spec
       ? {
-          spec: healable
-            ? resolveGatewayCohortPinnedOfficialSpec({
-                spec,
-                officialPackageName,
-                coreVersion: params.coreVersion,
-              })
-            : spec,
+          spec,
           updateChannel: params.updateChannel,
-          officialPackageName,
+          officialPackageName: resolveNpmSpecPackageName(official?.npmSpec),
           coreVersion: params.coreVersion,
           versionBoundToCore: params.versionBoundToCore,
           timeoutMs: params.timeoutMs,
@@ -556,6 +537,7 @@ export function resolveNpmUpdateTarget(params: {
 
 export function resolveClawHubUpdateSpecs(params: {
   record: PluginInstallRecord;
+  officialSpec?: string;
   officialSpecOverride?: string;
   updateChannel?: UpdateChannel;
   officialPackageName?: string;
@@ -579,8 +561,18 @@ export function resolveClawHubUpdateSpecs(params: {
     params.officialSpecOverride ??
     params.record.resolvedSpec ??
     `clawhub:${clawhubPackage}`;
+  const recorded = parseClawHubPluginSpec(recordSpec);
+  const official = params.officialSpec ? parseClawHubPluginSpec(params.officialSpec) : null;
+  const unpinnedSpec =
+    recorded && official
+      ? resolveUnpinnedOfficialReleaseSpec({
+          spec: `${recorded.name}${recorded.version ? `@${recorded.version}` : ""}`,
+          officialSpec: `${official.name}${official.version ? `@${official.version}` : ""}`,
+          coreVersion: params.coreVersion,
+        })
+      : undefined;
   return resolveClawHubInstallSpecsForUpdateChannel({
-    spec: recordSpec,
+    spec: unpinnedSpec ? `clawhub:${unpinnedSpec}` : recordSpec,
     updateChannel: params.updateChannel,
     officialPackageName: params.officialPackageName,
     coreVersion: params.coreVersion,

@@ -26,7 +26,15 @@ the old Gateway serves, then activates and verifies the update.
 openclaw update
 ```
 
-An already-installed registry package version or Git target SHA still runs plugin convergence, preserves exact pins with retained-pin advisories, and restarts a running managed Gateway only when plugins change and `--no-restart` is not set; unchanged runs finish as `skipped` / `already-current`.
+An already-installed registry package version or Git target SHA still runs plugin maintenance, repairs eligible old OpenClaw release pins, and restarts a running managed Gateway only when plugins change and `--no-restart` is not set; unchanged runs finish as `skipped` / `already-current`.
+
+Plugin maintenance does not fail an otherwise successful core update. If a plugin
+cannot be updated, OpenClaw continues with the remaining plugins, keeps the previous
+installation where possible, and prints a short next action. A running updated
+Gateway can also report a plugin that did not load without turning the core update
+into a failure. Individual plugin outcomes remain available in `--json` output.
+Failures to install core, repair required configuration or state, or start the
+updated Gateway remain update failures.
 An explicit package artifact (for example, a tarball path or URL) is validated
 and installed even when its version matches; matching versions do not prove
 that two artifacts contain the same code.
@@ -93,16 +101,20 @@ checks only the verified `extended-stable` selector for update availability.
 That direct command is for npm 12 or npm 11.16+. On npm 11.15 and earlier,
 omit `--allow-scripts=openclaw`.
 After the core swap, eligible official npm and trusted official ClawHub plugins with bare/default or
-`latest` intent converge to that exact core version. Exact pins and explicit
-non-`latest` tags, third-party plugins, custom registries, and other sources remain unchanged.
+`latest` intent converge to that exact core version. Eligible older OpenClaw release
+pins resume that default update policy. Explicit non-`latest` tags, independently
+versioned pins, third-party plugins, custom ClawHub registries, and other sources retain
+their existing behavior.
 Version-bound runtime plugins converge to the base release cohort when the
 core is a correction release (for example, `YYYY.M.P-2` uses plugin
 `YYYY.M.P`).
 Catalog installs created by current OpenClaw versions retain that default
-intent. Older records that contain only an exact version remain pinned because
-OpenClaw cannot safely distinguish an old automatic pin from a user pin. For npm
-installs, run `openclaw plugins update @openclaw/name` once on the extended-stable
-channel to opt that plugin back into exact-core tracking.
+intent. Verified OpenClaw-owned packages recorded at an exact OpenClaw release
+no newer than core resume their catalog's default selector after a successful
+update. This includes old automatic and manual pins. Their recorded registry
+and plugin settings are preserved, and subsequent updates continue following
+the selected channel. A version explicitly supplied to a plugin update command
+still applies to that operation.
 
 `--channel dev` gives a persistent moving GitHub `main` checkout for npm-owned
 package installs and existing Git checkouts. Package

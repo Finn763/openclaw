@@ -193,6 +193,7 @@ describe("runPostCorePluginConvergence", () => {
   it("returns ok when no warnings/failures and includes repair changes", async () => {
     mocks.repairMissingConfiguredPluginInstalls.mockResolvedValue({
       changes: ['Repaired missing configured plugin "discord".'],
+      repairedPluginIds: ["discord"],
       warnings: [],
       records: { discord: { source: "npm", installPath: "/p/discord" } },
     });
@@ -204,6 +205,7 @@ describe("runPostCorePluginConvergence", () => {
     });
     expect(result.errored).toBe(false);
     expect(result.changes).toEqual(['Repaired missing configured plugin "discord".']);
+    expect(result.repairedPluginIds).toEqual(["discord"]);
     expect(result.warnings).toEqual([]);
   });
 
@@ -587,6 +589,7 @@ describe("runPostCorePluginConvergence", () => {
         pluginId: "brave",
         reason:
           'missing-main-entry: Plugin main entry "dist/index.js" not found at /p/brave/dist/index.js',
+        kind: "load",
         message:
           'Plugin "brave" failed post-core payload smoke check (missing-main-entry): Plugin main entry "dist/index.js" not found at /p/brave/dist/index.js',
         guidance: [
@@ -624,6 +627,7 @@ describe("runPostCorePluginConvergence", () => {
       {
         pluginId: "brave",
         reason: "missing-install-path: Install path is missing from the plugin install record.",
+        kind: "load",
         message:
           'Plugin "brave" failed post-core payload smoke check (missing-install-path): Install path is missing from the plugin install record.',
         guidance: [
@@ -670,6 +674,7 @@ describe("runPostCorePluginConvergence", () => {
         pluginId: "brave",
         reason:
           "unreadable-package-json: Could not read package.json at /p/brave/package.json: EACCES: permission denied",
+        kind: "load",
         message,
         guidance,
       },

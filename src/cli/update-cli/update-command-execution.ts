@@ -130,7 +130,7 @@ export async function executeMutableUpdate(
     const { preflightConfiguredNpmPluginTargets } =
       await import("./update-command-plugin-preflight.js");
     const context = admission!.contexts.at(-1)!;
-    await preflightConfiguredNpmPluginTargets({
+    const warnings = await preflightConfiguredNpmPluginTargets({
       config: context.configSnapshot.sourceConfig,
       env: context.env,
       targetVersion,
@@ -138,6 +138,13 @@ export async function executeMutableUpdate(
       timeoutMs: params.updateStepTimeoutMs,
     });
     await recheckSchemas(params.packageTargetSchemaVersions);
+    for (const warning of warnings) {
+      if (opts.json) {
+        defaultRuntime.error(warning.message);
+      } else {
+        defaultRuntime.log(warning.message);
+      }
+    }
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;
   let packageTransaction: PackageUpdateTransaction | undefined;
@@ -492,6 +499,7 @@ export async function executeMutableUpdate(
           port,
           expectedVersion,
           expectedBuildId: expectedBuildId ?? undefined,
+          requirePluginHealth: false,
         }),
         waitForGatewayHttpReadiness({
           config,

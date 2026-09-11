@@ -1,4 +1,5 @@
 import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../packages/gateway-protocol/src/capability-consent-error-details.js";
+import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveNpmSpecMetadata } from "../infra/install-source-utils.js";
 import { parseRegistryNpmSpec } from "../infra/npm-registry-spec.js";
@@ -74,7 +75,6 @@ import {
   resolveTrustedOfficialPrereleaseFallbackMetadataForUpdate,
   shouldBypassTrustedOfficialUnchangedNpmCheck,
   shouldSkipUnchangedNpmInstall,
-  type PluginUpdateChannelFallback,
   type PluginUpdateIntegrityDriftParams,
   type PluginUpdateLogger,
   type PluginUpdateOutcome,
@@ -96,6 +96,7 @@ export async function updateNpmInstalledPlugins(params: {
   skipDisabledPlugins?: boolean;
   syncOfficialPluginInstalls?: boolean;
   disableOnFailure?: boolean;
+  retainOnUnavailable?: boolean;
   timeoutMs?: number;
   dryRun?: boolean;
   updateChannel?: UpdateChannel;
@@ -110,7 +111,7 @@ export async function updateNpmInstalledPlugins(params: {
   packagePluginIds?: Readonly<Record<string, readonly string[]>>;
 }): Promise<PluginUpdateSummary> {
   const logger = params.logger ?? {};
-  const coreSync = params.syncOfficialPluginInstalls && params.disableOnFailure;
+  const retainOnUnavailable = params.retainOnUnavailable === true;
   const consentCallbacks = capturePluginCapabilityConsentHandlerErrors(params.onCapabilityConsent);
   const installs = params.config.plugins?.installs ?? {};
   const targets = new Set(params.pluginIds?.length ? params.pluginIds : Object.keys(installs));
@@ -133,11 +134,7 @@ export async function updateNpmInstalledPlugins(params: {
   const recordFailure = (
     pluginId: string,
     message: string,
-    options: {
-      channelFallback?: PluginUpdateChannelFallback;
-      code?: string;
-      installedPayloadRunnable?: boolean;
-    } = {},
+    options: Parameters<typeof recordPluginUpdateFailure>[0]["options"] = {},
   ) => {
     const failure = recordPluginUpdateFailure({
       config: next,
@@ -238,7 +235,7 @@ export async function updateNpmInstalledPlugins(params: {
       if (!(error instanceof NpmChannelResolutionError)) {
         throw error;
       }
-      if (!coreSync) {
+      if (!retainOnUnavailable) {
         outcomes.push({ pluginId, status: "error", code: error.code, message: error.message });
         logger.warn?.(error.message);
         continue;
@@ -249,6 +246,7 @@ export async function updateNpmInstalledPlugins(params: {
       record.source === "clawhub"
         ? resolveClawHubUpdateSpecs({
             record,
+            officialSpec: trustedOfficialClawHubInstall?.clawhubSpec,
             officialSpecOverride: officialClawHubSpec,
             updateChannel,
             officialPackageName: trustedOfficialClawHubInstall ? recordClawHubPackage : undefined,
@@ -354,13 +352,13 @@ export async function updateNpmInstalledPlugins(params: {
       let installedPayloadRunnable = false;
       if (
         (code === PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE ||
-          (coreSync && isUnavailablePluginSource("npm", { ok: false, code }))) &&
-        params.disableOnFailure &&
+          (retainOnUnavailable && isUnavailablePluginSource("npm", { ok: false, code }))) &&
+        (params.disableOnFailure || retainOnUnavailable) &&
         !params.dryRun &&
         currentVersion
       ) {
         const compatible =
-          !coreSync ||
+          !retainOnUnavailable ||
           isNpmMetadataCompatibleWithCurrentHost(
             { packageOpenClaw: installedManifest?.openclaw },
             { hostVersion: params.coreVersion, allowLegacyBareSemver: true },
@@ -373,11 +371,11 @@ export async function updateNpmInstalledPlugins(params: {
           // Damaged or unreadable payloads do not qualify for retention.
         }
       }
-      if (coreSync && installedPayloadRunnable) {
+      if (retainOnUnavailable && installedPayloadRunnable) {
         const retainedMessage =
           `Retained "${pluginId}" at ${currentVersion}: target ${effectiveSpec}` +
           `${params.coreVersion ? ` for OpenClaw ${params.coreVersion}` : ""} is unavailable. ${message} ` +
-          `Retry "openclaw plugins update ${pluginId}" after the target is published or registry access recovers.`;
+          `Retry "${formatCliCommand(`openclaw plugins update ${pluginId}`)}" after the target is published or registry access recovers.`;
         logger.warn?.(retainedMessage);
         outcomes.push({
           pluginId,
@@ -477,7 +475,7 @@ export async function updateNpmInstalledPlugins(params: {
           continue;
         }
       } else {
-        if (coreSync || !parseRegistryNpmSpec(effectiveSpec!)) {
+        if (retainOnUnavailable || !parseRegistryNpmSpec(effectiveSpec!)) {
           const code =
             metadataResult.category === "metadata-env"
               ? PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE
@@ -612,7 +610,8 @@ export async function updateNpmInstalledPlugins(params: {
           updateChannel,
           timeoutMs: params.timeoutMs,
           channelFallbackSuffix,
-          checkNewerExactPinnedClawHubDefaultLine: Boolean(trustedOfficialClawHubInstall),
+          checkNewerExactPinnedClawHubDefaultLine:
+            Boolean(trustedOfficialClawHubInstall) && recordSpec === record.spec,
         }),
       );
       completedCanonicalUpdates.add(pluginId);
@@ -693,7 +692,8 @@ export async function updateNpmInstalledPlugins(params: {
         currentVersion,
         nextVersion,
         channelFallbackSuffix,
-        checkNewerExactPinnedClawHubDefaultLine: Boolean(trustedOfficialClawHubInstall),
+        checkNewerExactPinnedClawHubDefaultLine:
+          Boolean(trustedOfficialClawHubInstall) && recordSpec === record.spec,
         updateChannel,
         timeoutMs: params.timeoutMs,
       }),
