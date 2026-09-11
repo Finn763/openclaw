@@ -448,62 +448,84 @@ describe("plugin update unchanged Docker E2E", () => {
     },
   );
 
-  it.each(["clean", "updated", "unchanged", "repaired after error", "unrelated warning"])(
-    "accepts completed corrupt plugin repair: %s",
-    (outcome) => {
-      expect(() =>
-        runProbe("assert-corrupt-plugin-result", {
-          status: outcome === "unrelated warning" ? "warning" : "ok",
-          npm: {
-            outcomes:
-              outcome === "clean"
-                ? []
-                : [
-                    ...(outcome === "repaired after error"
-                      ? [{ pluginId: CORRUPT_PLUGIN_ID, status: "error" }]
-                      : []),
-                    {
-                      pluginId: CORRUPT_PLUGIN_ID,
-                      status: outcome === "unchanged" ? "unchanged" : "updated",
-                    },
-                  ],
-          },
-          warnings:
-            outcome === "unrelated warning"
-              ? [{ pluginId: "another-plugin", message: "Retry another plugin." }]
-              : [],
-        }),
-      ).not.toThrow();
-    },
-  );
-
-  it.each(["disabled", "quarantined", "still missing"])(
-    "rejects unresolved corrupt plugin repair: %s",
-    (outcome) => {
-      const result = runProbeStatus("assert-corrupt-plugin-result", {
-        status: "warning",
+  it.each([
+    "clean",
+    "updated",
+    "unchanged",
+    "repaired after error",
+    "already updated",
+    "unrelated warning",
+  ])("accepts completed corrupt plugin repair: %s", (outcome) => {
+    expect(() =>
+      runProbe("assert-corrupt-plugin-result", {
+        status: outcome === "unrelated warning" ? "warning" : "ok",
         npm: {
-          outcomes: [
-            {
-              pluginId: CORRUPT_PLUGIN_ID,
-              status:
-                outcome === "disabled"
-                  ? "skipped"
-                  : outcome === "quarantined"
-                    ? "error"
-                    : "updated",
-            },
-          ],
+          outcomes:
+            outcome === "clean"
+              ? []
+              : [
+                  ...(outcome === "repaired after error"
+                    ? [{ pluginId: CORRUPT_PLUGIN_ID, status: "error" }]
+                    : []),
+                  {
+                    pluginId: CORRUPT_PLUGIN_ID,
+                    status: outcome === "unchanged" ? "unchanged" : "updated",
+                  },
+                  ...(outcome === "already updated"
+                    ? [
+                        {
+                          pluginId: CORRUPT_PLUGIN_ID,
+                          status: "skipped",
+                          message: `Skipping "${CORRUPT_PLUGIN_ID}" (already updated).`,
+                        },
+                      ]
+                    : []),
+                ],
         },
         warnings:
-          outcome === "still missing"
-            ? [{ pluginId: CORRUPT_PLUGIN_ID, reason: "package.json is missing" }]
+          outcome === "unrelated warning"
+            ? [{ pluginId: "another-plugin", message: "Retry another plugin." }]
             : [],
-      });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        `expected ${CORRUPT_PLUGIN_ID} restored without unresolved plugin errors or warnings`,
-      );
-    },
-  );
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "disabled",
+    "quarantined",
+    "still missing",
+    "already updated without repair",
+    "already updated after failure",
+  ])("rejects unresolved corrupt plugin repair: %s", (outcome) => {
+    const result = runProbeStatus("assert-corrupt-plugin-result", {
+      status: "warning",
+      npm: {
+        outcomes: [
+          ...(outcome === "already updated after failure"
+            ? [{ pluginId: CORRUPT_PLUGIN_ID, status: "error" }]
+            : []),
+          {
+            pluginId: CORRUPT_PLUGIN_ID,
+            status:
+              outcome === "disabled" || outcome.startsWith("already updated")
+                ? "skipped"
+                : outcome === "quarantined"
+                  ? "error"
+                  : "updated",
+            ...(outcome.startsWith("already updated")
+              ? { message: `Skipping "${CORRUPT_PLUGIN_ID}" (already updated).` }
+              : {}),
+          },
+        ],
+      },
+      warnings:
+        outcome === "still missing"
+          ? [{ pluginId: CORRUPT_PLUGIN_ID, reason: "package.json is missing" }]
+          : [],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `expected ${CORRUPT_PLUGIN_ID} restored without unresolved plugin errors or warnings`,
+    );
+  });
 });
