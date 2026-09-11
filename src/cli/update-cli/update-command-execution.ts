@@ -139,11 +139,7 @@ export async function executeMutableUpdate(
     });
     await recheckSchemas(params.packageTargetSchemaVersions);
     for (const warning of warnings) {
-      if (opts.json) {
-        defaultRuntime.error(warning.message);
-      } else {
-        defaultRuntime.log(warning.message);
-      }
+      defaultRuntime[opts.json ? "error" : "log"](warning.message);
     }
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;

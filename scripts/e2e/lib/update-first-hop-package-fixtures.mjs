@@ -6,6 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createPackageDistContentInventoryEntry,
+  PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH,
+  parsePackageDistContentInventory,
+} from "../../lib/package-dist-inventory-contract.mts";
 import { isUpdateCompatibilityChunk } from "../../lib/update-compat-contract.mjs";
 
 // Frozen candidates predating the recorded inventory retain their original fixture contract.
@@ -118,6 +123,30 @@ function resolveFixturePaths(packageRoot) {
   return { root, packageJson, buildInfo, inventory };
 }
 
+function refreshFixtureContentInventory(packageRoot, { changedPaths = [], removedPaths = [] }) {
+  const inventoryPath = path.join(packageRoot, PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH);
+  if (!fs.existsSync(inventoryPath)) {
+    return;
+  }
+  const changed = new Set(changedPaths);
+  const removed = new Set(removedPaths);
+  // Retain hashes for untouched bytes so fixture stamping cannot bless unrelated corruption.
+  const inventory = parsePackageDistContentInventory(readJson(inventoryPath))
+    .filter((entry) => !removed.has(entry.path))
+    .map((entry) => {
+      if (!changed.has(entry.path)) {
+        return entry;
+      }
+      const filePath = path.join(packageRoot, entry.path);
+      return createPackageDistContentInventoryEntry(
+        entry.path,
+        fs.readFileSync(filePath),
+        fs.statSync(filePath).mode,
+      );
+    });
+  writeJson(inventoryPath, inventory);
+}
+
 export function removeLegacyUpdateCompatChunks(packageRoot) {
   const paths = resolveFixturePaths(packageRoot);
   const inventory = readJson(paths.inventory);
@@ -167,6 +196,7 @@ export function removeLegacyUpdateCompatChunks(packageRoot) {
     paths.inventory,
     inventory.filter((entry) => !removed.includes(entry)),
   );
+  refreshFixtureContentInventory(paths.root, { removedPaths: removed });
 }
 
 function futureFixtureVersion(sequence) {
@@ -185,6 +215,7 @@ function stampFixtureVersion(packageRoot, version) {
   // The unchanged compiled UI still carries the prepared artifact's opaque build ID.
   writeJson(paths.packageJson, packageJson);
   writeJson(paths.buildInfo, buildInfo);
+  refreshFixtureContentInventory(paths.root, { changedPaths: ["dist/build-info.json"] });
 }
 
 export function markFutureUpdateFixture(packageRoot, sequence = 0) {
