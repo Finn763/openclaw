@@ -211,10 +211,8 @@ export async function updateNpmInstalledPlugins(params: {
         rootConfig: params.config,
       });
       if (!enableState.enabled && !officialNpmSpec && !officialClawHubSpec) {
-        recordSkippedOutcome(
-          pluginId,
-          `Skipping "${pluginId}" (${enableState.reason ?? "disabled by plugin config"}).`,
-        );
+        const reason = enableState.reason ?? "disabled by plugin config";
+        recordSkippedOutcome(pluginId, `Skipping "${pluginId}" (${reason}).`);
         continue;
       }
     }
@@ -527,15 +525,19 @@ export async function updateNpmInstalledPlugins(params: {
     });
     consentCallbacks.rethrowCallbackError();
     if (attempt.kind === "exception") {
-      if (attempt.error instanceof ManagedPluginLifecycleError && attempt.error.capabilityConsent) {
+      const error = attempt.error;
+      if (error instanceof ManagedPluginLifecycleError && error.capabilityConsent) {
         // Staging was rolled back; pending consent must not disable the previous installation.
         outcomes.push({
           pluginId,
           status: "error",
           code: PLUGIN_CAPABILITY_CONSENT_REQUIRED,
-          message: attempt.error.message,
+          message: error.message,
         });
         continue;
+      }
+      if (error instanceof ManagedPluginLifecycleError && error.kind === "invalid-request") {
+        throw error;
       }
       recordFailure(pluginId, attempt.message);
       continue;

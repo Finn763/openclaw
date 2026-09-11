@@ -880,6 +880,106 @@ describe("updateNpmInstalledPlugins", () => {
     validatePackageExtensionEntriesForInstallMock.mockReset();
   });
 
+  it("propagates a managed installer ownership refusal before later updates", async () => {
+    const { createManagedPluginArtifactConsentHandler } =
+      await vi.importActual<typeof import("./capability-consent.js")>("./capability-consent.js");
+    const { installPluginDirectoryIntoExtensions } = await import("./install-shared.js");
+    const pluginId = "consent-fixture";
+    const packageName = `@acme/${pluginId}`;
+    const installedDir = createCapabilityConsentPackage({
+      pluginId,
+      version: "1.0.0",
+      childProviders: ["existing-child-provider"],
+    });
+    const sourceDir = createCapabilityConsentPackage({
+      pluginId,
+      version: "2.0.0",
+      childProviders: ["existing-child-provider", "new-child-provider"],
+    });
+    const laterDir = createInstalledPackageDir({ name: "@acme/later", version: "1.0.0" });
+    const record: PluginInstallRecord = {
+      source: "npm",
+      spec: packageName,
+      installPath: installedDir,
+    };
+    const records = {
+      [pluginId]: record,
+      alias: { ...record },
+      later: { source: "npm" as const, spec: "@acme/later", installPath: laterDir },
+    };
+    const config: OpenClawConfig = {
+      plugins: {
+        entries: { [pluginId]: { enabled: true }, later: { enabled: true } },
+        installs: records,
+      },
+    };
+    const originalConfig = structuredClone(config);
+    const originalFiles = [
+      "package.json",
+      "openclaw.plugin.json",
+      "index.js",
+      path.join("children", "addon", "openclaw.plugin.json"),
+      path.join("children", "addon", "addon.js"),
+    ].map((file) => ({ file, bytes: fs.readFileSync(path.join(installedDir, file)) }));
+    const originalLaterPackage = fs.readFileSync(path.join(laterDir, "package.json"));
+    const onCapabilityConsent =
+      vi.fn<NonNullable<UpdateInstalledPluginParams["onCapabilityConsent"]>>();
+    const beforePersistentEffect = vi.fn();
+    const warn = vi.fn();
+    const consent = createManagedPluginArtifactConsentHandler({
+      config,
+      source: "npm",
+      spec: packageName,
+      previousRecords: records,
+      onCapabilityConsent,
+      beforePersistentEffect,
+    });
+    mockNpmViewMetadata({ name: packageName, version: "2.0.0" });
+    // Exercise the installer boundary with an intrinsic refusal from the managed ownership owner.
+    installPluginFromNpmSpecMock.mockImplementationOnce(async () =>
+      installPluginDirectoryIntoExtensions({
+        sourceDir,
+        targetDir: installedDir,
+        pluginId,
+        extensions: ["index.js"],
+        logger: {},
+        timeoutMs: 1_000,
+        mode: "update",
+        dryRun: false,
+        copyErrorPrefix: "failed to copy plugin",
+        hasDeps: false,
+        depsLogMessage: "Installing dependencies…",
+        onBeforePluginArtifactCommit: consent.onBeforePluginArtifactCommit,
+      }),
+    );
+
+    await expect(
+      updateNpmInstalledPlugins({
+        config,
+        pluginIds: [pluginId, "later"],
+        onCapabilityConsent,
+        beforePersistentEffect,
+        disableOnFailure: true,
+        logger: { warn },
+      }),
+    ).rejects.toMatchObject({
+      name: "ManagedPluginLifecycleError",
+      kind: "invalid-request",
+      message: `Plugin "${pluginId}" matches multiple installed package owners.`,
+      capabilityConsent: undefined,
+    });
+
+    expect(installPluginFromNpmSpecMock).toHaveBeenCalledOnce();
+    expect(onCapabilityConsent).not.toHaveBeenCalled();
+    expect(beforePersistentEffect).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(config).toEqual(originalConfig);
+    for (const { file, bytes } of originalFiles) {
+      expect(fs.readFileSync(path.join(installedDir, file))).toEqual(bytes);
+    }
+    expect(fs.readFileSync(path.join(laterDir, "package.json"))).toEqual(originalLaterPackage);
+  });
+
   it.each<{
     label: string;
     nextProviders: string[];

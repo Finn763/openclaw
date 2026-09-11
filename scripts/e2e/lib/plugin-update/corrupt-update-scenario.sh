@@ -78,12 +78,17 @@ if [ -f "$plugin_dir/package.json" ]; then
 fi
 
 capture_corrupt_state() {
-  node --input-type=module - "$OPENCLAW_CONFIG_PATH" "$plugin_dir" <<'NODE'
+  node --input-type=module - "$OPENCLAW_CONFIG_PATH" <<'NODE'
 import fs from "node:fs";
 import path from "node:path";
 import { readPluginInstallRecords } from "./scripts/e2e/lib/plugin-index-sqlite.mjs";
-const [configPath, pluginDir] = process.argv.slice(2);
+const [configPath] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const record = readPluginInstallRecords()["demo-corrupt-plugin"];
+if (!record?.installPath) {
+  throw new Error("missing installed path for the corrupt-plugin fixture");
+}
+const pluginDir = record.installPath;
 const model = config.agents?.defaults?.model;
 const packageJsonPath = path.join(pluginDir, "package.json");
 process.stdout.write(JSON.stringify({
@@ -92,7 +97,7 @@ process.stdout.write(JSON.stringify({
     codexEnabled: config.plugins?.entries?.codex?.enabled,
     model: typeof model === "string" ? model : model?.primary,
   },
-  record: readPluginInstallRecords()["demo-corrupt-plugin"],
+  record,
   packageJson: fs.existsSync(packageJsonPath)
     ? JSON.parse(fs.readFileSync(packageJsonPath, "utf8"))
     : null,
