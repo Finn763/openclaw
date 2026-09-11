@@ -53,17 +53,22 @@ Package updates also check npm availability for enabled configured plugins befor
 stopping the serving Gateway or replacing the installed core. Registry targets
 are checked early; explicit package artifacts are checked using the privately
 staged package version before rehearsal, live-state preparation, or activation.
-The check uses the same plugin version rules as post-update synchronization, including release-cohort
-tracking, beta selection, and extended-stable targets. A missing version or registry
-error refuses the update with `plugin-target-unavailable`; registry-target
-`--dry-run` reports the same refusal. For explicit artifacts, `--dry-run` does not
-stage the package and reports that plugin availability checking remains pending.
-Retry when the registry or mirror is ready, select an older available
-core with `openclaw update --tag <version>`, or disable the affected plugin before
-retrying. Extended-stable does not accept `--tag`; retry later or explicitly switch
-channels. Bundled and path-installed plugins do not require registry requests.
-This metadata check does not reserve downloads, so later download failures can
-still require recovery.
+The check uses the same plugin version rules as post-update synchronization,
+including release-cohort tracking, beta selection, and extended-stable targets.
+A missing plugin version or registry error produces a warning naming the
+affected plugin; the core update can continue. Registry-target `--dry-run`
+includes those warnings. For explicit artifacts, `--dry-run` does not stage the
+package and reports that plugin availability checking remains pending.
+Extended-stable does not accept `--tag`. Bundled and path-installed plugins do not
+require registry requests.
+
+This metadata check does not reserve downloads. Plugin-only download, install,
+or load failures remain actionable warnings after an otherwise successful core
+update. The updater preserves recorded choices and retains the previous plugin
+payload where possible. Follow the reported `openclaw plugins update <id>` command for a
+failed install or update, or `openclaw doctor --fix` for a load problem. Invalid
+configuration or state, ownership errors, and failed core startup or readiness
+checks still prevent completion.
 
 Switch channels or target a specific version:
 
