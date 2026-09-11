@@ -237,7 +237,6 @@ export async function updateNpmInstalledPlugins(params: {
       }
       if (!retainOnUnavailable) {
         outcomes.push({ pluginId, status: "error", code: error.code, message: error.message });
-        logger.warn?.(error.message);
         continue;
       }
       npmResolutionError = error;
@@ -483,7 +482,7 @@ export async function updateNpmInstalledPlugins(params: {
           await recordNpmFailure(`Failed to check ${pluginId}: ${metadataResult.error}`, code);
           continue;
         }
-        logger.warn?.(
+        logger.info?.(
           `Could not check ${pluginId} before update; falling back to installer path: ${metadataResult.error}`,
         );
       }

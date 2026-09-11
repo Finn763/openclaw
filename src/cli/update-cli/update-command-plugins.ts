@@ -280,7 +280,12 @@ export async function updatePluginsAfterCoreUpdate(params: {
       runtime.log(theme.muted(change));
     }
   }
-  const convergenceWarnings = convergence.warnings.map(createPluginUpdateWarning);
+  const convergenceWarnings = convergence.warnings.map((warning) =>
+    createPluginUpdateWarning({
+      ...warning,
+      kind: warning.kind === "repair" ? "update" : warning.kind,
+    }),
+  );
   const convergenceOutcomes: PluginUpdateOutcome[] = [
     ...(convergence.outcomes ?? []),
     ...convergence.warnings.flatMap((warning): PluginUpdateOutcome[] =>

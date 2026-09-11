@@ -4015,6 +4015,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
 
     const { repairMissingConfiguredPluginInstalls } =
       await import("./missing-configured-plugin-install.js");
+    const onWarning = vi.fn();
     const result = await repairMissingConfiguredPluginInstalls({
       cfg: {
         plugins: {
@@ -4024,8 +4025,10 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         },
       },
       env: testEnv,
+      onWarning,
     });
 
+    expect(onWarning).toHaveBeenCalledWith({ message: repairWarning });
     expect(result.warnings).toContain(repairWarning);
     expect(result.notices ?? []).not.toContain(repairWarning);
   });
@@ -4622,16 +4625,28 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       error: "network unavailable",
     });
 
-    const result = await repairConfiguredPlugins({
-      tools: {
-        web: {
-          search: {
-            provider: "brave",
+    const onWarning = vi.fn();
+    const { repairMissingConfiguredPluginInstalls } =
+      await import("./missing-configured-plugin-install.js");
+    const result = await repairMissingConfiguredPluginInstalls({
+      cfg: {
+        tools: {
+          web: {
+            search: {
+              provider: "brave",
+            },
           },
         },
       },
+      env: testEnv,
+      onWarning,
     });
 
+    expect(onWarning).toHaveBeenCalledWith({
+      pluginId: "brave",
+      message:
+        'Failed to install missing configured plugin "brave" from @openclaw/brave-plugin@2026.5.1-beta.1: network unavailable',
+    });
     expect(fs.existsSync(installDir)).toBe(true);
     expect(mocks.writePersistedInstalledPluginIndexInstallRecords).not.toHaveBeenCalled();
     expect(result).toEqual({

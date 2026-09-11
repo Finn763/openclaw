@@ -2866,6 +2866,7 @@ describe("updateNpmInstalledPlugins", () => {
     },
   ] as const)("$name", async ({ spec, fallsBack }) => {
     const warn = vi.fn();
+    const info = vi.fn();
     const installPath = createInstalledPackageDir({
       name: "@martian-engineering/lossless-claw",
       version: "0.9.0",
@@ -2891,13 +2892,14 @@ describe("updateNpmInstalledPlugins", () => {
         installPath,
       }),
       "lossless-claw",
-      { logger: { warn } },
+      { logger: { warn, info } },
     );
 
     if (fallsBack) {
-      expect(warn).toHaveBeenCalledWith(
+      expect(info).toHaveBeenCalledWith(
         "Could not check lossless-claw before update; falling back to installer path: npm view failed: registry timeout",
       );
+      expect(warn).not.toHaveBeenCalled();
       expect(installPluginFromNpmSpecMock).toHaveBeenCalledTimes(1);
     } else {
       expect(warn).not.toHaveBeenCalled();
@@ -2911,6 +2913,37 @@ describe("updateNpmInstalledPlugins", () => {
         },
       ]);
     }
+  });
+
+  it("reports a beta registry failure only through its attributed outcome", async () => {
+    const warn = vi.fn();
+    const config = createNpmInstallConfig({
+      pluginId: "demo",
+      spec: "@example/demo",
+      installPath: "/missing/demo",
+    });
+    runCommandWithTimeoutMock.mockResolvedValue({
+      ...failedNpmVersionQueryResult,
+      stderr: "registry timeout",
+    });
+
+    const result = await updatePlugin(config, "demo", {
+      updateChannel: "beta",
+      logger: { warn },
+    });
+
+    expect(installPluginFromNpmSpecMock).not.toHaveBeenCalled();
+    expect(result.config).toBe(config);
+    expect(result.changed).toBe(false);
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({
+        pluginId: "demo",
+        status: "error",
+        code: "npm_metadata_failure",
+        message: expect.stringContaining("registry timeout"),
+      }),
+    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("defers installed payload validation until metadata probing fails", async () => {
@@ -4797,15 +4830,17 @@ describe("updateNpmInstalledPlugins", () => {
         }),
       );
 
-    const warnMessages: string[] = [];
+    const infoMessages: string[] = [];
+    const warn = vi.fn();
     const result = await updatePlugin(createClawHubInstallConfig(), "demo", {
       updateChannel: "beta",
-      logger: { warn: (msg) => warnMessages.push(msg) },
+      logger: { info: (msg) => infoMessages.push(msg), warn },
     });
 
     expect(clawHubInstallCall(0)?.spec).toBe("clawhub:demo@beta");
     expect(clawHubInstallCall(1)?.spec).toBe("clawhub:demo");
-    expect(warnMessages).toEqual([
+    expect(warn).not.toHaveBeenCalled();
+    expect(infoMessages).toEqual([
       'Plugin "demo" has no beta ClawHub release for clawhub:demo@beta; using clawhub:demo instead. Core update can still complete.',
     ]);
     expectRecordFields(result.config.plugins?.installs?.demo, {
