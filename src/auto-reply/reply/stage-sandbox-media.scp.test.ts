@@ -25,10 +25,18 @@ import {
   waitForPidToExit,
 } from "../../test-utils/process-tree.js";
 import type { RuntimeMsgContext, TemplateContext } from "../templating.js";
-import { stageSandboxMedia } from "./stage-sandbox-media.js";
+import {
+  resolveScpTransferTimeoutMs,
+  SANDBOX_MEDIA_MAX_BYTES,
+  SCP_MIN_SUPPORTED_THROUGHPUT_BYTES_PER_SEC,
+  SCP_TRANSFER_TIMEOUT_FLOOR_MS,
+  stageSandboxMedia,
+} from "./stage-sandbox-media.js";
 
 const SCP_STDERR_TAIL_CHARS = 16_384;
-const SCP_TRANSFER_TIMEOUT_MS = 30_000;
+const SCP_TRANSFER_TIMEOUT_MS = resolveScpTransferTimeoutMs();
+/** Small budget so the real hang and slow-transfer cases reach their deadline/margin in seconds. */
+const TEST_TRANSFER_BUDGET_MS = 5_000;
 const REMOTE_PATH = "/synthetic/attachments/report with spaces.txt";
 const SUCCESS = {
   code: 0,
@@ -180,6 +188,30 @@ function releaseInstalledOwnerSnapshot(): void {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("sandbox SCP transfer budget", () => {
+  it("derives the deadline from the size cap instead of a fixed cutoff", () => {
+    // 50 MiB at the slowest supported throughput; still bounded, but far above
+    // the previous fixed cutoff that failed every transfer slower than 30s.
+    expect(resolveScpTransferTimeoutMs({})).toBe(
+      Math.ceil((SANDBOX_MEDIA_MAX_BYTES / SCP_MIN_SUPPORTED_THROUGHPUT_BYTES_PER_SEC) * 1000),
+    );
+    expect(resolveScpTransferTimeoutMs({})).toBeGreaterThan(SCP_TRANSFER_TIMEOUT_FLOOR_MS);
+    // 40 MiB over a 1 MiB/s link needs ~40s, which the old 30s cutoff could never allow.
+    expect(resolveScpTransferTimeoutMs({}, 40 * 1024 * 1024)).toBe(160_000);
+  });
+
+  it("keeps the floor for small transfers and honours the operator override", () => {
+    expect(resolveScpTransferTimeoutMs({}, 1024)).toBe(SCP_TRANSFER_TIMEOUT_FLOOR_MS);
+    expect(resolveScpTransferTimeoutMs({ OPENCLAW_SANDBOX_SCP_TIMEOUT_MS: "5000" })).toBe(5_000);
+    expect(resolveScpTransferTimeoutMs({ OPENCLAW_SANDBOX_SCP_TIMEOUT_MS: "0" })).toBe(
+      SCP_TRANSFER_TIMEOUT_MS,
+    );
+    expect(resolveScpTransferTimeoutMs({ OPENCLAW_SANDBOX_SCP_TIMEOUT_MS: "nope" })).toBe(
+      SCP_TRANSFER_TIMEOUT_MS,
+    );
+  });
+});
 
 describe("stageSandboxMedia SCP", () => {
   it("stages bytes and both contexts through the strict bounded SCP command", async () => {
@@ -671,6 +703,49 @@ describe("stageSandboxMedia SCP", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "publishes a slow transfer that stays inside the budget",
+    async () => {
+      await withOpenClawTestState({ label: "scp-slow-success" }, async (state) => {
+        const params = remoteStageParams(state);
+        const binDir = state.path("bin");
+        await fs.mkdir(binDir);
+        // A real process that needs seconds to finish: the old fixed cutoff killed
+        // transfers like this mid-flight and skipped the attachment.
+        await fs.writeFile(
+          path.join(binDir, "scp"),
+          [
+            `#!${process.execPath}`,
+            "const fs = require('node:fs');",
+            "const target = process.argv.at(-1);",
+            "setTimeout(() => {",
+            "  fs.writeFileSync(target, 'slow but healthy bytes');",
+            "  process.exit(0);",
+            "}, 2_000);",
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+
+        await withEnvAsync(
+          {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            OPENCLAW_SANDBOX_SCP_TIMEOUT_MS: String(TEST_TRANSFER_BUDGET_MS),
+          },
+          async () => {
+            const started = Date.now();
+            const result = await stageSandboxMedia(params);
+            expect(Date.now() - started).toBeGreaterThanOrEqual(2_000);
+            const fact = params.ctx.media?.[0];
+            expect(result.staged.size).toBe(1);
+            expect(await fs.readFile(path.join(fact!.workspaceDir!, fact!.path!), "utf8")).toBe(
+              "slow but healthy bytes",
+            );
+          },
+        );
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "bounds an unattended SCP hang with the shared runner deadline",
     async () => {
       await withOpenClawTestState({ label: "scp-hung-timeout" }, async (state) => {
@@ -712,7 +787,10 @@ describe("stageSandboxMedia SCP", () => {
         );
 
         await withEnvAsync(
-          { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` },
+          {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            OPENCLAW_SANDBOX_SCP_TIMEOUT_MS: String(TEST_TRANSFER_BUDGET_MS),
+          },
           async () => {
             const spawn = vi.spyOn(execSpawn, "spawnCommandWithInvocation");
             let parentPid: number | undefined;
@@ -733,8 +811,8 @@ describe("stageSandboxMedia SCP", () => {
               expect(isPidAlive(parentPid)).toBe(true);
               expect(isPidAlive(descendantPid)).toBe(true);
               reapedByDeadline = await Promise.all([
-                waitForPidToExit(parentPid, SCP_TRANSFER_TIMEOUT_MS + 5_000),
-                waitForPidToExit(descendantPid, SCP_TRANSFER_TIMEOUT_MS + 5_000),
+                waitForPidToExit(parentPid, TEST_TRANSFER_BUDGET_MS + 5_000),
+                waitForPidToExit(descendantPid, TEST_TRANSFER_BUDGET_MS + 5_000),
               ]);
             } finally {
               // Stop any late attempt, then drain the owner before removing its fixture.
@@ -758,7 +836,9 @@ describe("stageSandboxMedia SCP", () => {
             expect(reapedByDeadline).toEqual([true, true]);
             // The bounded retry loop exhausts instead of publishing failed media.
             expect(await settled).toEqual({ value: { staged: new Map() } });
-            expect(await fs.readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(3));
+            // A deadline kill means the copy stopped progressing, so it is not retried:
+            // one bounded wait, then the attachment is skipped.
+            expect(await fs.readFile(attemptsPath, "utf8")).toBe("attempt\n");
             expect([params.ctx, params.sessionCtx]).toEqual(before);
             expect(temporaryDirectoryRemoved).toBe(true);
           },
