@@ -138,8 +138,9 @@ export async function executeMutableUpdate(
       timeoutMs: params.updateStepTimeoutMs,
     });
     await recheckSchemas(params.packageTargetSchemaVersions);
+    const emitWarning: "error" | "log" = opts.json ? "error" : "log";
     for (const warning of warnings) {
-      defaultRuntime[opts.json ? "error" : "log"](warning.message);
+      defaultRuntime[emitWarning](warning.message);
     }
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;
