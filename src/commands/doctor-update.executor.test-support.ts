@@ -51,7 +51,16 @@ export async function runDoctorUpdateChild(
         },
       );
       if (result.code !== 0 || result.cleanup !== "normal") {
-        throw new Error(result.stderr || "Doctor child did not settle normally");
+        throw new Error(
+          result.stderr ||
+            `Doctor child did not settle normally: ${JSON.stringify({
+              code: result.code,
+              cleanup: result.cleanup,
+              termination: result.termination,
+              signal: result.signal,
+              killed: result.killed,
+            })}`,
+        );
       }
       return result;
     },

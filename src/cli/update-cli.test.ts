@@ -436,7 +436,8 @@ vi.mock("../process/exec.js", async () => {
       const closed = once(child, "close");
       try {
         options.beforeInput(expectDefined(child.pid, "fixture child PID"));
-        if (argv.at(-1) === "check" && argv.includes("--update-executor")) {
+        const executorFlagIndex = argv.indexOf("--update-executor");
+        if (executorFlagIndex !== -1 && argv[executorFlagIndex + 1] === "check") {
           // A probe must not run the install/restart effect double.
           return {
             code: 0,
