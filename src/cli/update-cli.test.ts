@@ -5346,6 +5346,76 @@ describe("update-cli", () => {
     expect(pluginOutcome(jsonOutput)?.status).toBe("error");
   });
 
+  it.each([false, true])(
+    "reports a completed missing-payload repair instead of the later bulk skip (json=%s)",
+    async (json) => {
+      mockNoopPostUpdatePluginConvergence();
+      const installPath = createCaseDir("openclaw-repaired-plugin-summary");
+      fsSync.mkdirSync(installPath, { recursive: true });
+      const records = {
+        demo: { source: "npm", spec: "@example/demo", installPath, version: "1.0.0" },
+      } satisfies Record<string, PluginInstallRecord>;
+      const config = {
+        ...baseConfig,
+        plugins: { ...baseConfig.plugins, entries: { demo: { enabled: true } } },
+      } satisfies OpenClawConfig;
+      vi.mocked(readConfigFileSnapshot).mockResolvedValue(configSnapshot(config));
+      loadInstalledPluginIndexInstallRecords.mockResolvedValue(records);
+      mockFileBackedPathExists();
+      const repaired = {
+        pluginId: "demo",
+        status: "updated" as const,
+        message: 'Repaired plugin "demo".',
+      };
+      updateNpmInstalledPlugins.mockImplementation(async ({ config: current, skipIds }) => {
+        if (skipIds?.has("demo")) {
+          return {
+            config: current,
+            changed: false,
+            outcomes: [
+              {
+                pluginId: "demo",
+                status: "skipped",
+                message: 'Skipping "demo" (already updated).',
+              },
+            ],
+          };
+        }
+        fsSync.writeFileSync(
+          path.join(installPath, "package.json"),
+          JSON.stringify({
+            name: "@example/demo",
+            version: "1.0.0",
+            openclaw: { extensions: ["./index.js"] },
+          }),
+        );
+        fsSync.writeFileSync(
+          path.join(installPath, "openclaw.plugin.json"),
+          JSON.stringify({ id: "demo", configSchema: { type: "object" } }),
+        );
+        fsSync.writeFileSync(path.join(installPath, "index.js"), "module.exports = {};\n");
+        return { config: current, changed: true, outcomes: [repaired] };
+      });
+      runPostCorePluginConvergenceSpy.mockResolvedValueOnce({
+        ...postCoreConvergenceResult(),
+        installRecords: records,
+      });
+
+      await runPostCoreCommand({ yes: true, json, restart: false });
+
+      expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+      if (json) {
+        const result = lastWriteJsonCall() as UpdateRunResult | undefined;
+        expect(result?.status).toBe("ok");
+        expect(result?.postUpdate?.plugins?.status).toBe("ok");
+        expect(result?.postUpdate?.plugins?.npm?.outcomes.at(-1)).toEqual(repaired);
+      } else {
+        expect(getLogOutput()).toContain("Plugin updates: 1 updated, 0 unchanged.");
+        expect(getLogOutput()).not.toContain("1 skipped");
+      }
+    },
+  );
+
   it("prints non-fatal plugin warnings in human update output", async () => {
     mockNpmPluginOutcomes([
       {

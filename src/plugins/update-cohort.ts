@@ -173,7 +173,9 @@ export async function convergePluginReleaseCohort(params: {
     missingPayloads,
     repairedMissingPayloadIds,
     repairOutcomes,
-    updateOutcomes: update.outcomes,
+    updateOutcomes: update.outcomes.filter(
+      (outcome) => outcome.status !== "skipped" || !repairedMissingPayloadIds.has(outcome.pluginId),
+    ),
     remainingMissingPayloads: await collectMissingPluginInstallPayloads({
       records: config.plugins?.installs ?? {},
       config,

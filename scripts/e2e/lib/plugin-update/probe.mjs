@@ -269,19 +269,13 @@ function assertCorruptPluginRestored(plugins, pluginId) {
 
 function collectPluginEvidence(plugins, pluginId) {
   const outcomes = plugins.npm?.outcomes ?? [];
-  const matchingOutcomes = outcomes.filter((entry) => entry?.pluginId === pluginId);
-  const outcome =
-    matchingOutcomes.findLast(
-      (entry) =>
-        entry.status !== "skipped" || entry.message !== `Skipping "${pluginId}" (already updated).`,
-    ) ?? matchingOutcomes.at(-1);
   const warnings = plugins.warnings ?? [];
   const integrityDrifts = plugins.integrityDrifts ?? [];
   const syncErrors = (plugins.sync?.errors ?? []).filter((message) =>
     String(message).includes(pluginId),
   );
   return {
-    outcome,
+    outcome: outcomes.findLast((entry) => entry?.pluginId === pluginId),
     warning: warnings.find((entry) => entry?.pluginId === pluginId),
     integrityDrift: integrityDrifts.find((entry) => entry?.pluginId === pluginId),
     syncErrors,

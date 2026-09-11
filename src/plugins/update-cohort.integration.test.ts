@@ -118,7 +118,11 @@ describe("plugin release cohort real synchronization", () => {
             );
             if (hasSibling) {
               expect(registryRequests).toBeGreaterThan(0);
-              expect([...result.repairOutcomes, ...result.updateOutcomes]).toContainEqual(
+              expect(
+                [...result.repairOutcomes, ...result.updateOutcomes].filter(
+                  (outcome) => outcome.pluginId === "broken",
+                ),
+              ).toEqual([
                 expect.objectContaining({
                   pluginId: "broken",
                   status: sibling === "installed" ? "unchanged" : "error",
@@ -126,7 +130,7 @@ describe("plugin release cohort real synchronization", () => {
                     ? { code: "plugin-target-unavailable", currentVersion: "1.0.0" }
                     : {}),
                 }),
-              );
+              ]);
               expect(result.config.plugins?.entries?.broken?.enabled).toBe(true);
               expect(result.config.plugins?.installs?.broken).toEqual(records.broken);
               if (sibling === "installed") {
