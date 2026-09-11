@@ -117,19 +117,21 @@ export async function updatePluginsAfterCoreUpdate(params: {
     },
     warn: (msg: string) => {
       const plain = stripAnsi(msg);
-      loggedPluginWarnings.add(plain);
       if (
         plain.includes("ClawHub Security Audit") &&
         (params.json || plain.includes("Outcome: Review"))
       ) {
         clawHubTrustNotices.add(plain);
       }
-      if (!params.json && plain.includes("ClawHub") && plain.includes("╭─")) {
+      if (
+        !params.json &&
+        plain.includes("ClawHub") &&
+        plain.includes("╭─") &&
+        !loggedPluginWarnings.has(plain)
+      ) {
         runtime.log(formatPluginUpdateWarning(msg));
+        loggedPluginWarnings.add(plain);
       }
-    },
-    error: (msg: string) => {
-      loggedPluginWarnings.add(stripAnsi(msg));
     },
   };
 
@@ -177,6 +179,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     const warning = createPluginUpdateWarning({
       pluginId: entry.pluginId,
       reason: `Plugin install payload missing after update: ${formatMissingPluginPayloadReason(entry)}.`,
+      kind: "load",
     });
     warnings.push(warning);
     pluginUpdateOutcomes.push({
@@ -444,15 +447,11 @@ export async function updatePluginsAfterCoreUpdate(params: {
   }
   if (cohort.sync.summary.switchedToNpm.length > 0) {
     runtime.log(
-      theme.muted(`Restored npm plugins: ${summarizeList(cohort.sync.summary.switchedToNpm)}.`),
+      theme.muted(`Restored plugins: ${summarizeList(cohort.sync.summary.switchedToNpm)}.`),
     );
   }
   for (const warning of cohort.sync.summary.warnings) {
-    if (
-      warning.includes("ClawHub") &&
-      warning.includes("╭─") &&
-      !loggedPluginWarnings.has(stripAnsi(warning))
-    ) {
+    if (!loggedPluginWarnings.has(stripAnsi(warning))) {
       runtime.log(formatPluginUpdateWarning(warning));
       loggedPluginWarnings.add(stripAnsi(warning));
     }
@@ -472,7 +471,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     if (skipped > 0) {
       parts.push(`${skipped} skipped`);
     }
-    runtime.log(theme.muted(`npm plugins: ${parts.join(", ")}.`));
+    runtime.log(theme.muted(`Plugin updates: ${parts.join(", ")}.`));
   }
 
   for (const message of collectPluginChannelFallbackMessages(pluginUpdateOutcomes)) {

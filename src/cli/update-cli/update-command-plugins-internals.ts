@@ -14,15 +14,20 @@ export function createPluginUpdateWarning(params: {
   env?: NodeJS.ProcessEnv;
 }): PluginUpdateWarning {
   const command = formatCliCommand(
-    params.pluginId ? `openclaw plugins update ${params.pluginId}` : "openclaw update repair",
+    params.kind === "load"
+      ? "openclaw doctor --fix"
+      : params.pluginId
+        ? `openclaw plugins update ${params.pluginId}`
+        : "openclaw update repair",
     params.env,
   );
+  const nextAction = `Run \`${command}\` to ${params.kind === "load" ? "check and repair the load problem" : "retry"}.`;
   return {
     ...(params.pluginId ? { pluginId: params.pluginId } : {}),
     reason: params.reason,
     message: params.pluginId
-      ? `Plugin "${params.pluginId}" could not be ${params.kind === "load" ? "loaded" : "updated"}. Run \`${command}\` to retry.`
-      : `Plugin updates could not complete. Run \`${command}\` to retry.`,
+      ? `Plugin "${params.pluginId}" could not be ${params.kind === "load" ? "loaded" : "updated"}. ${nextAction}`
+      : `Plugin updates could not complete. ${nextAction}`,
     guidance: [command],
   };
 }

@@ -4321,8 +4321,8 @@ describe("update-cli", () => {
       const reportedSmokeWarning = {
         ...smokeWarning,
         message:
-          'Plugin "reporting-fixture" could not be loaded. Run `openclaw plugins update reporting-fixture` to retry.',
-        guidance: ["openclaw plugins update reporting-fixture"],
+          'Plugin "reporting-fixture" could not be loaded. Run `openclaw doctor --fix` to check and repair the load problem.',
+        guidance: ["openclaw doctor --fix"],
       };
       runPostCorePluginConvergenceSpy.mockResolvedValueOnce({
         ...postCoreConvergenceResult({ warnings, errored }),
@@ -4368,7 +4368,7 @@ describe("update-cli", () => {
           : [
               "",
               "Updating plugins...",
-              ...(errored ? ["npm plugins: 0 updated, 0 unchanged, 1 to retry."] : []),
+              ...(errored ? ["Plugin updates: 0 updated, 0 unchanged, 1 to retry."] : []),
               reportedRepairWarning.message,
               ...(errored ? [reportedSmokeWarning.message] : []),
               notice.message,
@@ -4838,7 +4838,9 @@ describe("update-cli", () => {
     await runPostCoreCommand({ restart: false }, { OPENCLAW_UPDATE_POST_CORE_CHANNEL: "beta" });
 
     const logs = vi.mocked(runtimeCapture.log).mock.calls.map((call) => String(call[0]));
-    expect(logs.some((line) => line.includes("npm plugins: 1 updated, 0 unchanged."))).toBe(true);
+    expect(logs.some((line) => line.includes("Plugin updates: 1 updated, 0 unchanged."))).toBe(
+      true,
+    );
     expect(
       logs.some((line) =>
         line.includes(
@@ -4847,6 +4849,37 @@ describe("update-cli", () => {
       ),
     ).toBe(true);
   });
+
+  it.each([false, true])(
+    "reports successful plugin source fallback without failing the core update (json=%s)",
+    async (json) => {
+      const fallback = "@openclaw/demo unavailable; using clawhub:@openclaw/demo instead.";
+      syncPluginsForUpdateChannel.mockImplementationOnce(
+        async (params: {
+          config: OpenClawConfig;
+          logger?: { warn?: (message: string) => void };
+        }) => {
+          params.logger?.warn?.(fallback);
+          const sync = pluginSyncResult(params.config, true, { warnings: [fallback] });
+          return { ...sync, summary: { ...sync.summary, switchedToClawHub: ["demo"] } };
+        },
+      );
+
+      await updateCommand({ yes: true, restart: false, json });
+
+      const logs = vi
+        .mocked(defaultRuntime.log)
+        .mock.calls.map(([value]) => stripAnsi(String(value)));
+      expect(logs.filter((line) => line === fallback)).toHaveLength(json ? 0 : 1);
+      if (json) {
+        expect(lastWriteJsonCall()).toMatchObject({
+          status: "ok",
+          postUpdate: { plugins: { sync: { warnings: [fallback] } } },
+        });
+      }
+      expect(listUpdateRuns({ limit: 1 })[0]).toMatchObject({ status: "succeeded" });
+    },
+  );
 
   it("uses a fail-closed integrity policy for post-core plugin updates", async () => {
     await runPostCoreCommand({ restart: false });
@@ -5216,6 +5249,11 @@ describe("update-cli", () => {
     expect(jsonOutput?.postUpdate?.plugins?.status).toBe("warning");
     expect(pluginWarning(jsonOutput)?.pluginId).toBe("demo");
     expect(pluginWarning(jsonOutput)?.reason).toContain("package.json is missing");
+    expect(pluginWarning(jsonOutput)).toMatchObject({
+      message:
+        'Plugin "demo" could not be loaded. Run `openclaw doctor --fix` to check and repair the load problem.',
+      guidance: ["openclaw doctor --fix"],
+    });
     expect(pluginOutcome(jsonOutput)?.pluginId).toBe("demo");
     expect(pluginOutcome(jsonOutput)?.status).toBe("error");
   });
@@ -7079,7 +7117,7 @@ describe("update-cli", () => {
       const command = updateCommand({ yes: true, json: true });
       if (failure === "unavailable plugin") {
         await command;
-        expect(lastWriteJsonCall()?.status).not.toBe("error");
+        expect(lastWriteJsonCall()).toMatchObject({ status: "skipped", reason: "already-current" });
         expect(updateNpmInstalledPlugins).toHaveBeenCalled();
         expect(getErrorOutput()).toContain("Plugin brave availability could not be confirmed");
       } else {
@@ -12977,17 +13015,20 @@ describe("update-cli", () => {
         },
       });
 
-      expect(lastWriteJsonCall()?.status).not.toBe("error");
       if (dryRun) {
-        expect(lastWriteJsonCall()).toMatchObject({ notes: expect.arrayContaining([detail]) });
+        expect(lastWriteJsonCall()).toMatchObject({
+          dryRun: true,
+          notes: expect.arrayContaining([detail]),
+        });
         expectNoSideEffects(serviceStop, serviceStart, serviceRestart, replaceConfigFile);
         expect(cleanupStaleManagedServiceUpdateHandoffs).not.toHaveBeenCalled();
         expect(packageInstallCommandCall()?.[0]).toBeUndefined();
         expect(sentinel).toBeNull();
       } else {
+        expect(lastWriteJsonCall()).toMatchObject({ status: "ok", mode: "npm" });
         expect(getErrorOutput()).toContain(detail);
         expect(packageInstallCommandCall()?.[0]).toBeDefined();
-        expect(sentinel?.payload.stats?.reason).not.toBe("plugin-target-unavailable");
+        expect(sentinel).toMatchObject({ payload: { status: "ok", stats: { mode: "npm" } } });
       }
     },
   );
@@ -13116,7 +13157,7 @@ describe("update-cli", () => {
                   pluginId: "telegram",
                   reason: "failed to load plugin dependency: ENOSPC",
                   message: expect.stringContaining("could not be loaded"),
-                  guidance: ["openclaw plugins update telegram"],
+                  guidance: ["openclaw doctor --fix"],
                 }),
               ]),
             },
@@ -13125,7 +13166,7 @@ describe("update-cli", () => {
       } else {
         expect(getLogOutput()).toContain("Gateway: restarted and verified.");
         expect(getLogOutput()).toContain('Plugin "telegram" could not be loaded.');
-        expect(getLogOutput()).toContain("openclaw plugins update telegram");
+        expect(getLogOutput()).toContain("openclaw doctor --fix");
         expect(getLogOutput()).not.toContain("failed to load plugin dependency: ENOSPC");
       }
     },

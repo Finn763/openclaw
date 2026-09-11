@@ -299,7 +299,11 @@ export async function maybeRestartService(params: {
   const verifyRestartedGateway = async (
     expectedGatewayVersion: string | undefined,
     expectedGatewayBuildId: string | undefined,
-    opts: { requireRunningService?: boolean; health?: GatewayRestartSnapshot } = {},
+    opts: {
+      requireRunningService?: boolean;
+      health?: GatewayRestartSnapshot;
+      recoverHealth?: boolean;
+    } = {},
   ) => {
     recordPhase("verifying");
     const verification = await verifyUpdatedGateway({
@@ -317,7 +321,7 @@ export async function maybeRestartService(params: {
       assertCurrent,
       recoverHealth: async (initialHealth, reinspect) => {
         assertCurrent();
-        if (childReadinessPending) {
+        if (childReadinessPending || opts.recoverHealth === false) {
           return { health: initialHealth, launchAgentRecovery: null };
         }
         let health = initialHealth;
@@ -602,10 +606,12 @@ export async function maybeRestartService(params: {
         throw err;
       }
       if (err instanceof GatewayRestartHealthError && !updatedInstallRestartNeedsServiceRootProof) {
+        // The installed CLI owns restart retries; observe its final health result
+        // without another native mutation.
         const healthy = await verifyRestartedGateway(
           normalizeOptionalString(activation.result.after?.version),
           normalizeOptionalString(activation.result.after?.buildId),
-          { requireRunningService: true },
+          { requireRunningService: true, recoverHealth: false },
         );
         return healthy ? "ok" : await failed("restart-health-failed");
       }
