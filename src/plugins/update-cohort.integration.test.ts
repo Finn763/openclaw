@@ -121,7 +121,10 @@ describe("plugin release cohort real synchronization", () => {
               expect([...result.repairOutcomes, ...result.updateOutcomes]).toContainEqual(
                 expect.objectContaining({
                   pluginId: "broken",
-                  status: "error",
+                  status: sibling === "installed" ? "unchanged" : "error",
+                  ...(sibling === "installed"
+                    ? { code: "plugin-target-unavailable", currentVersion: "1.0.0" }
+                    : {}),
                 }),
               );
               expect(result.config.plugins?.entries?.broken?.enabled).toBe(true);
