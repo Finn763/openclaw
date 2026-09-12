@@ -125,6 +125,15 @@ export function markInterruptedStartupRun(params: {
   };
 }
 
+/** True when the persisted row was re-authored after the replayed run was admitted. */
+function scheduleEditedAfterRun(job: CronJob, startedAt: number): boolean {
+  // `scheduleActivatedAtMs` is the durable stamp of a committed scheduling edit
+  // (schedule, enablement, pacing, trigger), so a newer one owns the cadence and
+  // next slot even when the run's own terminal row write was lost.
+  const activatedAtMs = asDateTimestampMs(job.state.scheduleActivatedAtMs);
+  return activatedAtMs !== undefined && activatedAtMs > startedAt;
+}
+
 export function restoreFinalizedStartupRun(params: {
   state: CronServiceState;
   job: CronJob;
@@ -151,8 +160,9 @@ export function restoreFinalizedStartupRun(params: {
   // Finalization writes history first, so a later one-shot slot or disable in
   // the job row owns lifecycle state when startup replays that older history.
   const scheduleOwnership =
-    job.schedule.kind === "at" &&
-    (!job.enabled || (persistedNextRunAtMs !== undefined && persistedNextRunAtMs > startedAt))
+    scheduleEditedAfterRun(job, startedAt) ||
+    (job.schedule.kind === "at" &&
+      (!job.enabled || (persistedNextRunAtMs !== undefined && persistedNextRunAtMs > startedAt)))
       ? "stale"
       : "current";
   // A once result can record no next run before a later edit retires its

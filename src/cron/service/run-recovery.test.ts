@@ -17,6 +17,7 @@ import {
 } from "../store/run-receipt-store.js";
 import type { CronJob } from "../types.js";
 import { start, stop } from "./ops-lifecycle.js";
+import { update } from "./ops-mutations.js";
 import {
   proposeCronRunRecovery,
   recomputeUnownedCronSchedules,
@@ -303,6 +304,69 @@ describe("atomic cron run recovery", () => {
         enabled: true,
         state: { nextRunAtMs: historyRetryAtMs },
       });
+    } finally {
+      stop(recovered);
+    }
+  });
+
+  it("lets a committed cadence edit outrank the run history startup replays", async () => {
+    const { storePath } = await makeStorePath();
+    const startedAtMs = Date.parse("2026-09-12T13:00:00.000Z");
+    const endedAtMs = startedAtMs + 1_000;
+    const editedAtMs = endedAtMs + 1_000;
+    const editedNextRunAtMs = editedAtMs + 60_000;
+    const hourly = (id: string) => {
+      const job = makeJob(id, startedAtMs);
+      job.schedule = { kind: "every", everyMs: 3_600_000, anchorMs: startedAtMs };
+      job.state.nextRunAtMs = startedAtMs;
+      return job;
+    };
+    const jobs = [hourly("cadence-edit-during-run"), hourly("cadence-unchanged")];
+    await writeCronStoreSnapshot({ storePath, jobs });
+    const execution = makeState(storePath, endedAtMs);
+    for (const job of jobs) {
+      const taskRunId = tryCreateCronTaskRun({ state: execution, job, startedAt: startedAtMs });
+      expect(taskRunId).toBeDefined();
+      // Terminal history commits with the next hourly slot while the separate
+      // job-row write fails, leaving the running marker behind.
+      tryFinishCronTaskRun(execution, {
+        taskRunId,
+        job,
+        event: {
+          jobId: job.id,
+          action: "finished",
+          job,
+          status: "ok",
+          runAtMs: startedAtMs,
+          durationMs: endedAtMs - startedAtMs,
+          nextRunAtMs: startedAtMs + 3_600_000,
+        },
+      });
+    }
+    const editor = makeState(storePath, editedAtMs);
+    const edited = await update(editor, jobs[0]!.id, {
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: editedAtMs },
+    });
+    expect(edited.schedule).toMatchObject({ kind: "every", everyMs: 60_000 });
+    expect(edited.state.nextRunAtMs).toBe(editedNextRunAtMs);
+    expect(edited.state.runningAtMs).toBe(startedAtMs);
+
+    const recovered = makeState(storePath, editedAtMs);
+    try {
+      await start(recovered);
+      const persisted = new Map(
+        (await loadCronStore(storePath)).jobs.map((job) => [job.id, job] as const),
+      );
+      const editedJob = persisted.get("cadence-edit-during-run");
+      expect(editedJob?.schedule).toMatchObject({ kind: "every", everyMs: 60_000 });
+      expect(editedJob?.enabled).toBe(true);
+      expect(editedJob?.state.nextRunAtMs).toBe(editedNextRunAtMs);
+      expect(editedJob?.state.runningAtMs).toBeUndefined();
+      expect(editedJob?.state.lastRunStatus).toBe("ok");
+      const untouched = persisted.get("cadence-unchanged");
+      expect(untouched?.state.nextRunAtMs).toBe(startedAtMs + 3_600_000);
+      expect(untouched?.state.runningAtMs).toBeUndefined();
+      expect(untouched?.state.lastRunStatus).toBe("ok");
     } finally {
       stop(recovered);
     }
