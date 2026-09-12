@@ -40,6 +40,7 @@ import { listWorkerProfiles } from "./environments.js";
 import { sessionCreateHandlers } from "./sessions-create.js";
 import { sessionDeleteHandlers } from "./sessions-delete.js";
 import { sessionDispatchHandlers } from "./sessions-dispatch.js";
+import { resolveTaskSuggestionHostCwd } from "./task-suggestion-host-cwd.js";
 import type {
   GatewayClient,
   GatewayRequestHandlerOptions,
@@ -483,7 +484,7 @@ export const taskSuggestionsHandlers: GatewayRequestHandlers = {
       undefined,
     );
   },
-  "taskSuggestions.create": ({ params, respond, context }) => {
+  "taskSuggestions.create": async ({ params, respond, context }) => {
     if (
       !assertValidParams(
         params,
@@ -502,18 +503,27 @@ export const taskSuggestionsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    const cfg = context.getRuntimeConfig();
     const requestedAgentId = params.agentId ? normalizeAgentId(params.agentId) : undefined;
-    const sourceOwner = resolveRequestedSessionAgentId(
-      context.getRuntimeConfig(),
-      params.sessionKey,
-      requestedAgentId,
-    );
+    const sourceOwner = resolveRequestedSessionAgentId(cfg, params.sessionKey, requestedAgentId);
     if (!sourceOwner.ok) {
       respond(false, undefined, sourceOwner.error);
       return;
     }
     const agentId = normalizeAgentId(sourceOwner.agentId);
-    const created = createTaskSuggestion({ ...params, agentId });
+    // Sandboxed sessions report container paths; the card must carry a cwd the
+    // host can resolve when it is accepted.
+    const hostCwd = await resolveTaskSuggestionHostCwd({
+      cfg,
+      sessionKey: params.sessionKey,
+      agentId,
+      cwd: params.cwd,
+    });
+    if (!hostCwd.ok) {
+      respond(false, undefined, hostCwd.error);
+      return;
+    }
+    const created = createTaskSuggestion({ ...params, cwd: hostCwd.cwd, agentId });
     if (created.status === "full") {
       respond(
         false,
