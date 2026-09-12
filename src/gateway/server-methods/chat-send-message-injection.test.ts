@@ -216,6 +216,38 @@ describe("finalizeAcceptedChatSendMessageInjection", () => {
       }),
     );
   });
+
+  it("does not fall back to a fresh turn when the run aborted the rejected steer", async () => {
+    // chat.abort withdrew this submission: falling through would redispatch the
+    // canceled input as its own turn (#145727).
+    vi.mocked(finalizeReplyMessageInjectionAttempt).mockResolvedValueOnce({
+      status: "rejected",
+      outcome: {
+        status: "rejected",
+        reason: "runtime_rejected",
+        errorMessage: "queued steering message was cancelled before delivery",
+      },
+      targetRunId: "run-1",
+    });
+    const params = makeParams();
+    params.context.chatRunState.hasAbortMarker = () => true;
+
+    await expect(finalizeAcceptedChatSendMessageInjection(params)).resolves.toBe(true);
+    expect(broadcastChatFinal).not.toHaveBeenCalled();
+    expect(params.persistUserTurnTranscriptBestEffort).not.toHaveBeenCalled();
+  });
+
+  it("keeps the fallback when a rejected steer carries no run abort", async () => {
+    vi.mocked(finalizeReplyMessageInjectionAttempt).mockResolvedValueOnce({
+      status: "rejected",
+      outcome: { status: "rejected", reason: "no_active_run" },
+      targetRunId: undefined,
+    });
+    const params = makeParams();
+    params.context.chatRunState.hasAbortMarker = () => false;
+
+    await expect(finalizeAcceptedChatSendMessageInjection(params)).resolves.toBe(false);
+  });
 });
 
 describe("createChatSendMessageInjectionStarter admission fence", () => {
@@ -632,5 +664,33 @@ describe("createChatSendMessageInjectionStarter", () => {
       )(),
     ).toBeUndefined();
     expect(beginReplyMessageInjectionTarget).not.toHaveBeenCalled();
+  });
+
+  it("carries the run's cancellation signal into the queued steer", () => {
+    // The runtime queue owner withdraws a pending steer only through this
+    // signal; omitting it lets an aborted submission reach the next model
+    // request while chat.abort reports success (#145727).
+    const runAbort = new AbortController();
+    const params = makeSteerStarterParams({ body: "withdraw me" });
+    params.abortSignal = runAbort.signal;
+
+    createChatSendMessageInjectionStarter(params)();
+
+    expect(beginReplyMessageInjectionTarget).toHaveBeenCalledWith(
+      params.target,
+      "withdraw me",
+      expect.objectContaining({
+        waitForTranscriptCommit: true,
+        abortSignal: runAbort.signal,
+      }),
+    );
+  });
+
+  it("omits the cancellation signal when the caller supplies none", () => {
+    createChatSendMessageInjectionStarter(makeSteerStarterParams({ body: "plain steer" }))();
+
+    const options = vi.mocked(beginReplyMessageInjectionTarget).mock.calls[0]?.[2];
+    expect(options).toBeDefined();
+    expect(Object.hasOwn(options as object, "abortSignal")).toBe(false);
   });
 });

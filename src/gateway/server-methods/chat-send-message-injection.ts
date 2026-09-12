@@ -51,6 +51,12 @@ export function createChatSendMessageInjectionStarter(params: {
   userTurnTranscriptRecorder: NonNullable<
     ReplyBackendQueueMessageOptions["userTurnTranscriptRecorder"]
   >;
+  /**
+   * Cancellation of this exact chat.send run. The runtime queue owner removes
+   * the pending steer when it fires, so an accepted-but-unconsumed submission
+   * cannot reach the active run's next model request after chat.abort.
+   */
+  abortSignal?: AbortSignal;
   logGateway: GatewayRequestContext["logGateway"];
 }) {
   const { p, rawMessage, supportsTaskSuggestions } = params.request;
@@ -159,6 +165,10 @@ export function createChatSendMessageInjectionStarter(params: {
         ...(params.imageOrder?.length ? { imageOrder: params.imageOrder } : {}),
         ...(replyOptionMedia?.length ? { media: replyOptionMedia } : {}),
         waitForTranscriptCommit: true,
+        // The runtime queue owner can only withdraw a pending steer through its
+        // own cancellation signal; without it an aborted submission survives to
+        // the next model request (#145727).
+        ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
         ...(debounceMs !== undefined ? { debounceMs } : {}),
         taskSuggestionDeliveryMode: supportsTaskSuggestions ? "gateway" : undefined,
         userTurnTranscriptRecorder: params.userTurnTranscriptRecorder,
@@ -221,7 +231,11 @@ export async function finalizeAcceptedChatSendMessageInjection(params: {
     inboundAudio: hasInboundAudio(finalizedCtx),
   });
   if (finalization.status === "rejected") {
-    return false;
+    // An aborted run already owns this turn's terminal: the queued steer was
+    // withdrawn (or never entered the queue) and must not resurface as a fresh
+    // follow-up turn, which would deliver input the caller canceled (#145727).
+    // Without an abort marker, nothing was enqueued and fallback stays safe.
+    return context.chatRunState.hasAbortMarker(clientRunId);
   }
   recordAcceptedSessionParticipantInput(ctx, { agentId, sessionKey, storePath });
   const channel = normalizeLowercaseStringOrEmpty(

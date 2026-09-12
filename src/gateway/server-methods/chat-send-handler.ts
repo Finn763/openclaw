@@ -433,6 +433,9 @@ async function handleChatSendWithOptions(
       imageOrder,
       documentContext: steerDocumentContext,
       userTurnTranscriptRecorder: userTurnRecorder,
+      // chat.abort for this run aborts exactly this controller; the queued steer
+      // must observe it to be withdrawn before consumption (#145727).
+      abortSignal: activeRunAbort.controller.signal,
       logGateway: context.logGateway,
     });
     const preAckReplyContextPromise =

@@ -693,3 +693,114 @@ describe("terminal-receipt steer fence isolated-gateway proof (#128971 round-8)"
     },
   );
 });
+
+describe("canceled steering submission isolated-gateway proof (#145727)", () => {
+  /**
+   * Repro shape from the report: a live run A owns the session, a second
+   * chat.send B steers it with `queueMode: "steer"`, and the client cancels B
+   * with `chat.abort` while B is accepted but not yet consumed. The live run's
+   * queue owner (mirroring the embedded queue contract) accepts the submission
+   * and withdraws it only when the Gateway hands over the run's own
+   * cancellation signal. Before the fix that signal was omitted, so B survived
+   * into the live run and the inbound fell back to its own fresh dispatch.
+   */
+  it(
+    "isolated gateway: chat.abort withdraws an accepted-but-unconsumed steer before it reaches the live run",
+    { timeout: 30_000 },
+    async () => {
+      const dir = await makeSessionDir();
+      testState.sessionStorePath = path.join(dir, "sessions.json");
+      await writeSessionStore({
+        entries: {
+          [SESSION_KEY]: {
+            sessionId: "session-steer-abort",
+            updatedAt: Date.now(),
+            status: "running",
+          },
+        },
+      });
+      const operation = createReplyOperation({
+        sessionKey: SESSION_KEY,
+        sessionId: "session-steer-abort",
+        resetTriggered: false,
+      });
+      liveOperation = { key: SESSION_KEY, op: operation as never };
+      operation.setPhase("running");
+      const queuedSteers: Array<{ text: string; signal?: AbortSignal }> = [];
+      operation.attachBackend({
+        kind: "embedded",
+        runId: "live-run-steer-abort",
+        cancel: () => {},
+        isStreaming: () => true,
+        messageInjection: {
+          isAvailable: () => true,
+          queueMessage: async (text, options) => {
+            const signal = options?.abortSignal;
+            queuedSteers.push({ text, signal });
+            options?.onQueueAccepted?.(true);
+            if (!signal) {
+              throw new Error("steering submission was queued without a cancellation signal");
+            }
+            if (signal.aborted) {
+              throw new Error("queued steering message was cancelled before delivery");
+            }
+            await new Promise<never>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => reject(new Error("queued steering message was cancelled before delivery")),
+                { once: true },
+              );
+            });
+          },
+        },
+      });
+      replyRunRegistry.bindSourceTurnId(operation, SOURCE_TURN_ID);
+
+      const runId = `idem-iso-gw-steer-abort-${randomUUID()}`;
+      const res = (await rpcReq(
+        ws,
+        "chat.send",
+        {
+          sessionKey: SESSION_KEY,
+          message: "CANCELLED_STEER_SENTINEL_steer-abort",
+          idempotencyKey: runId,
+          queueMode: "steer",
+        },
+        20_000,
+      )) as WireResponse;
+
+      expect(res.ok).toBe(true);
+      expect(res.payload?.status).toBe("started");
+      expect(res.payload?.runId).toBe(runId);
+      // Accepted by the live run, unconsumed, and not yet canceled: the
+      // acknowledged steering submission reached the queue with its signal.
+      expect(queuedSteers).toHaveLength(1);
+      const queued = queuedSteers.at(0);
+      expect(queued?.text).toBe("CANCELLED_STEER_SENTINEL_steer-abort");
+      expect(queued?.signal).toBeDefined();
+      expect(queued?.signal?.aborted).toBe(false);
+
+      const abortRes = (await rpcReq(
+        ws,
+        "chat.abort",
+        { sessionKey: SESSION_KEY, runId },
+        20_000,
+      )) as WireResponse;
+      expect(abortRes.ok).toBe(true);
+      expect(abortRes.payload).toMatchObject({ aborted: true, runIds: [runId] });
+
+      // The queue owner observed the cancellation of that exact run.
+      await vi.waitFor(() => expect(queued?.signal?.aborted).toBe(true), {
+        interval: 10,
+        timeout: 5_000,
+      });
+      // Quiet-period check: the withdrawn submission must not resurface as a
+      // fresh follow-up turn of its own.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 300);
+      });
+      expect(dispatchCapture.calls).toBe(0);
+      expect(resolverCapture.calls).toBe(0);
+    },
+  );
+});
