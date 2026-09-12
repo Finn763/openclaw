@@ -110,7 +110,7 @@ suite.define(() => {
     });
   });
 
-  it("shows and changes this chat's account without changing the default for new chats", async () => {
+  it.each(["pointer", "keyboard"])("changes only this chat's account (%s)", async (input) => {
     const artifactRoot = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
     const artifactDir = artifactRoot
       ? createControlUiE2eArtifactDir("chat-model-accounts", artifactRoot)
@@ -190,9 +190,9 @@ suite.define(() => {
         const model = composer.locator('[data-chat-model-select="true"]');
         await expect.poll(() => model.getAttribute("aria-busy")).toBe("false");
         await model.click();
-        const account = composer.locator(".chat-model-account");
-        const picker = account.locator("wa-dropdown");
-        const trigger = picker.locator("[data-chat-account-trigger]");
+        const account = composer.locator("[data-chat-account-selection]");
+        const picker = account;
+        const trigger = picker.locator("[data-chat-account-group-toggle]");
         await expect.poll(() => trigger.textContent()).toContain(personal.label);
         for (const width of [320, 768, 1280]) {
           await page.setViewportSize({ width, height: 900 });
@@ -210,29 +210,47 @@ suite.define(() => {
           }
         }
         await trigger.click();
-        const more = picker.getByRole("menuitem", {
-          name: "Load more saved accounts",
-          exact: true,
-        });
+        const more = picker.locator('[data-chat-account-option="more"]');
         await expect.poll(() => more.isVisible()).toBe(true);
-        await page.keyboard.press("Escape");
+        await trigger.click();
         await expect.poll(() => more.isVisible()).toBe(false);
         await expect.poll(() => account.isVisible()).toBe(true);
-        await expect
-          .poll(() => trigger.evaluate((element) => element === document.activeElement))
-          .toBe(true);
+        await expect.poll(() => trigger.getAttribute("aria-expanded")).toBe("false");
+        const refreshRequests = await gateway.getRequests("users.listModelAccounts");
+        if (input === "keyboard") {
+          await gateway.deferNext("users.listModelAccounts", {});
+        }
         await trigger.press("Enter");
         await expect.poll(() => more.isVisible()).toBe(true);
-        await expect
-          .poll(() =>
-            picker
-              .locator('[data-chat-account-option="current"]')
-              .evaluate((element) => element === document.activeElement),
-          )
-          .toBe(true);
+        if (input === "keyboard") {
+          await gateway.waitForRequest("users.listModelAccounts", {
+            after: refreshRequests.length,
+          });
+          const loading = picker.locator('[data-chat-account-option="loading"]');
+          await expect.poll(() => loading.isVisible()).toBe(true);
+          await more.focus();
+          await gateway.resolveDeferred("users.listModelAccounts", {
+            profileId: "test-person",
+            accounts: [personal],
+            nextCursor: "accounts-page-2",
+            links: [{ provider: "openai", authProfileId: work.authProfileId, updatedAt: 1 }],
+          });
+          await expect.poll(() => loading.isVisible()).toBe(false);
+        }
+        expect(
+          await picker
+            .locator('[data-chat-account-option="current"]')
+            .getAttribute("aria-selected"),
+        ).toBe("true");
         const inventoryRequests = await gateway.getRequests("users.listModelAccounts");
         await gateway.deferNext("users.listModelAccounts", { cursor: "accounts-page-2" });
-        await more.click();
+        if (input === "keyboard") {
+          // Refresh must preserve the action focused before Loading disappeared.
+          await page.keyboard.press("Enter");
+          expect(page.url()).toContain("/chat/");
+        } else {
+          await more.click();
+        }
         const nextPage = await gateway.waitForRequest("users.listModelAccounts", {
           after: inventoryRequests.length,
         });
@@ -243,7 +261,9 @@ suite.define(() => {
           accounts: [work],
           links: [{ provider: "openai", authProfileId: work.authProfileId, updatedAt: 1 }],
         });
-        const workOption = picker.getByRole("menuitemradio", { name: work.label, exact: true });
+        const workOption = picker.locator(
+          `[data-chat-account-option="account:${work.authProfileId}"]`,
+        );
         await expect.poll(() => workOption.isVisible()).toBe(true);
         if (artifactDir) {
           await page.screenshot({
@@ -251,12 +271,14 @@ suite.define(() => {
             path: `${artifactDir}/chat-account-page-2.png`,
           });
         }
-        await page.keyboard.press("Home");
-        await page.keyboard.press("ArrowDown");
-        await expect
-          .poll(() => workOption.evaluate((element) => element === document.activeElement))
-          .toBe(true);
-        await page.keyboard.press("Enter");
+        await trigger.click();
+        const search = composer.locator("[data-chat-model-search]");
+        await search.fill("account");
+        await expect.poll(() => workOption.isVisible()).toBe(true);
+        await search.fill(work.label);
+        await search.press("ArrowDown");
+        await expect.poll(() => workOption.getAttribute("data-chat-model-highlighted")).toBe("");
+        await search.press("Enter");
         const patch = await gateway.waitForRequest("sessions.patch");
         expect(patch.params).toEqual({
           key: sessionKey,

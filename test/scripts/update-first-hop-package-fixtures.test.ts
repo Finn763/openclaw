@@ -219,8 +219,24 @@ describe("first-hop package fixtures", () => {
     }
   });
 
+  it.each(["corrupt member", "missing advertised inventory"])(
+    "does not hide %s when producing future fixtures",
+    async (fault) => {
+      const root = makePackageFixture();
+      await writePackageDistInventory(root);
+      if (fault === "missing advertised inventory") {
+        fs.rmSync(path.join(root, "dist/postinstall-content-inventory.json"));
+        expect(() => markFutureUpdateFixture(root)).toThrow("ENOENT");
+      } else {
+        fs.writeFileSync(path.join(root, "dist/index.js"), "export const unexpected = true;\n");
+        markFutureUpdateFixture(root);
+        expect(await collectPackageDistContentInventoryErrors(root)).not.toEqual([]);
+      }
+    },
+  );
+
   it.each([false, true])(
-    "packs distinct self-update targets with content inventory=%s",
+    "packs distinct self-update targets without changing the candidate artifact (content inventory: %s)",
     async (contentInventory) => {
       const root = tempDirs.make("openclaw-same-schema-fixtures-");
       fs.cpSync(makePackageFixture(), path.join(root, "package"), { recursive: true });
@@ -249,22 +265,20 @@ describe("first-hop package fixtures", () => {
           sequence === 0
             ? packFirstHopUpdateFixture(input, output, sequence)
             : packFutureUpdateFixture(input, output, sequence);
+        const unpacked = path.join(root, `unpacked-${sequence}`);
+        fs.mkdirSync(unpacked);
+        execFileSync("tar", ["-xzf", output, "-C", unpacked]);
+        expect(
+          await collectPackageDistContentInventoryErrors(path.join(unpacked, "package")),
+        ).toEqual([]);
+        expect(
+          fs.existsSync(path.join(unpacked, "package", "dist/postinstall-content-inventory.json")),
+        ).toBe(contentInventory);
         const pkg = JSON.parse(
           execFileSync("tar", ["-xOf", output, "package/package.json"], { encoding: "utf8" }),
         );
         expect(pkg.version).toBe(receipt.targetVersion);
         expect(pkg.dependencies).toEqual({ "@openclaw/ai": "2026.8.1" });
-        const unpacked = path.join(root, `unpacked-${sequence}`);
-        fs.mkdirSync(unpacked);
-        execFileSync("tar", ["-xzf", output, "-C", unpacked]);
-        expect(
-          fs.existsSync(
-            path.join(unpacked, "package", "dist", "postinstall-content-inventory.json"),
-          ),
-        ).toBe(contentInventory);
-        await expect(
-          collectPackageDistContentInventoryErrors(path.join(unpacked, "package")),
-        ).resolves.toEqual([]);
         expect(
           execFileSync("tar", ["-xOf", output, "package/dist/index.js"], { encoding: "utf8" }),
         ).toBe("export {};\n");
