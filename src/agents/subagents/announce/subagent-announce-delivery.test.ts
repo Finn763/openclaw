@@ -2174,6 +2174,169 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     );
   });
 
+  it("excludes hidden runtime context media from the payload fallback", async () => {
+    const callGateway = createGatewayMock({
+      result: {
+        payloads: [
+          {
+            text: [
+              "Image ready",
+              "MEDIA:/tmp/visible-directive.png",
+              INTERNAL_RUNTIME_CONTEXT_BEGIN,
+              "This context is runtime-generated, not user-authored. Keep internal details private.",
+              "MEDIA:/tmp/hidden-context.png",
+              INTERNAL_RUNTIME_CONTEXT_END,
+            ].join("\n"),
+            mediaUrls: ["/tmp/structured.png"],
+          },
+        ],
+      },
+    });
+    const sendMessage = createSendMessageMock();
+
+    const result = await deliverDiscordDirectMessageCompletion({
+      callGateway,
+      sendMessage,
+      internalEvents: taskCompletionEvents({ childSessionId: "child-session-id" }),
+    });
+
+    expectDeliveryPath(result, "direct");
+    // Hidden context may not contribute attachments; visible directives still do.
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Image ready",
+        mediaUrls: ["/tmp/structured.png", "/tmp/visible-directive.png"],
+      }),
+    );
+  });
+
+  it("excludes hidden runtime context media from the completion event result", async () => {
+    const callGateway = createPayloadGatewayMock();
+    const sendMessage = createSendMessageMock();
+
+    const result = await deliverDiscordDirectMessageCompletion({
+      callGateway,
+      sendMessage,
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        result: [
+          "Generated 1 image.",
+          INTERNAL_RUNTIME_CONTEXT_BEGIN,
+          "This context is runtime-generated, not user-authored. Keep internal details private.",
+          "MEDIA:/tmp/hidden-context.png",
+          INTERNAL_RUNTIME_CONTEXT_END,
+        ].join("\n"),
+      }),
+    });
+
+    expectDeliveryPath(result, "direct");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Generated 1 image." }),
+    );
+    expect(mockCallArg(sendMessage, 0, 0)).not.toHaveProperty("mediaUrls");
+  });
+
+  it("delivers a visible MEDIA directive from the completion event result", async () => {
+    const callGateway = createPayloadGatewayMock();
+    const sendMessage = createSendMessageMock();
+
+    const result = await deliverDiscordDirectMessageCompletion({
+      callGateway,
+      sendMessage,
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        result: "Generated 1 image.\nMEDIA:/tmp/visible-directive.png",
+      }),
+    });
+
+    expectDeliveryPath(result, "direct");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Generated 1 image.",
+        mediaUrls: ["/tmp/visible-directive.png"],
+      }),
+    );
+  });
+
+  it("settles completion media at the complete-payload boundary before mirroring settles", async () => {
+    const callGateway = createPayloadGatewayMock();
+    let releaseMirror!: () => void;
+    const mirrorPending = new Promise<void>((resolve) => {
+      releaseMirror = resolve;
+    });
+    let resolvePayloadSettled!: () => void;
+    const payloadSettled = new Promise<void>((resolve) => {
+      resolvePayloadSettled = resolve;
+    });
+    const onDeliveryResult = vi.fn(() => resolvePayloadSettled());
+    const sendMessage = vi.fn(async (params: Parameters<typeof runtimeSendMessage>[0]) => {
+      // Per-attachment platform evidence arrives first and must not settle the
+      // batch: a later attachment can still fail.
+      await params.onDeliveryResult?.({ channel: "discord", messageId: "msg-1" });
+      expect(onDeliveryResult).not.toHaveBeenCalled();
+      // The complete-payload boundary reports the finished media fanout while
+      // transcript mirroring still holds sendMessage open.
+      params.onDeliveredPayload?.({
+        text: "Generated 1 image.",
+        mediaUrls: ["/tmp/generated-daily.png"],
+      });
+      await mirrorPending;
+      return {
+        channel: "discord",
+        to: "dm:U123",
+        via: "direct" as const,
+        mediaUrl: null,
+        result: { channel: "discord", messageId: "msg-2" },
+      };
+    }) as unknown as typeof runtimeSendMessage;
+
+    const delivery = deliverDiscordDirectMessageCompletion({
+      callGateway,
+      sendMessage,
+      onDeliveryResult,
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        result: "Generated 1 image.",
+        mediaUrls: ["/tmp/generated-daily.png"],
+      }),
+    });
+    await payloadSettled;
+
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult).toHaveBeenCalledWith(
+      expect.objectContaining({ delivered: true, path: "direct", deliveredAt: expect.any(Number) }),
+    );
+    releaseMirror();
+    await expect(delivery).resolves.toMatchObject({ delivered: true, path: "direct" });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a settled media batch delivered when later send bookkeeping fails", async () => {
+    const callGateway = createPayloadGatewayMock();
+    const onDeliveryResult = vi.fn();
+    const sendMessage = vi.fn(async (params: Parameters<typeof runtimeSendMessage>[0]) => {
+      params.onDeliveredPayload?.({
+        text: "Generated 1 image.",
+        mediaUrls: ["/tmp/generated-daily.png"],
+      });
+      throw new Error("post-send bookkeeping failed");
+    }) as unknown as typeof runtimeSendMessage;
+
+    const result = await deliverDiscordDirectMessageCompletion({
+      callGateway,
+      sendMessage,
+      onDeliveryResult,
+      internalEvents: taskCompletionEvents({
+        childSessionId: "child-session-id",
+        result: "Generated 1 image.",
+        mediaUrls: ["/tmp/generated-daily.png"],
+      }),
+    });
+
+    expectRecordFields(result, { delivered: true, path: "direct" });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+  });
+
   it("delivers a generic notice for failed subagent placeholder output", async () => {
     const callGateway = createPayloadGatewayMock();
     const sendMessage = createSendMessageMock();
