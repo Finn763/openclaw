@@ -34,11 +34,15 @@ describe("marker bytes in input never exempt a value from masking (#142821)", ()
     );
   });
 
-  it("passes a real marker mask through unchanged", () => {
+  it("masks even a whole value shaped like a produced mark (shape never proves provenance)", () => {
+    // isRedactionProvenanceMask proves string shape only, never that this encoder
+    // produced the value (#142821 review): raw fields and registered matches are
+    // untrusted, so a complete mark-shaped secret is masked instead of passing through.
     const placeholder = markRedactionProvenance("***");
-    const hint = markRedactionProvenance("sk-abc…0xyz");
-    expect(redactPassword(placeholder)).toBe(placeholder);
-    expect(redactPassword(hint)).toBe(hint);
+    const hint = markRedactionProvenance("pwP1a…z8x2");
+    expect(redactPassword(placeholder)).toBe("***");
+    expect(redactPassword(hint)).toBe("***");
+    expect(redactPassword(placeholder)).not.toBe(placeholder);
   });
 
   it("masks a registered secret whose own bytes carry the marker", () => {

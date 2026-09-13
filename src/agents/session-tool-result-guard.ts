@@ -5,7 +5,11 @@
  */
 import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { escapeRedactionProvenanceLiterals } from "@openclaw/normalization-core/redaction-provenance";
+import {
+  escapeRawRedactionProvenanceLiterals,
+  escapeRedactionProvenanceLiterals,
+  hasRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { publishTranscriptUpdate } from "../config/sessions/session-accessor.js";
@@ -181,11 +185,16 @@ function redactPersistedDetailString(
   maxChars = MAX_PERSISTED_DETAIL_STRING_CHARS,
   redactionConfig?: ToolResultDetailRedactionConfig,
 ): string {
-  return escapeRedactionProvenanceLiterals(
-    withRedactionProvenance(() =>
-      redactPersistedDetailStringUnmarked(value, maxChars, redactionConfig),
-    ),
+  // Escape raw literals first so user-typed marks cannot survive as provenance (#142821
+  // review); when no genuine mark results the original bytes are stored untouched.
+  const escapedRaw = escapeRawRedactionProvenanceLiterals(value);
+  const redacted = withRedactionProvenance(() =>
+    redactPersistedDetailStringUnmarked(escapedRaw, maxChars, redactionConfig),
   );
+  if (!hasRedactionProvenance(redacted)) {
+    return value;
+  }
+  return escapeRedactionProvenanceLiterals(redacted);
 }
 
 function redactPersistedDetailStringUnmarked(
@@ -259,11 +268,16 @@ function redactPersistedDetailValueUnmarked(
   redactionConfig?: ToolResultDetailRedactionConfig,
 ): unknown {
   if (typeof value === "string") {
-    return escapeRedactionProvenanceLiterals(
-      redactionKey
-        ? redactSensitiveFieldValueWithConfig(redactionKey, value, redactionConfig)
-        : redactToolPayloadTextWithConfig(value, redactionConfig),
-    );
+    // Escape raw literals before redaction so user-typed marks cannot become
+    // provenance; mark-free leaves stay byte-identical (#142821 review).
+    const escapedRaw = escapeRawRedactionProvenanceLiterals(value);
+    const redacted = redactionKey
+      ? redactSensitiveFieldValueWithConfig(redactionKey, escapedRaw, redactionConfig)
+      : redactToolPayloadTextWithConfig(escapedRaw, redactionConfig);
+    if (!hasRedactionProvenance(redacted)) {
+      return value;
+    }
+    return escapeRedactionProvenanceLiterals(redacted);
   }
   if (
     redactionKey &&
