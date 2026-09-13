@@ -11,6 +11,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { runSecretsConfigureInteractive } from "./configure.js";
+import { SECRETS_PLAN_SHARED_PROTOCOL_VERSION } from "./plan.js";
 
 const confirmMock = vi.hoisted(() => vi.fn());
 const selectMock = vi.hoisted(() => vi.fn());
@@ -120,8 +121,10 @@ it.each([true, false])(
 
       if (storePresent) {
         const parsed = JSON.parse(stdout) as {
-          plan: { targets: Array<Record<string, unknown>> };
+          plan: { protocolVersion: number; targets: Array<Record<string, unknown>> };
         };
+        // Shared ownership must travel under the revision released readers reject.
+        expect(parsed.plan.protocolVersion).toBe(SECRETS_PLAN_SHARED_PROTOCOL_VERSION);
         expect(parsed.plan.targets).toEqual([
           expect.objectContaining({
             type: "auth-profiles.api_key.key",

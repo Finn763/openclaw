@@ -5,7 +5,6 @@ import { log, confirm, select, text } from "@clack/prompts";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import {
   normalizeOptionalLowercaseString,
-  normalizeOptionalString,
   normalizeStringifiedOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { normalizeCsvOrLooseStringList } from "@openclaw/normalization-core/string-normalization";
@@ -37,6 +36,7 @@ import {
   buildConfigureCandidatesForScope,
   buildSecretsConfigurePlan,
   collectConfigureProviderChanges,
+  configureCandidateKey,
   hasConfigurePlanChanges,
   type ConfigureCandidate,
 } from "./configure-plan.js";
@@ -269,21 +269,6 @@ async function promptOptionalPositiveInt(params: {
     params.max,
   );
   return parsed;
-}
-
-function configureCandidateKey(candidate: {
-  configFile: "openclaw.json" | "auth-profile-store";
-  path: string;
-  agentId?: string;
-  authProfileStore?: string;
-}): string {
-  if (candidate.configFile === "auth-profile-store") {
-    if (candidate.authProfileStore === "shared") {
-      return `auth-profiles:shared:${candidate.path}`;
-    }
-    return `auth-profiles:${normalizeOptionalString(candidate.agentId) ?? ""}:${candidate.path}`;
-  }
-  return `openclaw:${candidate.path}`;
 }
 
 function hasSourceChoice(

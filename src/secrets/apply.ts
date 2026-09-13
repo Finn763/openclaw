@@ -11,7 +11,11 @@ import {
   loadPersistedAuthProfileStore,
   loadPersistedSharedAuthProfileStore,
 } from "../agents/auth-profiles/persisted.js";
-import { resolveAuthProfileDatabasePath } from "../agents/auth-profiles/sqlite.js";
+import {
+  readPersistedAuthProfileStoreRaw,
+  readPersistedSharedAuthProfileStoreRaw,
+  resolveAuthProfileDatabasePath,
+} from "../agents/auth-profiles/sqlite.js";
 import { saveAuthProfileStoreIfPersistenceSnapshotMatches } from "../agents/auth-profiles/store-runtime.js";
 import {
   captureAuthProfileStorePersistenceSnapshot,
@@ -558,7 +562,7 @@ function resolveAuthStoreForTarget(params: {
   env: NodeJS.ProcessEnv;
   authStoreByPath: Map<string, Record<string, unknown>>;
   authStoreTargetByPath: Map<string, AuthProfileStoreTarget>;
-}): { path: string; store: MutableAuthProfileStore } {
+}): { path: string; store: MutableAuthProfileStore; authStoreTarget: AuthProfileStoreTarget } {
   const agentId = (params.target.agentId ?? "").trim();
   if (!agentId) {
     throw new Error(`Missing required agentId for auth-profiles target ${params.target.path}.`);
@@ -580,7 +584,14 @@ function resolveAuthStoreForTarget(params: {
   const store = ensureMutableAuthStore(isRecord(loaded) ? loaded : undefined);
   params.authStoreByPath.set(authStorePath, store);
   params.authStoreTargetByPath.set(authStorePath, authStoreTarget);
-  return { path: authStorePath, store };
+  return { path: authStorePath, store, authStoreTarget };
+}
+
+/** Reads the persisted credential row without the normalization the loaders apply. */
+function readPersistedAuthStoreRaw(authStoreTarget: AuthProfileStoreTarget): unknown {
+  return authStoreTarget.kind === "shared"
+    ? readPersistedSharedAuthProfileStoreRaw(authStoreTarget.env)
+    : readPersistedAuthProfileStoreRaw(authStoreTarget.agentDir);
 }
 
 function resolveAuthStoreTarget(params: {
@@ -682,7 +693,7 @@ function applyAuthProfileTargetMutation(params: {
   if (params.resolved.entry.configFile !== "auth-profile-store") {
     return false;
   }
-  const { store } = resolveAuthStoreForTarget({
+  const { store, authStoreTarget } = resolveAuthStoreForTarget({
     target: params.target,
     nextConfig: params.nextConfig,
     stateDir: params.stateDir,
@@ -708,7 +719,13 @@ function applyAuthProfileTargetMutation(params: {
     }
     const wroteRef = setPathCreateStrict(store, refPathTokens, params.target.ref);
     const deletedPlaintext = deletePathStrict(store, targetPathSegments);
-    changed = changed || wroteRef || deletedPlaintext;
+    // The loader drops a plaintext sibling field whenever its ref exists, so a raw row
+    // can still hold plaintext that `deletePathStrict` cannot see. Persisted residue
+    // counts as a pending change: saving the normalized store is what removes it, and
+    // reporting "no change" here is what left the raw plaintext behind.
+    const persistedResidue =
+      getPath(readPersistedAuthStoreRaw(authStoreTarget), targetPathSegments) != null;
+    changed = changed || wroteRef || deletedPlaintext || persistedResidue;
     return changed;
   }
   const previous = getPath(store, targetPathSegments);
