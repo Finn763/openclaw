@@ -72,15 +72,23 @@ describe("redaction provenance is unambiguous against literal text", () => {
     expect(replaceRedactionProvenance(literal, PLACEHOLDER)).toBe(literal);
   });
 
-  it("escapes literal delimiter text and restores it on replay", () => {
+  it("leaves mark-free literal delimiter text byte-identical (no genuine mark, no rewrite)", () => {
+    // Non-mask bodies are never genuine marks (#142821): with no genuine mark present
+    // the string is raw/legacy history and must round-trip byte-identical (#142821 review).
     const literal = `keep ${REDACTION_PROVENANCE_START}example${REDACTION_PROVENANCE_END} literal`;
-    const stored = escapeRedactionProvenanceLiterals(literal);
-    expect(stored).not.toBe(literal);
-    // Every literal escape byte is doubled, so no unescaped opener survives.
-    expect(stored).toContain(
-      `${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_ESCAPE}⟦openclaw:redacted:1⟧`,
+    expect(escapeRedactionProvenanceLiterals(literal)).toBe(literal);
+    expect(replaceRedactionProvenance(literal, PLACEHOLDER)).toBe(literal);
+    expect(stripRedactionProvenance(literal)).toBe(literal);
+  });
+
+  it("escapes literals surrounding a genuine mark and restores them on replay", () => {
+    const literal = `keep ${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_ESCAPE}b`;
+    const stored = `${literal} ${markRedactionProvenance("***")}`;
+    // Already-escaped literals stay escaped; the genuine mark is preserved.
+    expect(escapeRedactionProvenanceLiterals(stored)).toBe(stored);
+    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(
+      `keep ${REDACTION_PROVENANCE_ESCAPE}b ${PLACEHOLDER}`,
     );
-    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(literal);
   });
 
   it("leaves a produced mask exactly as it is when escaping runs again", () => {

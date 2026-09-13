@@ -1,7 +1,6 @@
 import { isSensitiveUrlQueryParamName } from "@openclaw/net-policy/redact-sensitive-url";
 import {
   containsRedactionProvenanceSyntax,
-  isRedactionProvenanceMask,
   markRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 // Redaction helpers scrub secrets and sensitive identifiers from log output.
@@ -268,12 +267,11 @@ function usesBuiltInRedactPatterns(value?: readonly RedactPattern[]): boolean {
 }
 
 function maskToken(token: string): string {
-  // Only a value that is nothing but one mask this encoder produced passes through:
-  // an input-controlled substring that looks like a mark is not evidence that masking
-  // already ran, so it is masked like any other value (#142821 review).
-  if (isRedactionProvenanceMask(token)) {
-    return token;
-  }
+  // Shape never proves trusted producer output (#142821 review): raw sensitive
+  // fields and registered-secret matches are untrusted input, so even a whole
+  // value that looks like a complete mark is masked like any other value. Only
+  // masks this pass just built (via maskProvenance/markRedactionProvenance) may
+  // carry provenance; bare "***" stays bare for idempotence.
   if (token === "***") {
     // Already-masked input is not a mask this pass produced, so it carries no
     // provenance: only bytes we redact now can claim to be redaction output.

@@ -5,7 +5,11 @@
  * the only call sites that opt into redaction provenance: every mask they produce is
  * wrapped for replay, and replay rewrites only wrapped spans (#142821).
  */
-import { escapeRedactionProvenanceLiterals } from "@openclaw/normalization-core/redaction-provenance";
+import {
+  escapeRawRedactionProvenanceLiterals,
+  escapeRedactionProvenanceLiterals,
+  hasRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readLoggingConfig } from "../logging/config.js";
 import { redactSourceInputTextWithConfig } from "../logging/redact-source.js";
@@ -27,9 +31,20 @@ function resolveTranscriptLoggingConfig(cfg?: OpenClawConfig) {
  * One persisted transcript string: masks are marked for replay, and literal bytes that
  * could be read as a mark are escaped, so replay can never mistake history for a mask
  * and repeated passes leave the bytes alone (#142821).
+ *
+ * Raw input is escaped first (every escape byte doubled), so a user-typed complete
+ * mark cannot survive as a genuine mark; redaction then produces fresh single marks,
+ * and the final escape fixes literal runs to a fixed point. When no genuine mark was
+ * produced the original raw bytes are stored, so mark-free rows stay byte-identical
+ * and legacy history is never rewritten (#142821 review).
  */
-function encodePersistedTranscriptText(redact: () => string): string {
-  return escapeRedactionProvenanceLiterals(withRedactionProvenance(redact));
+function encodePersistedTranscriptText(raw: string, redactEscaped: (escapedRaw: string) => string): string {
+  const escapedRaw = escapeRawRedactionProvenanceLiterals(raw);
+  const redacted = withRedactionProvenance(() => redactEscaped(escapedRaw));
+  if (!hasRedactionProvenance(redacted)) {
+    return raw;
+  }
+  return escapeRedactionProvenanceLiterals(redacted);
 }
 
 export function redactTranscriptText(
@@ -39,10 +54,10 @@ export function redactTranscriptText(
 ): string {
   const loggingConfig = resolveTranscriptLoggingConfig(cfg);
   // Persisted masks carry explicit provenance so replay never has to guess (#142821).
-  return encodePersistedTranscriptText(() =>
+  return encodePersistedTranscriptText(value, (escaped) =>
     modelVisibleToolResult
-      ? redactModelVisibleToolPayloadTextWithConfig(value, loggingConfig)
-      : redactToolPayloadTextWithConfig(value, loggingConfig),
+      ? redactModelVisibleToolPayloadTextWithConfig(escaped, loggingConfig)
+      : redactToolPayloadTextWithConfig(escaped, loggingConfig),
   );
 }
 
@@ -53,22 +68,25 @@ export function redactTranscriptStructuredFieldValue(
   modelVisibleToolResult = false,
 ): string {
   // Preserve pagination state only in transcripts; value-pattern and global log redaction remain.
-  return encodePersistedTranscriptText(() =>
-    /^(?:next[_-]?)?page[_-]?token$|^page[_-]?cursor$/i.test(key)
-      ? redactTranscriptText(value, cfg, modelVisibleToolResult)
-      : modelVisibleToolResult
-        ? redactModelVisibleSensitiveFieldValueWithConfig(
-            key,
-            value,
-            resolveTranscriptLoggingConfig(cfg),
-          )
-        : redactSensitiveFieldValueWithConfig(key, value, resolveTranscriptLoggingConfig(cfg)),
+  // Page-token values already encode via redactTranscriptText: delegate directly to avoid
+  // double-escaping already-encoded marks.
+  if (/^(?:next[_-]?)?page[_-]?token$|^page[_-]?cursor$/i.test(key)) {
+    return redactTranscriptText(value, cfg, modelVisibleToolResult);
+  }
+  return encodePersistedTranscriptText(value, (escaped) =>
+    modelVisibleToolResult
+      ? redactModelVisibleSensitiveFieldValueWithConfig(
+          key,
+          escaped,
+          resolveTranscriptLoggingConfig(cfg),
+        )
+      : redactSensitiveFieldValueWithConfig(key, escaped, resolveTranscriptLoggingConfig(cfg)),
   );
 }
 
 /** Source input text is persisted too, so its masks need the same provenance. */
 export function redactTranscriptSourceInputText(value: string, cfg?: OpenClawConfig): string {
-  return encodePersistedTranscriptText(() =>
-    redactSourceInputTextWithConfig(value, resolveTranscriptLoggingConfig(cfg)),
+  return encodePersistedTranscriptText(value, (escaped) =>
+    redactSourceInputTextWithConfig(escaped, resolveTranscriptLoggingConfig(cfg)),
   );
 }
