@@ -44,7 +44,6 @@ import {
   resolveRequesterSessionActivity,
 } from "./subagent-announce-active-wake.js";
 import {
-  deliverCompletionDirect,
   hasMessagingToolDeliveryToSource,
   isDirectMessageDeliveryTarget,
   isGatewayAgentRunPending,
@@ -68,6 +67,7 @@ import {
   resolveExternalBestEffortDeliveryTarget,
   resolveQueueSettings,
 } from "./subagent-announce-delivery.runtime.js";
+import { createTextCompletionDirectDelivery } from "./subagent-announce-direct-text-fallback.js";
 import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
 import {
   resolveCompletionDeliveryOrigins,
@@ -248,25 +248,18 @@ export async function sendSubagentAnnounceDirectly(params: {
         disposition: "intentional_non_delivery",
       };
     }
-    const tryTextCompletionDirectDelivery = (
-      agentResult?: { payloads?: unknown },
-      contentKind: "completed_result" | "failed_notice" = hasFailedTrustedSubagentCompletion
-        ? "failed_notice"
-        : "completed_result",
-    ) =>
-      deliverCompletionDirect({
-        cfg,
-        requesterSessionKey: canonicalRequesterSessionKey,
-        requesterAgentId: params.requesterAgentId,
-        directIdempotencyKey: params.directIdempotencyKey,
-        deliveryTarget,
-        internalEvents: params.internalEvents,
-        contentKind,
-        signal: params.signal,
-        agentResult,
-        onDeliveryResult: params.onDeliveryResult,
-        isSourceSessionEffectsAllowed: isCompletionDeliveryAllowed,
-      });
+    const tryTextCompletionDirectDelivery = createTextCompletionDirectDelivery({
+      cfg,
+      requesterSessionKey: canonicalRequesterSessionKey,
+      requesterAgentId: params.requesterAgentId,
+      directIdempotencyKey: params.directIdempotencyKey,
+      deliveryTarget,
+      internalEvents: params.internalEvents,
+      signal: params.signal,
+      onDeliveryResult: params.onDeliveryResult,
+      isSourceSessionEffectsAllowed: isCompletionDeliveryAllowed,
+      defaultContentKind: textCompletionDirectDeliveryKind,
+    });
     // Synthetic requester-settle turns must not inherit a tool-only mode that suppresses the final.
     const completionSourceReplyDeliveryMode = parentOnly
       ? "automatic"
@@ -451,10 +444,7 @@ export async function sendSubagentAnnounceDirectly(params: {
         isSubagentCompletion &&
         directCompletionFallbackKind
       ) {
-        const textDelivery = await tryTextCompletionDirectDelivery(
-          undefined,
-          directCompletionFallbackKind,
-        );
+        const textDelivery = await tryTextCompletionDirectDelivery(directCompletionFallbackKind);
         if (textDelivery) {
           return textDelivery;
         }
@@ -593,8 +583,8 @@ export async function sendSubagentAnnounceDirectly(params: {
       !hasMessagingToolDelivery
     ) {
       const textDelivery = await tryTextCompletionDirectDelivery(
-        directAnnounceResult ?? undefined,
         textCompletionDirectDeliveryKind,
+        directAnnounceResult ?? undefined,
       );
       if (textDelivery) {
         return textDelivery;
@@ -639,8 +629,8 @@ export async function sendSubagentAnnounceDirectly(params: {
       }
       if (subagentDirectMessageCompletionRequiresMessageTool) {
         const textDelivery = await tryTextCompletionDirectDelivery(
-          directAnnounceResult ?? undefined,
           textCompletionDirectDeliveryKind,
+          directAnnounceResult ?? undefined,
         );
         if (textDelivery) {
           return textDelivery;

@@ -201,12 +201,17 @@ function collectDirectCompletionContent(params: {
         continue;
       }
       const normalized = normalizeOutboundReplyPayloadCore(record);
-      const parsed = splitMediaFromOutput(normalized.text ?? "");
+      // Hidden runtime context must not contribute media directives: strip the
+      // protected block before extraction so a MEDIA reference it carries can
+      // never become an attachment; visible directives still deliver.
+      const parsed = splitMediaFromOutput(sanitizePendingFinalDeliveryText(normalized.text ?? ""));
       if (parsed.audioAsVoice === true || record.audioAsVoice === true) {
         audioAsVoice = true;
       }
       const text = sanitizeAgentRunTerminalReplyText(sanitizePendingFinalDeliveryText(parsed.text));
-      if (text && text !== "(no output)") {
+      // A result that only reads like the producer's placeholder is still a real
+      // result: absence is recorded on the event fact, never matched here.
+      if (text) {
         textParts.push(text);
       }
       for (const mediaUrl of [
@@ -302,6 +307,13 @@ export async function deliverCompletionDirect(params: {
   }
   const idempotencyKey = `${params.directIdempotencyKey}:text-direct`;
   let committedDelivery: SubagentAnnounceDeliveryResult | undefined;
+  const commitDirectDelivery = (): void => {
+    if (committedDelivery) {
+      return;
+    }
+    committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
+    params.onDeliveryResult?.(committedDelivery);
+  };
   try {
     if (params.isSourceSessionEffectsAllowed?.() === false) {
       return sourceOwnerChangedResult();
@@ -335,17 +347,22 @@ export async function deliverCompletionDirect(params: {
           return;
         }
         if (mediaUrls.length > 0) {
-          // ponytail: defer commit until the media batch settles; an early
-          // commit would mask a partial post-send failure as delivered.
+          // ponytail: a media payload reports per attachment here; committing
+          // on the first attachment would mask a partial post-send failure as
+          // delivered. The batch settles at onDeliveredPayload instead.
           return;
         }
         // onDeliveryResult fires on identified platform evidence, before
         // deliver-core awaits transcript mirroring (see mirrorDeliveredPayloads).
         // Commit here so a blocked requester writer holding the mirror cannot
-        // keep a fully delivered media batch pending.
-        committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
-        params.onDeliveryResult?.(committedDelivery);
+        // keep a fully delivered payload pending.
+        commitDirectDelivery();
       },
+      // Complete-payload boundary: deliver-core reports the finished payload
+      // fanout (every attachment of the media batch) here, still before it
+      // awaits transcript mirroring. Settle now so the blocked mirror cannot
+      // hold a fully delivered media batch pending until sendMessage returns.
+      onDeliveredPayload: commitDirectDelivery,
       mirror: {
         sessionKey: params.requesterSessionKey,
         agentId,
@@ -370,10 +387,10 @@ export async function deliverCompletionDirect(params: {
       };
     }
     if (mediaUrls.length > 0) {
-      // Commit only after the media batch settled; a partial failure must stay
-      // visible instead of being reported as delivered.
-      committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
-      params.onDeliveryResult?.(committedDelivery);
+      // Fallback for sends that never reported the complete-payload boundary;
+      // a partial failure must stay visible instead of being reported as
+      // delivered.
+      commitDirectDelivery();
       return committedDelivery;
     }
     return { delivered: true, path: "direct" };
