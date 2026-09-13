@@ -5,7 +5,6 @@ import { log, confirm, select, text, type CANCEL_SYMBOL } from "@clack/prompts";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import {
   normalizeOptionalLowercaseString,
-  normalizeOptionalString,
   normalizeStringifiedOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { normalizeCsvOrLooseStringList } from "@openclaw/normalization-core/string-normalization";
@@ -17,6 +16,7 @@ import {
   loadPersistedSharedAuthProfileStore,
 } from "../agents/auth-profiles/persisted.js";
 import { readPersistedSharedAuthProfileStoreRaw } from "../agents/auth-profiles/sqlite.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   coerceSecretRef,
@@ -36,6 +36,7 @@ import {
   buildConfigureCandidatesForScope,
   buildSecretsConfigurePlan,
   collectConfigureProviderChanges,
+  configureCandidateKey,
   hasConfigurePlanChanges,
   type ConfigureCandidate,
 } from "./configure-plan.js";
@@ -225,21 +226,6 @@ async function promptOptionalPositiveInt(params: {
     }),
   );
   return parseOptionalPositiveInt(raw, params.max);
-}
-
-function configureCandidateKey(
-  candidate: Pick<
-    ConfigureCandidate,
-    "configFile" | "path" | "agentId" | "authProfileStore"
-  >,
-): string {
-  if (candidate.configFile === "auth-profile-store") {
-    if (candidate.authProfileStore === "shared") {
-      return `auth-profiles:shared:${candidate.path}`;
-    }
-    return `auth-profiles:${normalizeOptionalString(candidate.agentId) ?? ""}:${candidate.path}`;
-  }
-  return `openclaw:${candidate.path}`;
 }
 
 function resolveSuggestedEnvSecretId(candidate: ConfigureCandidate): string | undefined {

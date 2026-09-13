@@ -11,21 +11,24 @@ import {
 } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { runSecretsConfigureInteractive } from "./configure.js";
+import { SECRETS_PLAN_SHARED_PROTOCOL_VERSION } from "./plan.js";
 
 const confirmMock = vi.hoisted(() => vi.fn());
 const selectMock = vi.hoisted(() => vi.fn());
 const textMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@clack/prompts", () => ({
-  confirm: (...args: unknown[]) => confirmMock(...args),
-  select: (...args: unknown[]) => selectMock(...args),
-  text: (...args: unknown[]) => textMock(...args),
-  log: {
-    warn: (message: unknown) => {
-      process.stderr.write(`${String(message)}\n`);
-    },
-  },
-}));
+// Keep the real `log` so this regression exercises the production warning
+// logger (including its `{ output: process.stderr }` routing); only the
+// interactive prompts are stubbed.
+vi.mock("@clack/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@clack/prompts")>();
+  return {
+    ...actual,
+    confirm: (...args: unknown[]) => confirmMock(...args),
+    select: (...args: unknown[]) => selectMock(...args),
+    text: (...args: unknown[]) => textMock(...args),
+  };
+});
 
 it.each([true, false])(
   "keeps configure JSON output parseable without changing shared credentials (store present: %s)",
@@ -65,13 +68,26 @@ it.each([true, false])(
       const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
       let stdout = "";
       let stderr = "";
+      let rawStdout = "";
       confirmMock.mockReset();
       selectMock.mockReset();
       textMock.mockReset();
       state.env.OPENAI_API_KEY = "fake-output-env-value"; // pragma: allowlist secret
       if (storePresent) {
         selectMock
-          .mockResolvedValueOnce("auth-profiles:shared:profiles.openai:plaintext.key")
+          .mockImplementationOnce(({ options }) => {
+            const wanted = options.find(
+              (option: { value: { path?: string } | string }) =>
+                typeof option.value !== "string" &&
+                option.value.path === "profiles.openai:plaintext.key",
+            );
+            if (!wanted) {
+              throw new Error(
+                "expected a shared-store candidate for profiles.openai:plaintext.key",
+              );
+            }
+            return wanted.value;
+          })
           .mockResolvedValueOnce("env");
         textMock.mockResolvedValueOnce("default").mockResolvedValueOnce("OPENAI_API_KEY");
         confirmMock.mockResolvedValueOnce(false);
@@ -83,6 +99,12 @@ it.each([true, false])(
         });
       const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
         stderr += String(chunk);
+        return true;
+      });
+      // Capture the real stdout stream too: a warning that loses its
+      // `{ output: process.stderr }` routing lands here and corrupts JSON.
+      const rawStdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        rawStdout += String(chunk);
         return true;
       });
       try {
@@ -111,6 +133,7 @@ it.each([true, false])(
       } finally {
         stdoutWrite.mockRestore();
         stderrWrite.mockRestore();
+        rawStdoutWrite.mockRestore();
         if (stdinTTY) {
           Object.defineProperty(process.stdin, "isTTY", stdinTTY);
         } else {
@@ -120,8 +143,10 @@ it.each([true, false])(
 
       if (storePresent) {
         const parsed = JSON.parse(stdout) as {
-          plan: { targets: Array<Record<string, unknown>> };
+          plan: { protocolVersion: number; targets: Array<Record<string, unknown>> };
         };
+        // Shared ownership must travel under the revision released readers reject.
+        expect(parsed.plan.protocolVersion).toBe(SECRETS_PLAN_SHARED_PROTOCOL_VERSION);
         expect(parsed.plan.targets).toEqual([
           expect.objectContaining({
             type: "auth-profiles.api_key.key",
@@ -132,6 +157,7 @@ it.each([true, false])(
         ]);
         expect(stderr).toContain("2 plaintext credential(s)");
         expect(stderr).toContain("explicit shared owner");
+        expect(rawStdout).not.toContain("plaintext credential(s)");
         expect(readPersistedSharedAuthProfileStoreRaw(state.env)).toEqual(sharedStore);
       } else {
         expect(JSON.parse(stdout)).toEqual({
