@@ -8,7 +8,11 @@ import {
   type SecretRef,
 } from "../config/types.secrets.js";
 import { parseConfigPathArrayIndex } from "../shared/path-array-index.js";
-import type { SecretsApplyPlan } from "./plan.js";
+import {
+  SECRETS_PLAN_PROTOCOL_VERSION,
+  SECRETS_PLAN_SHARED_PROTOCOL_VERSION,
+  type SecretsApplyPlan,
+} from "./plan.js";
 import { isRecord } from "./shared.js";
 import type { DiscoveredConfigSecretTarget } from "./target-registry.js";
 import {
@@ -55,15 +59,27 @@ function getSecretProviders(config: OpenClawConfig): Record<string, SecretProvid
   return config.secrets.providers;
 }
 
-function configureCandidateSortKey(candidate: ConfigureCandidate): string {
-  if (candidate.configFile === "auth-profile-store") {
-    if (candidate.authProfileStore === "shared") {
-      return `auth-profiles:shared:${candidate.path}`;
-    }
-    const agentId = candidate.agentId ?? "";
-    return `auth-profiles:${agentId}:${candidate.path}`;
+/**
+ * Stable key for one configure candidate, shared by the picker options, the
+ * selected-target map, and candidate ordering. Auth-profile keys carry an
+ * explicit owner discriminator: without it an agent literally named `shared`
+ * produces the same key as the shared store, and selecting one of them resolves
+ * to whichever candidate happens to come first (and the selection map can only
+ * retain one).
+ */
+export function configureCandidateKey(candidate: {
+  configFile: "openclaw.json" | "auth-profile-store";
+  path: string;
+  agentId?: string;
+  authProfileStore?: string;
+}): string {
+  if (candidate.configFile !== "auth-profile-store") {
+    return `openclaw:${candidate.path}`;
   }
-  return `openclaw:${candidate.path}`;
+  if (candidate.authProfileStore === "shared") {
+    return `auth-profiles:shared:${candidate.path}`;
+  }
+  return `auth-profiles:agent:${candidate.agentId ?? ""}:${candidate.path}`;
 }
 
 function resolveAuthProfileProvider(
@@ -203,7 +219,7 @@ export function buildConfigureCandidatesForScope(params: {
           });
 
   return [...openclawCandidates, ...authCandidates, ...sharedAuthCandidates].toSorted((a, b) =>
-    configureCandidateSortKey(a).localeCompare(configureCandidateSortKey(b)),
+    configureCandidateKey(a).localeCompare(configureCandidateKey(b)),
   );
 }
 
@@ -288,26 +304,33 @@ export function buildSecretsConfigurePlan(params: {
   providerChanges: ConfigureProviderChanges;
   generatedAt?: string;
 }): SecretsApplyPlan {
+  const targets = [...params.selectedTargets.values()].map((entry) =>
+    Object.assign(
+      {
+        type: entry.type,
+        path: entry.path,
+        pathSegments: [...entry.pathSegments],
+        ref: entry.ref,
+      },
+      entry.agentId ? { agentId: entry.agentId } : {},
+      entry.authProfileStore ? { authProfileStore: entry.authProfileStore } : {},
+      entry.providerId ? { providerId: entry.providerId } : {},
+      entry.accountId ? { accountId: entry.accountId } : {},
+      entry.authProfileProvider ? { authProfileProvider: entry.authProfileProvider } : {},
+    ),
+  );
+  // Released readers only accept protocol revision 1 and ignore `authProfileStore`,
+  // so a shared-store target must travel under revision 2 to make them reject the
+  // plan instead of applying it to the agent database.
+  const protocolVersion = targets.some((target) => target.authProfileStore === "shared")
+    ? SECRETS_PLAN_SHARED_PROTOCOL_VERSION
+    : SECRETS_PLAN_PROTOCOL_VERSION;
   return {
     version: 1,
-    protocolVersion: 1,
+    protocolVersion,
     generatedAt: params.generatedAt ?? new Date().toISOString(),
     generatedBy: "openclaw secrets configure",
-    targets: [...params.selectedTargets.values()].map((entry) =>
-      Object.assign(
-        {
-          type: entry.type,
-          path: entry.path,
-          pathSegments: [...entry.pathSegments],
-          ref: entry.ref,
-        },
-        entry.agentId ? { agentId: entry.agentId } : {},
-        entry.authProfileStore ? { authProfileStore: entry.authProfileStore } : {},
-        entry.providerId ? { providerId: entry.providerId } : {},
-        entry.accountId ? { accountId: entry.accountId } : {},
-        entry.authProfileProvider ? { authProfileProvider: entry.authProfileProvider } : {},
-      ),
-    ),
+    targets,
     ...(Object.keys(params.providerChanges.upserts).length > 0
       ? { providerUpserts: params.providerChanges.upserts }
       : {}),

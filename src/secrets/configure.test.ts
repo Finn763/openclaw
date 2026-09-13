@@ -275,6 +275,72 @@ describe("runSecretsConfigureInteractive", () => {
     expect(message).toContain("explicit shared owner");
   });
 
+  it("selects the shared entry when the agent is also named shared", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+
+    // Regression: agent and shared candidates for the same profile path used to share
+    // one picker key, so choosing the shared entry resolved to the agent candidate and
+    // the plan wrote an agent-local ref while the shared plaintext stayed behind.
+    const stateDir = makeTempDir();
+    const env = {
+      OPENCLAW_STATE_DIR: stateDir,
+      OPENAI_API_KEY: "fake-test-env-value", // pragma: allowlist secret
+    } as NodeJS.ProcessEnv;
+    const profile = createAuthProfileStoreFixture({
+      "openai:default": {
+        type: "api_key",
+        provider: "openai",
+        key: "sk-shared-plaintext", // pragma: allowlist secret
+      },
+    });
+    writeSharedAuthProfileStoreRaw(env, profile);
+    loadPersistedAuthProfileStoreMock.mockReturnValue(profile);
+    loadPersistedSharedAuthProfileStoreMock.mockReturnValue(profile);
+    createSecretsConfigIOMock.mockReturnValue({
+      readConfigFileSnapshotForWrite: async () => ({
+        snapshot: {
+          valid: true,
+          config: { agents: { list: [{ id: "main", default: true }, { id: "shared" }] } },
+          resolved: {},
+        },
+      }),
+    });
+    selectMock
+      .mockResolvedValueOnce("auth-profiles:shared:profiles.openai:default.key")
+      .mockResolvedValueOnce("env");
+    textMock.mockResolvedValueOnce("default").mockResolvedValueOnce("OPENAI_API_KEY");
+    confirmMock.mockResolvedValueOnce(false);
+
+    const result = await runSecretsConfigureInteractive({
+      providersOnly: false,
+      skipProviderSetup: true,
+      agentId: "shared",
+      env,
+    });
+
+    const offeredKeys = (
+      selectMock.mock.calls[0]?.[0] as { options: Array<{ value: string }> } | undefined
+    )?.options.map((option) => option.value);
+    expect(offeredKeys).toEqual(
+      expect.arrayContaining([
+        "auth-profiles:agent:shared:profiles.openai:default.key",
+        "auth-profiles:shared:profiles.openai:default.key",
+      ]),
+    );
+    expect(result.plan.targets).toEqual([
+      expect.objectContaining({
+        type: "auth-profiles.api_key.key",
+        path: "profiles.openai:default.key",
+        agentId: "shared",
+        authProfileStore: "shared",
+        ref: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+      }),
+    ]);
+  });
+
   it("does not warn when shared profiles only carry SecretRef values", async () => {
     Object.defineProperty(process.stdin, "isTTY", {
       value: true,
