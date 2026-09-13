@@ -10,6 +10,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
   call,
   dismissPendingTaskSuggestions,
+  operatorClient,
   requirePayload,
   SOURCE_SESSION_KEY,
 } from "./task-suggestions.test-support.js";
@@ -81,6 +82,19 @@ function requireSuggestion(result: Awaited<ReturnType<typeof createSuggestion>>)
   return payload;
 }
 
+async function acceptLocally(params: { taskId: string; config: unknown }) {
+  return await call("taskSuggestions.accept", { taskId: params.taskId, mode: "local" }, vi.fn(), {
+    // Control UI operators accept cards with their own admin session; the
+    // mapped root still needs the sandbox handoff to pass creation.
+    client: operatorClient(),
+    config: params.config as Record<string, unknown>,
+    context: {
+      loadGatewayModelCatalog: async () => [],
+      getSessionEventSubscriberConnIds: () => new Set(),
+    },
+  });
+}
+
 describe("task suggestion host cwd for sandboxed sessions", () => {
   it("maps the container workspace path to the host workspace and accepts the card", async () => {
     await withOpenClawTestState({ scenario: "minimal", layout: "split" }, async (state) => {
@@ -143,13 +157,27 @@ describe("task suggestion host cwd for sandboxed sessions", () => {
         storePath: state.statePath("agents", "{agentId}", "sessions", "sessions.json"),
         workspaceRoot,
       });
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: SOURCE_SESSION_KEY },
+        { sessionId: "follow-up-source", updatedAt: 1 },
+      );
 
       const created = await createSuggestion({ config, cwd: BASE_CWD });
-      const { cwd } = requireSuggestion(created).suggestion;
+      const { taskId, suggestion } = requireSuggestion(created);
+      const { cwd } = suggestion;
 
       expect(cwd.startsWith(`${workspaceRoot}${path.sep}`)).toBe(true);
       expect(cwd).not.toBe(workspace);
       expect((await fs.stat(cwd)).isDirectory()).toBe(true);
+
+      // The isolated workspace is outside the configured agent workspace, so
+      // acceptance only reaches session creation through the sandbox handoff.
+      const accepted = await acceptLocally({ taskId, config });
+      expect(accepted.response?.[2]).toBeUndefined();
+      const { key } = requirePayload(accepted) as { key: string };
+      expect(loadSessionEntry({ agentId: "main", sessionKey: key })).toMatchObject({
+        spawnedCwd: await fs.realpath(cwd),
+      });
     });
   });
 
@@ -254,11 +282,25 @@ describe("task suggestion host cwd for sandboxed sessions", () => {
         workspaceAccess: "rw",
         binds: [`${otherCheckout}:/workspace/project`],
       });
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: SOURCE_SESSION_KEY },
+        { sessionId: "follow-up-source", updatedAt: 1 },
+      );
 
       const created = await createSuggestion({ config, cwd: `${BASE_CWD}/project` });
+      const { taskId, suggestion } = requireSuggestion(created);
 
-      expect(requireSuggestion(created).suggestion.cwd).toBe(path.resolve(otherCheckout));
-      expect(requireSuggestion(created).suggestion.cwd).not.toBe(path.join(workspace, "project"));
+      expect(suggestion.cwd).toBe(path.resolve(otherCheckout));
+      expect(suggestion.cwd).not.toBe(path.join(workspace, "project"));
+
+      // An external bind target lives outside the agent workspace, so accepting
+      // locally depends on the same sandbox handoff.
+      const accepted = await acceptLocally({ taskId, config });
+      expect(accepted.response?.[2]).toBeUndefined();
+      const { key } = requirePayload(accepted) as { key: string };
+      expect(loadSessionEntry({ agentId: "main", sessionKey: key })).toMatchObject({
+        spawnedCwd: await fs.realpath(otherCheckout),
+      });
     });
   });
 
