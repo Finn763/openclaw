@@ -32,8 +32,10 @@
  *   mark the producer emitted. Raw text has no producer spans by definition.
  * - Encoded text is what the persistence write path stores: raw input escaped first,
  *   then redacted with provenance, then passed through `escapeRedactionProvenanceLiterals`
- *   (an idempotent fixed point). When no genuine mark was produced the write path
- *   stores the original raw bytes, so mark-free rows stay byte-identical.
+ *   (an idempotent fixed point). A write that produced no genuine mark still stores the
+ *   escaped form: only strings that carry no reserved byte stay byte-identical, and a
+ *   string that needed escaping is never stored as bare bytes a reader could mistake for
+ *   provenance (#142821 review).
  * - Readers (`replaceRedactionProvenance`, `stripRedactionProvenance`) only decode
  *   strings that carry at least one genuine mark. Strings without one are returned
  *   byte-identical, so unencoded legacy history — including a literal escape-byte

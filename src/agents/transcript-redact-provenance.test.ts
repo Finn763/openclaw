@@ -6,10 +6,16 @@
 // leaves unmarked bytes alone.
 import {
   REDACTION_PROVENANCE_END,
+  REDACTION_PROVENANCE_ESCAPE,
   REDACTION_PROVENANCE_START,
   hasRedactionProvenance,
+  stripRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
-import { buildSessionContext, type SessionTreeEntry } from "openclaw/plugin-sdk/agent-core";
+import {
+  buildSessionContext,
+  type AgentMessage,
+  type SessionTreeEntry,
+} from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
@@ -101,11 +107,22 @@ describe("transcript persistence writes redaction provenance (#142821)", () => {
     expect(hasRedactionProvenance(JSON.stringify(stored))).toBe(false);
   });
 
-  it("leaves an already marked mask intact when redaction runs twice", () => {
+  it("keeps a second redaction pass masked, replayable, and secret-free", () => {
     readLoggingConfig.mockReturnValue({});
     const once = redactTranscriptMessage(toolCallMessage(), config);
     const twice = redactTranscriptMessage(once, config);
-    expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+    const argumentsOf = (message: AgentMessage): Record<string, string> =>
+      ((message as unknown as { content: Array<{ arguments: Record<string, string> }> }).content[0]
+        ?.arguments ?? {}) as Record<string, string>;
+    // Re-redacting stored bytes is not a byte fixed point: a hint body is mask-shaped text,
+    // so the second pass masks it whole. What has to survive is the mask itself — marked, so
+    // replay still rewrites it — and never the secret (#142821 review).
+    expect(stripRedactionProvenance(argumentsOf(once).apiKey)).toBe("plains…e123");
+    expect(stripRedactionProvenance(argumentsOf(twice).apiKey)).toBe("***");
+    expect(hasRedactionProvenance(argumentsOf(twice).apiKey)).toBe(true);
+    expect(hasRedactionProvenance(argumentsOf(twice).command)).toBe(true);
+    expect(JSON.stringify(twice)).not.toContain(LONG_SECRET);
+    expect(JSON.stringify(twice)).not.toContain("hunter2");
   });
 });
 
@@ -167,7 +184,7 @@ describe("replay consumes that provenance (#142821)", () => {
     expect(replayedContent(stored)).toBe(content);
   });
 
-  it("escapes literal text that spells the current encoding and restores it on replay", () => {
+  it("escapes literal text that spells the current encoding instead of replaying it as provenance", () => {
     readLoggingConfig.mockReturnValue({});
     const literal = `${REDACTION_PROVENANCE_START}example${REDACTION_PROVENANCE_END}`;
     const content = `the doc quotes ${literal} verbatim`;
@@ -179,6 +196,34 @@ describe("replay consumes that provenance (#142821)", () => {
     expect(stored.content).not.toBe(content);
     expect(stored.content.length).toBe(content.length + 2);
     expect(hasRedactionProvenance(stored.content)).toBe(false);
-    expect(replayedContent(stored)).toBe(content);
+    // Without a genuine mark the stored bytes are literal history: replay keeps them
+    // rather than replacing what the user actually wrote (#142821 review).
+    expect(replayedContent(stored)).toBe(stored.content);
+    expect(replayedContent(stored)).not.toContain("re-derive");
+    expect(replayedContent(stored)).toContain("example");
+  });
+
+  it("keeps a literal complete mark out of replay when redaction produced no mark", () => {
+    readLoggingConfig.mockReturnValue({});
+    // The exact bytes replay would otherwise read as generated provenance, typed by a
+    // user instead. Pre-escaping keeps them literal, so nothing replaces them
+    // (#142821 review).
+    const literal = `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`;
+    const content = `the doc quotes ${literal} verbatim`;
+    const stored = redactTranscriptMessage(
+      castAgentMessage({ role: "user", content, timestamp: 0 }),
+      config,
+    ) as unknown as { content: string };
+    expect(hasRedactionProvenance(stored.content)).toBe(false);
+    expect(stored.content).not.toBe(content);
+    expect(stored.content.length).toBe(content.length + 2);
+    // The literal bytes survive persist and replay untouched; the doubled escape byte is
+    // the only difference from what was typed.
+    expect(replayedContent(stored)).toBe(stored.content);
+    expect(replayedContent(stored)).toContain("***");
+    expect(replayedContent(stored)).not.toContain("re-derive");
+    expect(stored.content.split(REDACTION_PROVENANCE_ESCAPE).join("")).toBe(
+      content.split(REDACTION_PROVENANCE_ESCAPE).join(""),
+    );
   });
 });

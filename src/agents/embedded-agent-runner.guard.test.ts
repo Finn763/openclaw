@@ -525,11 +525,12 @@ describe("guardSessionManager integration", () => {
       `"text":"contact peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
     expect(serialized).toContain(
-      `"text":"peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io\\n"`,
-    );
-    expect(serialized).toContain(
       `"/tmp/peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
+    // Model-visible tool-result text is persisted in the delivery dialect: the admitted
+    // bytes come from `prepareModelVisibleToolTextBlock`, so their masks stay bare and
+    // replay reuses them instead of rewriting them (#146596).
+    expect(serialized).toContain('"text":"peter@d***.io\\n"');
   });
 
   it("can skip plugin write hooks without skipping core transcript redaction", () => {

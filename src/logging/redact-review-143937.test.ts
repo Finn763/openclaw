@@ -50,6 +50,19 @@ describe("review-143937 P2: literal marks, escape pairs, prefilter", () => {
     expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(`${literal} ${PLACEHOLDER}`);
   });
 
+  it("does not read a literal complete mark as provenance when no fresh mark was produced", () => {
+    // The same literal without the genuine mark (#142821 review): pre-escaping alone must
+    // already make the bytes literal, so a reader leaves them instead of replacing what
+    // the writer actually stored.
+    const literal = `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`;
+    const escapedLiteral = escapeRawRedactionProvenanceLiterals(literal);
+    expect(escapedLiteral).not.toBe(literal);
+    const stored = escapeRedactionProvenanceLiterals(escapedLiteral);
+    expect(stored).toBe(escapedLiteral);
+    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(stored);
+    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).not.toContain(PLACEHOLDER);
+  });
+
   it("round-trips a literal escape-byte pair byte-identical (legacy history untouched)", () => {
     const legacy = `a${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_ESCAPE}b`;
     expect(replaceRedactionProvenance(legacy, PLACEHOLDER)).toBe(legacy);

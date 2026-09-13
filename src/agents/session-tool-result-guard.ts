@@ -180,21 +180,30 @@ function originalDetailsSizeFields(size: BoundedJsonUtf8Bytes): Record<string, n
  *  redaction output and every other byte must stay literal. Keys stay bare on purpose
  *  — replay must never rewrite an identifier, and only values are copyable into later
  *  tool calls. */
+function encodePersistedDetailText(raw: string, sanitize: (escapedRaw: string) => string): string {
+  // Escape raw literals first so user-typed marks cannot survive as provenance (#142821
+  // review); redaction then marks the masks it produces.
+  const escapedRaw = escapeRawRedactionProvenanceLiterals(raw);
+  const sanitized = withRedactionProvenance(() => sanitize(escapedRaw));
+  if (hasRedactionProvenance(sanitized)) {
+    return escapeRedactionProvenanceLiterals(sanitized);
+  }
+  // No fresh mark: truncation and partial-secret omission produce sanitized output
+  // without a mask, so the sanitizer's bytes still win. Only a sanitizer that changed
+  // nothing keeps the escaped raw form — mark-free rows that carry no reserved byte stay
+  // byte-identical, and rows that do never store bytes a replay reads as provenance
+  // (#142821 review).
+  return sanitized === escapedRaw ? escapedRaw : sanitized;
+}
+
 function redactPersistedDetailString(
   value: string,
   maxChars = MAX_PERSISTED_DETAIL_STRING_CHARS,
   redactionConfig?: ToolResultDetailRedactionConfig,
 ): string {
-  // Escape raw literals first so user-typed marks cannot survive as provenance (#142821
-  // review); when no genuine mark results the original bytes are stored untouched.
-  const escapedRaw = escapeRawRedactionProvenanceLiterals(value);
-  const redacted = withRedactionProvenance(() =>
-    redactPersistedDetailStringUnmarked(escapedRaw, maxChars, redactionConfig),
+  return encodePersistedDetailText(value, (escaped) =>
+    redactPersistedDetailStringUnmarked(escaped, maxChars, redactionConfig),
   );
-  if (!hasRedactionProvenance(redacted)) {
-    return value;
-  }
-  return escapeRedactionProvenanceLiterals(redacted);
 }
 
 function redactPersistedDetailStringUnmarked(
@@ -270,14 +279,11 @@ function redactPersistedDetailValueUnmarked(
   if (typeof value === "string") {
     // Escape raw literals before redaction so user-typed marks cannot become
     // provenance; mark-free leaves stay byte-identical (#142821 review).
-    const escapedRaw = escapeRawRedactionProvenanceLiterals(value);
-    const redacted = redactionKey
-      ? redactSensitiveFieldValueWithConfig(redactionKey, escapedRaw, redactionConfig)
-      : redactToolPayloadTextWithConfig(escapedRaw, redactionConfig);
-    if (!hasRedactionProvenance(redacted)) {
-      return value;
-    }
-    return escapeRedactionProvenanceLiterals(redacted);
+    return encodePersistedDetailText(value, (escaped) =>
+      redactionKey
+        ? redactSensitiveFieldValueWithConfig(redactionKey, escaped, redactionConfig)
+        : redactToolPayloadTextWithConfig(escaped, redactionConfig),
+    );
   }
   if (
     redactionKey &&
