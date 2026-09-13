@@ -40,7 +40,7 @@ import { listWorkerProfiles } from "./environments.js";
 import { sessionCreateHandlers } from "./sessions-create.js";
 import { sessionDeleteHandlers } from "./sessions-delete.js";
 import { sessionDispatchHandlers } from "./sessions-dispatch.js";
-import { resolveTaskSuggestionHostCwd } from "./task-suggestion-host-cwd.js";
+import { resolveTaskSuggestionHostCwd, withMountRootHandoff } from "./task-suggestion-host-cwd.js";
 import type {
   GatewayClient,
   GatewayRequestHandlerOptions,
@@ -251,7 +251,8 @@ async function createSuggestedTaskSession(params: {
   options: GatewayRequestHandlerOptions;
   agentId: string;
   mode: Exclude<TaskSuggestionAcceptMode, "session">;
-  cwd: string;
+  /** Resolved host cwd plus the mount root the sandbox layer mapped it from. */
+  hostCwd: Extract<Awaited<ReturnType<typeof resolveTaskSuggestionHostCwd>>, { ok: true }>;
   cloudProfileId?: string;
 }): Promise<TaskSuggestionAcceptanceResult> {
   let sessionResponse: Parameters<RespondFn> | undefined;
@@ -273,6 +274,7 @@ async function createSuggestedTaskSession(params: {
   try {
     await sessionCreateHandlers["sessions.create"]?.({
       ...params.options,
+      client: withMountRootHandoff(params.options.client, params.hostCwd.mountRootHandoff),
       params: {
         key: sessionKey,
         agentId,
@@ -280,7 +282,7 @@ async function createSuggestedTaskSession(params: {
         label: params.suggestion.title,
         ...(params.mode === "cloud" ? {} : { task }),
         ...(params.mode === "local" ? {} : { worktree: true }),
-        cwd: params.cwd,
+        cwd: params.hostCwd.cwd,
       },
       respond: (...args) => {
         sessionResponse = args;
@@ -674,7 +676,7 @@ export const taskSuggestionsHandlers: GatewayRequestHandlers = {
         options,
         agentId,
         mode,
-        cwd: hostCwd.cwd,
+        hostCwd,
         ...(cloudProfileId ? { cloudProfileId } : {}),
       });
     })().catch((error: unknown) => {

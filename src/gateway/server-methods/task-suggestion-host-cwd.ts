@@ -11,12 +11,17 @@ import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.j
 import {
   buildSandboxFsMounts,
   resolveSandboxFsPathWithMounts,
+  type SandboxFsMount,
 } from "../../agents/sandbox/fs-paths.js";
+import type { SandboxMountRootHandoff } from "../../agents/sandbox/mount-root-handoff.js";
 import type { SandboxWorkspaceInfo } from "../../agents/sandbox/types.js";
 import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isPathInside } from "../../infra/path-guards.js";
 import type { SkillSnapshot } from "../../skills/types.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
+import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
+import type { GatewayClient } from "./types.js";
 
 function isExistingHostDirectory(candidate: string): boolean {
   try {
@@ -75,17 +80,16 @@ function resolveSourceSessionFacts(params: { sessionKey: string; agentId: string
 }
 
 /**
- * Map a recorded cwd onto the host directory the sandbox mounts there. The
- * mount table owns precedence (nested binds beat the workspace root) and
+ * Mount table the source session's container sees. Precedence belongs to the
+ * mount layer (nested binds beat the workspace root), and the table owns
  * containment, so a path outside every mount stays unresolved instead of being
  * guessed from a container prefix.
  */
-function mapCwdThroughSandboxMounts(params: {
+function buildSourceSandboxMounts(params: {
   sandbox: SandboxWorkspaceInfo;
   containerWorkdir: string;
-  cwd: string;
-}): string | undefined {
-  const mounts = buildSandboxFsMounts({
+}): SandboxFsMount[] {
+  return buildSandboxFsMounts({
     workspaceDir: params.sandbox.workspaceDir,
     agentWorkspaceDir: params.sandbox.agentWorkspaceDir ?? params.sandbox.workspaceDir,
     ...(params.sandbox.skillsWorkspaceDir
@@ -99,13 +103,73 @@ function mapCwdThroughSandboxMounts(params: {
     containerWorkdir: params.containerWorkdir,
     docker: params.sandbox.dockerBinds ? { binds: [...params.sandbox.dockerBinds] } : {},
   });
+}
+
+/** Longest mount host root covering a host path, matching the table's own precedence. */
+function findOwningMountHostRoot(
+  mounts: readonly SandboxFsMount[],
+  hostPath: string,
+): string | undefined {
+  let owner: string | undefined;
+  for (const mount of mounts) {
+    if (!isPathInside(mount.hostRoot, hostPath)) {
+      continue;
+    }
+    if (owner === undefined || mount.hostRoot.length > owner.length) {
+      owner = mount.hostRoot;
+    }
+  }
+  return owner;
+}
+
+/**
+ * Hand the owning mount root over to session creation. Session creation refuses
+ * a sandboxed cwd outside the configured agent workspace, and the host
+ * directories this mapping lands on (an isolated sandbox workspace, an external
+ * bind target) are exactly the ones the sandbox layer mounts, so the marker
+ * names that root for the roots the guard would refuse; creation re-derives it
+ * before admitting the cwd.
+ */
+function resolveMountRootHandoff(params: {
+  mounts: readonly SandboxFsMount[] | undefined;
+  hostPath: string;
+  agentId: string;
+  agentWorkspaceDir: string;
+}): SandboxMountRootHandoff | undefined {
+  if (!params.mounts || isInsideAgentWorkspace(params.agentWorkspaceDir, params.hostPath)) {
+    return undefined;
+  }
+  const hostRoot = findOwningMountHostRoot(params.mounts, params.hostPath);
+  return hostRoot ? { kind: "sandbox-mount-root", agentId: params.agentId, hostRoot } : undefined;
+}
+
+/**
+ * Containment reports the same configured agent workspace the creation guard
+ * compares against, so an unreadable path must not decide the marker: the
+ * consumer re-verifies the root either way.
+ */
+function isInsideAgentWorkspace(agentWorkspaceDir: string, hostPath: string): boolean {
+  try {
+    return isPathInside(fs.realpathSync(agentWorkspaceDir), fs.realpathSync(hostPath));
+  } catch {
+    return false;
+  }
+}
+
+/** Map a recorded container cwd onto the host directory the sandbox mounts there. */
+function mapCwdThroughSandboxMounts(params: {
+  sandbox: SandboxWorkspaceInfo;
+  mounts: SandboxFsMount[];
+  containerWorkdir: string;
+  cwd: string;
+}): string | undefined {
   try {
     return resolveSandboxFsPathWithMounts({
       filePath: params.cwd,
       cwd: params.containerWorkdir,
       defaultWorkspaceRoot: params.sandbox.workspaceDir,
       defaultContainerRoot: params.containerWorkdir,
-      mounts,
+      mounts: params.mounts,
     }).hostPath;
   } catch {
     return undefined;
@@ -132,55 +196,68 @@ export async function resolveTaskSuggestionHostCwd(params: {
    * container prefixes cannot translate it a second time.
    */
   cwdAlreadyHostResolved?: boolean;
-}): Promise<{ ok: true; cwd: string } | { ok: false; error: ErrorShape }> {
+}): Promise<
+  | { ok: true; cwd: string; mountRootHandoff?: SandboxMountRootHandoff }
+  | { ok: false; error: ErrorShape }
+> {
   const sourceFacts = resolveSourceSessionFacts(params);
-  const hostWorkspaceDir =
-    sourceFacts.workspaceDir ?? resolveAgentWorkspaceDir(params.cfg, params.agentId);
+  const configuredWorkspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
+  const hostWorkspaceDir = sourceFacts.workspaceDir ?? configuredWorkspaceDir;
+  const sandbox = await resolveSourceSandboxWorkspace({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    hostWorkspaceDir,
+    ...(sourceFacts.skillsSnapshot ? { skillsSnapshot: sourceFacts.skillsSnapshot } : {}),
+  });
+  const sandboxMounts =
+    sandbox?.containerWorkdir && hasLocalSandboxMountContract(params.cfg, params.agentId)
+      ? {
+          sandbox,
+          containerWorkdir: sandbox.containerWorkdir,
+          mounts: buildSourceSandboxMounts({
+            sandbox,
+            containerWorkdir: sandbox.containerWorkdir,
+          }),
+        }
+      : undefined;
+  const handoffFor = (hostPath: string) =>
+    resolveMountRootHandoff({
+      mounts: sandboxMounts?.mounts,
+      hostPath,
+      agentId: params.agentId,
+      agentWorkspaceDir: configuredWorkspaceDir,
+    });
   if (params.cwdAlreadyHostResolved) {
     // A host path creation already resolved stays terminal: re-translating it
     // through container mounts could select a different existing directory
-    // when the original target disappears.
-    return isExistingHostDirectory(params.cwd)
-      ? { ok: true, cwd: params.cwd }
-      : {
-          ok: false,
-          error: unavailableTaskSuggestionCwdError({ cwd: params.cwd, hostWorkspaceDir }),
-        };
-  }
-  let sandbox: SandboxWorkspaceInfo | null;
-  try {
-    sandbox = await ensureSandboxWorkspaceForSession({
-      config: params.cfg,
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-      workspaceDir: hostWorkspaceDir,
-      ...(sourceFacts.skillsSnapshot ? { skillsSnapshot: sourceFacts.skillsSnapshot } : {}),
-    });
-  } catch {
-    // An unresolvable sandbox layout still admits a path the host can resolve
-    // on its own; only the recorded-broken case below stays out of reach.
-    return isExistingHostDirectory(params.cwd)
-      ? { ok: true, cwd: params.cwd }
-      : {
-          ok: false,
-          error: unavailableTaskSuggestionCwdError({ cwd: params.cwd, hostWorkspaceDir }),
-        };
+    // when the original target disappears. Containment still reports the root
+    // the source sandbox mounts it from, which is what creation re-verifies.
+    if (!isExistingHostDirectory(params.cwd)) {
+      return {
+        ok: false,
+        error: unavailableTaskSuggestionCwdError({ cwd: params.cwd, hostWorkspaceDir }),
+      };
+    }
+    const mountRootHandoff = handoffFor(params.cwd);
+    return { ok: true, cwd: params.cwd, ...(mountRootHandoff ? { mountRootHandoff } : {}) };
   }
   if (!sandbox) {
     // Not a sandboxed session: host cwd semantics are unchanged.
     return { ok: true, cwd: params.cwd };
   }
-  const mappedHostCwd =
-    sandbox.containerWorkdir && hasLocalSandboxMountContract(params.cfg, params.agentId)
-      ? mapCwdThroughSandboxMounts({
-          sandbox,
-          containerWorkdir: sandbox.containerWorkdir,
-          cwd: params.cwd,
-        })
-      : undefined;
+  const mappedHostCwd = sandboxMounts
+    ? mapCwdThroughSandboxMounts({
+        sandbox: sandboxMounts.sandbox,
+        mounts: sandboxMounts.mounts,
+        containerWorkdir: sandboxMounts.containerWorkdir,
+        cwd: params.cwd,
+      })
+    : undefined;
   const hostCwd = mappedHostCwd ?? params.cwd;
   if (isExistingHostDirectory(hostCwd)) {
-    return { ok: true, cwd: hostCwd };
+    const mountRootHandoff = handoffFor(hostCwd);
+    return { ok: true, cwd: hostCwd, ...(mountRootHandoff ? { mountRootHandoff } : {}) };
   }
   return {
     ok: false,
@@ -190,6 +267,56 @@ export async function resolveTaskSuggestionHostCwd(params: {
       hostWorkspaceDir: sandbox.workspaceDir,
       ...(sandbox.containerWorkdir ? { containerWorkdir: sandbox.containerWorkdir } : {}),
     }),
+  };
+}
+
+/**
+ * Resolve the source session's sandbox workspace and mounts. An unresolvable
+ * sandbox layout still admits a path the host can resolve on its own; only the
+ * recorded-broken case stays out of reach.
+ */
+async function resolveSourceSandboxWorkspace(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+  hostWorkspaceDir: string;
+  skillsSnapshot?: SkillSnapshot;
+}): Promise<SandboxWorkspaceInfo | null> {
+  try {
+    return await ensureSandboxWorkspaceForSession({
+      config: params.cfg,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      workspaceDir: params.hostWorkspaceDir,
+      ...(params.skillsSnapshot ? { skillsSnapshot: params.skillsSnapshot } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attach the mount-root handoff to the in-process creation request. Session
+ * creation reads the handoff from the trusted creation provenance, which request
+ * frames cannot carry; a caller without a client leaves it absent and the
+ * containment guard keeps refusing the mapped root.
+ */
+export function withMountRootHandoff(
+  client: GatewayClient | null,
+  handoff: SandboxMountRootHandoff | undefined,
+): GatewayClient | null {
+  if (!client || !handoff) {
+    return client;
+  }
+  return {
+    ...client,
+    internal: {
+      ...client.internal,
+      sessionCreation: {
+        ...resolveOperatorSessionCreation(client, { allowTrustedHint: true }),
+        sandboxMountRootHandoff: handoff,
+      },
+    },
   };
 }
 
