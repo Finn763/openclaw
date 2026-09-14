@@ -9,6 +9,8 @@ import {
   escapeRawRedactionProvenanceLiterals,
   escapeRedactionProvenanceLiterals,
   hasRedactionProvenance,
+  markEncodedRedactionProvenance,
+  stripEncodedRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
@@ -203,20 +205,28 @@ function originalDetailsSizeFields(size: BoundedJsonUtf8Bytes): Record<string, n
  *  redaction output and every other byte must stay literal. Keys stay bare on purpose
  *  — replay must never rewrite an identifier, and only values are copyable into later
  *  tool calls. */
-function encodePersistedDetailText(raw: string, sanitize: (escapedRaw: string) => string): string {
-  // Escape raw literals first so user-typed marks cannot survive as provenance (#142821
-  // review); redaction then marks the masks it produces.
-  const escapedRaw = escapeRawRedactionProvenanceLiterals(raw);
-  const sanitized = withRedactionProvenance(() => sanitize(escapedRaw));
+function encodePersistedDetailText(
+  rawOrPrepared: string,
+  sanitize: (body: string) => string,
+): string {
+  // The guard sanitizes the same details before and after its persistence hooks, so the
+  // second pass receives this encoder's own prepared output: reuse that body, or escaping
+  // it as raw input would turn a produced mark into literal marker bytes and replay would
+  // keep the mask instead of the re-derive instruction (#143937 review). The sanitizer
+  // still runs, so a changed policy revalidates the visible bytes.
+  const prepared = stripEncodedRedactionProvenance(rawOrPrepared);
+  const body =
+    prepared === rawOrPrepared ? escapeRawRedactionProvenanceLiterals(rawOrPrepared) : prepared;
+  const sanitized = withRedactionProvenance(() => sanitize(body));
   if (hasRedactionProvenance(sanitized)) {
-    return escapeRedactionProvenanceLiterals(sanitized);
+    return markEncodedRedactionProvenance(escapeRedactionProvenanceLiterals(sanitized));
   }
   // No fresh mark: truncation and partial-secret omission produce sanitized output
   // without a mask, so the sanitizer's bytes still win. Only a sanitizer that changed
-  // nothing keeps the escaped raw form — mark-free rows that carry no reserved byte stay
-  // byte-identical, and rows that do never store bytes a replay reads as provenance
-  // (#142821 review).
-  return sanitized === escapedRaw ? escapedRaw : sanitized;
+  // nothing keeps the body — mark-free rows that carry no reserved byte stay
+  // byte-identical, rows that do record the encoding so replay decodes them, and neither
+  // ever stores bytes a replay reads as provenance (#142821, #143937 review).
+  return markEncodedRedactionProvenance(sanitized === body ? body : sanitized);
 }
 
 function redactPersistedDetailString(

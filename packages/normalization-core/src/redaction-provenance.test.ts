@@ -3,11 +3,15 @@ import {
   REDACTION_PROVENANCE_END,
   REDACTION_PROVENANCE_ESCAPE,
   REDACTION_PROVENANCE_START,
+  escapeRawRedactionProvenanceLiterals,
   escapeRedactionProvenanceLiterals,
   hasRedactionProvenance,
+  isEncodedRedactionProvenance,
   isRedactionProvenanceMask,
+  markEncodedRedactionProvenance,
   markRedactionProvenance,
   replaceRedactionProvenance,
+  stripEncodedRedactionProvenance,
   stripRedactionProvenance,
 } from "./redaction-provenance.js";
 
@@ -109,5 +113,42 @@ describe("redaction provenance is unambiguous against literal text", () => {
     expect(stripRedactionProvenance(`key=${markRedactionProvenance("sk-abc…0xyz")} done`)).toBe(
       "key=sk-abc…0xyz done",
     );
+  });
+});
+
+describe("stored strings that carry a reserved byte are marked as encoded (#143937 review)", () => {
+  it("marks an escaped write that produced no mask so a reader can decode it", () => {
+    const raw = `the separator is a${REDACTION_PROVENANCE_ESCAPE}b`;
+    const stored = markEncodedRedactionProvenance(escapeRawRedactionProvenanceLiterals(raw));
+    expect(isEncodedRedactionProvenance(stored)).toBe(true);
+    expect(hasRedactionProvenance(stored)).toBe(false);
+    // Without the mark the doubled escape byte would be indistinguishable from legacy raw
+    // history, and replay would hand back two separators.
+    expect(stripRedactionProvenance(stored)).toBe(raw);
+    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(raw);
+  });
+
+  it("leaves text with no reserved byte byte-identical and unmarked", () => {
+    const plain = "the file is here…world of pain";
+    expect(markEncodedRedactionProvenance(plain)).toBe(plain);
+    expect(isEncodedRedactionProvenance(plain)).toBe(false);
+    expect(stripEncodedRedactionProvenance(plain)).toBe(plain);
+  });
+
+  it("strips exactly one storage mark and decodes masks and literals together", () => {
+    const body = `${escapeRawRedactionProvenanceLiterals(`keep a${REDACTION_PROVENANCE_ESCAPE}b`)} ${markRedactionProvenance("***")}`;
+    const stored = markEncodedRedactionProvenance(body);
+    expect(stripEncodedRedactionProvenance(stored)).toBe(body);
+    expect(stripRedactionProvenance(stored)).toBe(`keep a${REDACTION_PROVENANCE_ESCAPE}b ***`);
+    expect(replaceRedactionProvenance(stored, PLACEHOLDER)).toBe(
+      `keep a${REDACTION_PROVENANCE_ESCAPE}b ${PLACEHOLDER}`,
+    );
+  });
+
+  it("keeps a legacy escape-byte pair of unmarked history untouched", () => {
+    const legacy = `a${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_ESCAPE}b`;
+    expect(isEncodedRedactionProvenance(legacy)).toBe(false);
+    expect(stripRedactionProvenance(legacy)).toBe(legacy);
+    expect(replaceRedactionProvenance(legacy, PLACEHOLDER)).toBe(legacy);
   });
 });

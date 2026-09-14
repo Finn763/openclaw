@@ -3,7 +3,10 @@
 import { readFileSync } from "node:fs";
 import { expectDefined } from "@openclaw/normalization-core";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
-import { markRedactionProvenance } from "@openclaw/normalization-core/redaction-provenance";
+import {
+  REDACTION_PROVENANCE_STORAGE_MARK,
+  markRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import {
@@ -518,14 +521,17 @@ describe("guardSessionManager integration", () => {
     expect(serialized).not.toContain("contact peter@dc.io");
     expect(serialized).not.toContain("peter@dc.io\\n");
     expect(serialized).not.toContain('"/tmp/peter@dc.io"');
+    // Every stored string that carries reserved bytes opens with the encoding's storage
+    // mark, which serializes as its `\u00xx` escape (#143937 review).
+    const storedPrefix = serializeRedactionMarker(REDACTION_PROVENANCE_STORAGE_MARK);
     expect(serialized).toContain(
-      `"thinking":"the email is peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
+      `"thinking":"${storedPrefix}the email is peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
     expect(serialized).toContain(
-      `"text":"contact peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
+      `"text":"${storedPrefix}contact peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
     expect(serialized).toContain(
-      `"/tmp/peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
+      `"${storedPrefix}/tmp/peter@d${serializeRedactionMarker(markRedactionProvenance("***"))}.io"`,
     );
     // Model-visible tool-result text is persisted in the delivery dialect: the admitted
     // bytes come from `prepareModelVisibleToolTextBlock`, so their masks stay bare and
@@ -565,7 +571,12 @@ describe("guardSessionManager integration", () => {
     expect(entry).toMatchObject({
       message: {
         role: "assistant",
-        content: [{ type: "text", text: `contact peter@d${markRedactionProvenance("***")}.io` }],
+        content: [
+          {
+            type: "text",
+            text: `${REDACTION_PROVENANCE_STORAGE_MARK}contact peter@d${markRedactionProvenance("***")}.io`,
+          },
+        ],
       },
     });
   });

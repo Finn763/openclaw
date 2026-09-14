@@ -1,6 +1,7 @@
 // Session transcript facade resolves transcript files, appends mirror messages, and reads tails.
 import {
   hasRedactionProvenance,
+  isEncodedRedactionProvenance,
   stripRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
@@ -798,6 +799,13 @@ function extractAssistantMessageText(message: AgentMessage): string | null {
   return parts.length > 0 ? parts.join("\n").trim() : null;
 }
 
+/** Canonical stored form of one compared string: mask markers collapse to their mask and
+ *  escaped literal bytes are restored. `null` — a message with no comparable text — stays
+ *  `null` so callers keep treating it as absent rather than empty. */
+function canonicalStoredText(value: string | null): string | null {
+  return value === null ? null : stripRedactionProvenance(value);
+}
+
 async function findLatestEquivalentAssistantMessageId(
   target: SessionTranscriptTurnWriteContext,
   message: SessionTranscriptAssistantMessage,
@@ -806,9 +814,9 @@ async function findLatestEquivalentAssistantMessageId(
   // Stored masks carry redaction provenance (#142821), so comparing a fresh delivery with
   // the last stored mirror compares canonical bytes: a row this release wrote is compared
   // as stored, and only an unmarked row from an earlier release is re-redacted first.
-  const expectedRedacted = extractAssistantMessageText(redactTranscriptMessage(message, config));
-  const expectedText =
-    expectedRedacted === null ? undefined : stripRedactionProvenance(expectedRedacted);
+  const expectedText = canonicalStoredText(
+    extractAssistantMessageText(redactTranscriptMessage(message, config)),
+  );
   if (!expectedText) {
     return undefined;
   }
@@ -825,11 +833,18 @@ async function findLatestEquivalentAssistantMessageId(
       return undefined;
     }
     const storedText = latest ? extractAssistantMessageText(latest.message as AgentMessage) : null;
+    // A row this release wrote is compared in canonical form. A row from an earlier release
+    // is re-redacted first and canonicalized the same way: that pass can add a fresh marker,
+    // and comparing those marked bytes against the unmarked expected text would append a
+    // second mirror for one delivery (#143937 review).
     const candidateText = storedText
-      ? hasRedactionProvenance(storedText)
+      ? isEncodedRedactionProvenance(storedText) || hasRedactionProvenance(storedText)
         ? stripRedactionProvenance(storedText)
-        : extractAssistantMessageText(
-            redactTranscriptMessage(latest?.message as AgentMessage, config),
+        : canonicalStoredText(
+            extractAssistantMessageText(
+              // SAFETY: latestMessage.role === "assistant" above narrows this mirror row to the assistant shape.
+              redactTranscriptMessage(latest?.message as AgentMessage, config),
+            ),
           )
       : undefined;
     return candidateText === expectedText ? latest?.id : undefined;

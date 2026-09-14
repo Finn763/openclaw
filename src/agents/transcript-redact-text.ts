@@ -9,6 +9,8 @@ import {
   escapeRawRedactionProvenanceLiterals,
   escapeRedactionProvenanceLiterals,
   hasRedactionProvenance,
+  markEncodedRedactionProvenance,
+  stripEncodedRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readLoggingConfig } from "../logging/config.js";
@@ -40,27 +42,35 @@ export function resolveTranscriptLoggingConfig(cfg?: OpenClawConfig) {
  * distinction instead of storing bytes replay would read as provenance (#142821
  * review).
  *
+ * Input that already carries the storage mark is this encoder's own prepared output — a
+ * repeated pass over the same tool result, or a re-write of a stored row — so its body is
+ * reused instead of being escaped as raw text, which would turn produced marks back into
+ * literal bytes and lose the provenance replay reads (#143937 review). The redaction
+ * below still runs over it, so a changed policy revalidates the visible bytes.
+ *
  * `markMasks: false` is the model-visible tool-text dialect: those bytes were admitted
  * live by the delivery path (`prepareModelVisibleToolTextBlock`, #146596), so
  * persistence escapes literals but leaves produced masks bare, and replay reuses the
  * admitted result instead of rewriting it.
  */
 function encodePersistedTranscriptText(
-  raw: string,
-  redactEscaped: (escapedRaw: string) => string,
+  rawOrPrepared: string,
+  redact: (body: string) => string,
   markMasks = true,
 ): string {
-  const escapedRaw = escapeRawRedactionProvenanceLiterals(raw);
-  const redacted = markMasks
-    ? withRedactionProvenance(() => redactEscaped(escapedRaw))
-    : redactEscaped(escapedRaw);
+  const prepared = stripEncodedRedactionProvenance(rawOrPrepared);
+  const body =
+    prepared === rawOrPrepared ? escapeRawRedactionProvenanceLiterals(rawOrPrepared) : prepared;
+  const redacted = markMasks ? withRedactionProvenance(() => redact(body)) : redact(body);
   if (hasRedactionProvenance(redacted)) {
-    return escapeRedactionProvenanceLiterals(redacted);
+    return markEncodedRedactionProvenance(escapeRedactionProvenanceLiterals(redacted));
   }
   // No fresh mark: keep the bytes redaction changed (truncation, omission, custom
-  // patterns) and otherwise the escaped raw form — never the bare bytes a replay
-  // could read as a mark (#142821 review).
-  return redacted === escapedRaw ? escapedRaw : redacted;
+  // patterns) and otherwise the body — never the bare bytes a replay could read as a
+  // mark (#142821 review). Strings carrying no reserved byte stay byte-identical, and
+  // every string that does records that it uses the encoding, so replay decodes its
+  // escaped literals even when redaction produced no mask (#143937 review).
+  return markEncodedRedactionProvenance(redacted === body ? body : redacted);
 }
 
 export function redactTranscriptText(
@@ -72,10 +82,10 @@ export function redactTranscriptText(
   // Persisted masks carry explicit provenance so replay never has to guess (#142821).
   return encodePersistedTranscriptText(
     value,
-    (escaped) =>
+    (body) =>
       modelVisibleToolResult
-        ? redactModelVisibleToolPayloadTextWithConfig(escaped, loggingConfig)
-        : redactToolPayloadTextWithConfig(escaped, loggingConfig),
+        ? redactModelVisibleToolPayloadTextWithConfig(body, loggingConfig)
+        : redactToolPayloadTextWithConfig(body, loggingConfig),
     !modelVisibleToolResult,
   );
 }
@@ -94,21 +104,21 @@ export function redactTranscriptStructuredFieldValue(
   }
   return encodePersistedTranscriptText(
     value,
-    (escaped) =>
+    (body) =>
       modelVisibleToolResult
         ? redactModelVisibleSensitiveFieldValueWithConfig(
             key,
-            escaped,
+            body,
             resolveTranscriptLoggingConfig(cfg),
           )
-        : redactSensitiveFieldValueWithConfig(key, escaped, resolveTranscriptLoggingConfig(cfg)),
+        : redactSensitiveFieldValueWithConfig(key, body, resolveTranscriptLoggingConfig(cfg)),
     !modelVisibleToolResult,
   );
 }
 
 /** Source input text is persisted too, so its masks need the same provenance. */
 export function redactTranscriptSourceInputText(value: string, cfg?: OpenClawConfig): string {
-  return encodePersistedTranscriptText(value, (escaped) =>
-    redactSourceInputTextWithConfig(escaped, resolveTranscriptLoggingConfig(cfg)),
+  return encodePersistedTranscriptText(value, (body) =>
+    redactSourceInputTextWithConfig(body, resolveTranscriptLoggingConfig(cfg)),
   );
 }

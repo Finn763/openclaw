@@ -36,11 +36,18 @@
  *   escaped form: only strings that carry no reserved byte stay byte-identical, and a
  *   string that needed escaping is never stored as bare bytes a reader could mistake for
  *   provenance (#142821 review).
- * - Readers (`replaceRedactionProvenance`, `stripRedactionProvenance`) only decode
- *   strings that carry at least one genuine mark. Strings without one are returned
- *   byte-identical, so unencoded legacy history — including a literal escape-byte
- *   pair it happens to contain — is never rewritten. Detection uses the same scanner
- *   as replacement, never a divergent prefilter.
+ * - Stored strings that carry a reserved byte open with `REDACTION_PROVENANCE_STORAGE_MARK`
+ *   (#143937 review): a mask proves nothing about the bytes around it, so a mask-free
+ *   escaped write was indistinguishable from legacy raw history and could not be decoded.
+ *   The mark states "this string uses the encoding" on its own, so readers decode escaped
+ *   literals whether or not a mask is present, and writes of already marked strings reuse
+ *   their prepared bytes instead of escaping producer markers as raw input again.
+ * - Readers (`replaceRedactionProvenance`, `stripRedactionProvenance`) decode a string
+ *   when it carries the storage mark, or when it carries at least one genuine mark —
+ *   rows persisted before the mark existed. Everything else is returned byte-identical,
+ *   so unencoded legacy history — including a literal escape-byte pair it happens to
+ *   contain — is never rewritten. Detection uses the same scanner as replacement, never
+ *   a divergent prefilter.
  */
 
 /** Discriminator and escape byte for the grammar. Non-printable; never stored bare. */
@@ -52,6 +59,10 @@ const REDACTION_PROVENANCE_CLOSE_BODY = "⟦/openclaw:redacted:1⟧";
 export const REDACTION_PROVENANCE_START = `${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_OPEN_BODY}`;
 /** Closes a persisted mask. */
 export const REDACTION_PROVENANCE_END = `${REDACTION_PROVENANCE_ESCAPE}${REDACTION_PROVENANCE_CLOSE_BODY}`;
+/** Opens every stored string this encoder escaped. The escape byte in front of the body is
+ *  the discriminator, and raw input reaches storage with its own escape bytes doubled, so
+ *  a stored string that opens with these bytes was written by this encoder (#143937). */
+export const REDACTION_PROVENANCE_STORAGE_MARK = `${REDACTION_PROVENANCE_ESCAPE}⟦openclaw:encoded:1⟧`;
 
 /** Mask-shaped mark body: the placeholder, or one `prefix…suffix` diagnostic hint. */
 // oxlint-disable-next-line eslint/no-control-regex -- Intentional 0x1F discriminator for provenance marks.
@@ -238,17 +249,58 @@ export function escapeRedactionProvenanceLiterals(text: string): string {
 }
 
 /**
+ * Adds the storage mark to one encoded body. Strings that carry no reserved byte come back
+ * byte-identical, so untouched history stays untouched, and every string that does carry one
+ * — escaped literal or produced mark — says so on its own, which is what lets a reader decode
+ * the escaped literals of a mask-free write instead of leaving them doubled (#143937 review).
+ */
+export function markEncodedRedactionProvenance(encodedBody: string): string {
+  // Only a string that carries the escape byte decodes differently from its stored bytes, so
+  // only those are marked: text with no reserved byte — including delimiter text without the
+  // discriminator — stays byte-identical (#142821 review).
+  return encodedBody.includes(REDACTION_PROVENANCE_ESCAPE)
+    ? `${REDACTION_PROVENANCE_STORAGE_MARK}${encodedBody}`
+    : encodedBody;
+}
+
+/** Returns whether a stored string carries the storage mark. */
+export function isEncodedRedactionProvenance(text: string): boolean {
+  return text.startsWith(REDACTION_PROVENANCE_STORAGE_MARK);
+}
+
+/** Removes one storage mark. Unmarked text — raw input or pre-marker history — is returned
+ *  unchanged, so writers can tell a prepared body from a raw one by comparing bytes. */
+export function stripEncodedRedactionProvenance(text: string): string {
+  return isEncodedRedactionProvenance(text)
+    ? text.slice(REDACTION_PROVENANCE_STORAGE_MARK.length)
+    : text;
+}
+
+/**
+ * Body a reader may decode: the payload of a marked string, or the text itself when it
+ * carries a genuine mark (a row persisted before the mark existed). `undefined` means the
+ * bytes are raw or legacy history, and no reader may rewrite them (#143937 review).
+ */
+function resolveStoredRedactionProvenance(text: string): string | undefined {
+  if (isEncodedRedactionProvenance(text)) {
+    return text.slice(REDACTION_PROVENANCE_STORAGE_MARK.length);
+  }
+  return containsGenuineMark(text) ? text : undefined;
+}
+
+/**
  * Replaces every complete marked span with `replacement`, keeping all surrounding
  * text byte-identical after restoring its escaped bytes. An unterminated opener is
  * left verbatim: a reader that cannot see the end of a mask must not invent one.
- * Text without a genuine mark is returned unchanged, so unencoded legacy history is
- * never rewritten (#142821 review).
+ * Text that is neither marked as encoded nor carries a genuine mark is returned
+ * unchanged, so unencoded legacy history is never rewritten (#142821 review).
  */
 export function replaceRedactionProvenance(text: string, replacement: string): string {
-  if (!containsGenuineMark(text)) {
+  const body = resolveStoredRedactionProvenance(text);
+  if (body === undefined) {
     return text;
   }
-  return scanRedactionProvenance(text, {
+  return scanRedactionProvenance(body, {
     literal: unescapeRedactionProvenanceLiterals,
     marked: () => replacement,
   });
@@ -258,14 +310,16 @@ export function replaceRedactionProvenance(text: string, replacement: string): s
  * Canonical form of one persisted string for byte-level identity comparison: every
  * marked span collapses to its mask body and escaped literal bytes are restored, so a
  * pre-upgrade row with bare masks and a freshly encoded row with the same content
- * compare equal. Genuinely different payloads still differ. Text without a genuine
- * mark is returned unchanged, so legacy rows keep their own canonical form.
+ * compare equal. Genuinely different payloads still differ. Text that is neither marked
+ * as encoded nor carries a genuine mark is returned unchanged, so legacy rows keep their
+ * own canonical form.
  */
 export function stripRedactionProvenance(text: string): string {
-  if (!containsGenuineMark(text)) {
+  const body = resolveStoredRedactionProvenance(text);
+  if (body === undefined) {
     return text;
   }
-  return scanRedactionProvenance(text, {
+  return scanRedactionProvenance(body, {
     literal: unescapeRedactionProvenanceLiterals,
     marked: (mask) => mask,
   });
