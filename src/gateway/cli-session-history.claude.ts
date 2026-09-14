@@ -8,7 +8,10 @@ import {
   parseDateStringTimestampMs,
 } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { stripRedactionProvenance } from "@openclaw/normalization-core/redaction-provenance";
+import {
+  isEncodedRedactionProvenance,
+  stripRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   readCliImageTurnContext,
@@ -71,8 +74,12 @@ export function decodeClaudeCliProjectEntry(line: string): ClaudeCliProjectEntry
 
 function decodeStoredRedactionProvenance<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value === "string") {
+    // Claude project rows are external history, not our storage: only a string that carries
+    // the encoding marker was written by OpenClaw, so only that one may be decoded. A
+    // literal marker in raw external text is data — decoding it would drop the original
+    // bytes before redaction sees them (#143937 review).
     // SAFETY: T is string in this branch; the codec returns a string.
-    return stripRedactionProvenance(value) as T;
+    return (isEncodedRedactionProvenance(value) ? stripRedactionProvenance(value) : value) as T;
   }
   if (!value || typeof value !== "object" || seen.has(value)) {
     return value;
@@ -117,6 +124,7 @@ export function redactClaudeCliHistoryMessage(
   // diagnostic hint into a placeholder — and the redaction below still re-applies the
   // current policy to every visible byte (#142821).
   return redactTranscriptMessage(
+    // SAFETY: decode strips provenance markers only; the import path already treats this row as AgentMessage-shaped.
     decodeStoredRedactionProvenance(message) as unknown as AgentMessage,
   ) as unknown as TranscriptLikeMessage;
 }

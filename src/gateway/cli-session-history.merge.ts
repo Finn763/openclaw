@@ -134,15 +134,16 @@ function extractComparableText(
     ).text;
     return visible.replace(/\s+/g, " ").trim();
   };
-  // Stored transcripts carry mask markers (#142821): compare canonical bytes so a local row
-  // this release redacted still matches the import that copies its masked text. Both the
-  // primary text and the drift-note view use the canonical form, or the note path would
-  // compare marked bytes against unmarked ones.
+  // Stored transcripts carry mask markers (#142821): decode the stored bytes first, so the
+  // drift-note view and the primary text compare the same canonical form instead of marked
+  // bytes against unmarked ones. The storage mark opens the stored string, so the note has
+  // to be looked for in the decoded text (#143937 review).
   const canonicalize = (value: string) => stripRedactionProvenance(value);
   const normalized = normalizeText(canonicalize(stripResult.text));
-  const withoutDriftNote = isClaudeImport ? stripCliSessionDriftNote(rawText) : rawText;
+  const canonicalText = canonicalize(rawText);
+  const withoutDriftNote = isClaudeImport ? stripCliSessionDriftNote(canonicalText) : canonicalText;
   const driftNoteText =
-    withoutDriftNote !== rawText
+    withoutDriftNote !== canonicalText
       ? normalizeText(canonicalize(stripTrailingCliImageMentions(withoutDriftNote.trim()).text))
       : undefined;
   const meta = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"]);

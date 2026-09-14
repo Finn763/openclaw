@@ -4,6 +4,8 @@ import { expectDefined } from "@openclaw/normalization-core";
 import {
   REDACTION_PROVENANCE_END,
   REDACTION_PROVENANCE_START,
+  REDACTION_PROVENANCE_STORAGE_MARK,
+  stripEncodedRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
@@ -661,14 +663,17 @@ describe("installSessionToolResultGuard", () => {
     expect(serializedToolResult).not.toContain("plainsecretvalue123");
     expect(serializedToolResult).not.toContain("hunter2");
     expect(serializedToolResult).not.toContain("nestedplainsecret123");
-    // Persisted masks carry explicit provenance so replay never has to guess (#142821).
+    // Persisted masks carry explicit provenance so replay never has to guess (#142821); a
+    // stored string that carries reserved bytes also opens with the encoding's storage mark
+    // (#143937 review).
     const provenanceMarked = (value: unknown) =>
       typeof value === "string" &&
-      value.startsWith(REDACTION_PROVENANCE_START) &&
+      stripEncodedRedactionProvenance(value).startsWith(REDACTION_PROVENANCE_START) &&
       value.endsWith(REDACTION_PROVENANCE_END);
-    // Short values persist the bare mask form; longer ones keep their hint bytes.
+    // Short values persist the bare mask form; longer ones keep their hint bytes. Every
+    // string that carries reserved bytes is stored behind the encoding's storage mark.
     expect(toolResult.details.password).toBe(
-      `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`,
+      `${REDACTION_PROVENANCE_STORAGE_MARK}${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`,
     );
     expect(provenanceMarked(toolResult.details.apiKey)).toBe(true);
     expect(provenanceMarked(toolResult.details.nested.accessToken[0])).toBe(true);

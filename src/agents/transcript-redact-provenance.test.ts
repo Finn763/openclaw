@@ -9,6 +9,7 @@ import {
   REDACTION_PROVENANCE_ESCAPE,
   REDACTION_PROVENANCE_START,
   hasRedactionProvenance,
+  isEncodedRedactionProvenance,
   stripRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import {
@@ -19,6 +20,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
+import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
+import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 import { redactTranscriptMessage } from "./transcript-redact.js";
 
@@ -117,10 +120,10 @@ describe("transcript persistence writes redaction provenance (#142821)", () => {
     // Re-redacting stored bytes is not a byte fixed point: a hint body is mask-shaped text,
     // so the second pass masks it whole. What has to survive is the mask itself — marked, so
     // replay still rewrites it — and never the secret (#142821 review).
-    expect(stripRedactionProvenance(argumentsOf(once).apiKey)).toBe("plains…e123");
-    expect(stripRedactionProvenance(argumentsOf(twice).apiKey)).toBe("***");
-    expect(hasRedactionProvenance(argumentsOf(twice).apiKey)).toBe(true);
-    expect(hasRedactionProvenance(argumentsOf(twice).command)).toBe(true);
+    expect(stripRedactionProvenance(argumentsOf(once).apiKey!)).toBe("plains…e123");
+    expect(stripRedactionProvenance(argumentsOf(twice).apiKey!)).toBe("***");
+    expect(hasRedactionProvenance(argumentsOf(twice).apiKey!)).toBe(true);
+    expect(hasRedactionProvenance(argumentsOf(twice).command!)).toBe(true);
     expect(JSON.stringify(twice)).not.toContain(LONG_SECRET);
     expect(JSON.stringify(twice)).not.toContain("hunter2");
   });
@@ -184,7 +187,7 @@ describe("replay consumes that provenance (#142821)", () => {
     expect(replayedContent(stored)).toBe(content);
   });
 
-  it("escapes literal text that spells the current encoding instead of replaying it as provenance", () => {
+  it("round-trips literal text that spells the current encoding", () => {
     readLoggingConfig.mockReturnValue({});
     const literal = `${REDACTION_PROVENANCE_START}example${REDACTION_PROVENANCE_END}`;
     const content = `the doc quotes ${literal} verbatim`;
@@ -192,22 +195,21 @@ describe("replay consumes that provenance (#142821)", () => {
       castAgentMessage({ role: "user", content, timestamp: 0 }),
       config,
     ) as unknown as { content: string };
-    // Persistence escapes the escape bytes of literal history it did not mark itself.
+    // Persistence escapes the escape bytes of literal history it did not mark itself, and
+    // says so on the string, so replay restores exactly the bytes the user wrote instead of
+    // leaving the escaped form in the transcript (#143937 review).
     expect(stored.content).not.toBe(content);
-    expect(stored.content.length).toBe(content.length + 2);
+    expect(isEncodedRedactionProvenance(stored.content)).toBe(true);
     expect(hasRedactionProvenance(stored.content)).toBe(false);
-    // Without a genuine mark the stored bytes are literal history: replay keeps them
-    // rather than replacing what the user actually wrote (#142821 review).
-    expect(replayedContent(stored)).toBe(stored.content);
+    expect(replayedContent(stored)).toBe(content);
     expect(replayedContent(stored)).not.toContain("re-derive");
-    expect(replayedContent(stored)).toContain("example");
   });
 
-  it("keeps a literal complete mark out of replay when redaction produced no mark", () => {
+  it("round-trips a literal complete mark without replaying it as provenance", () => {
     readLoggingConfig.mockReturnValue({});
-    // The exact bytes replay would otherwise read as generated provenance, typed by a
-    // user instead. Pre-escaping keeps them literal, so nothing replaces them
-    // (#142821 review).
+    // The exact bytes replay would otherwise read as generated provenance, typed by a user
+    // instead. Pre-escaping keeps them literal, and decoding restores them without
+    // re-scanning, so nothing replaces them (#143937 review).
     const literal = `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`;
     const content = `the doc quotes ${literal} verbatim`;
     const stored = redactTranscriptMessage(
@@ -216,14 +218,52 @@ describe("replay consumes that provenance (#142821)", () => {
     ) as unknown as { content: string };
     expect(hasRedactionProvenance(stored.content)).toBe(false);
     expect(stored.content).not.toBe(content);
-    expect(stored.content.length).toBe(content.length + 2);
-    // The literal bytes survive persist and replay untouched; the doubled escape byte is
-    // the only difference from what was typed.
-    expect(replayedContent(stored)).toBe(stored.content);
+    expect(replayedContent(stored)).toBe(content);
     expect(replayedContent(stored)).toContain("***");
     expect(replayedContent(stored)).not.toContain("re-derive");
-    expect(stored.content.split(REDACTION_PROVENANCE_ESCAPE).join("")).toBe(
-      content.split(REDACTION_PROVENANCE_ESCAPE).join(""),
-    );
+  });
+
+  it("decodes a mask-free escaped write instead of leaving it doubled", () => {
+    readLoggingConfig.mockReturnValue({});
+    // One literal separator and nothing to redact: the write still escapes it, and the
+    // stored string says so — otherwise replay hands back two separators, and every further
+    // write doubles them again (#143937 review).
+    const content = `the separator is a${REDACTION_PROVENANCE_ESCAPE}b`;
+    const stored = redactTranscriptMessage(
+      castAgentMessage({ role: "user", content, timestamp: 0 }),
+      config,
+    ) as unknown as { content: string };
+    expect(isEncodedRedactionProvenance(stored.content)).toBe(true);
+    expect(stored.content).not.toBe(content);
+    expect(replayedContent(stored)).toBe(content);
+    // A second pass over the stored bytes is a fixed point, storage mark included.
+    const rewritten = redactTranscriptMessage(
+      castAgentMessage({ role: "user", content: stored.content, timestamp: 0 }),
+      config,
+    ) as unknown as { content: string };
+    expect(rewritten.content).toBe(stored.content);
+    expect(replayedContent(rewritten)).toBe(content);
+  });
+
+  it("masks a registered secret that carries the encoding discriminator", () => {
+    readLoggingConfig.mockReturnValue({});
+    // The write path escapes raw escape bytes before exact-value matching, so the registry
+    // has to know that surface form — otherwise the credential reaches storage and replay
+    // restores it verbatim (#143937 review).
+    const secret = `opaque${REDACTION_PROVENANCE_ESCAPE}credentialvalue1234`;
+    registerSecretValueForRedaction(secret);
+    try {
+      const stored = redactTranscriptMessage(
+        castAgentMessage({ role: "user", content: `key ${secret} end`, timestamp: 0 }),
+        config,
+      ) as unknown as { content: string };
+      expect(stored.content).not.toContain(secret);
+      expect(stored.content).not.toContain("credentialvalue1234");
+      expect(hasRedactionProvenance(stored.content)).toBe(true);
+      expect(replayedContent(stored)).not.toContain("credentialvalue1234");
+      expect(replayedContent(stored)).toContain("re-derive");
+    } finally {
+      resetSecretRedactionRegistryForTest();
+    }
   });
 });

@@ -4,15 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import {
   hasRedactionProvenance,
+  isEncodedRedactionProvenance,
   markRedactionProvenance,
   REDACTION_PROVENANCE_END,
-  REDACTION_PROVENANCE_ESCAPE,
   REDACTION_PROVENANCE_START,
+  replaceRedactionProvenance,
+  stripEncodedRedactionProvenance,
 } from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
+import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
+import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -27,6 +31,8 @@ type PersistedToolResultMessage = ToolResultMessage & { details: Record<string, 
 const EMPTY_PLUGIN_SCHEMA = { type: "object", additionalProperties: false, properties: {} };
 const originalBundledPluginsDir = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
 const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+/** What replay substitutes for a marked span (see `packages/agent-core` session replay). */
+const REPLAY_PLACEHOLDER = "[redacted: re-derive this value, do not reuse]";
 const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
 let tempDirs: string[] = [];
 
@@ -564,13 +570,53 @@ describe("tool_result_persist hook", () => {
     } as ToolResultMessage);
 
     const persistedNote = requirePersistedToolResult(sm).details.note as string;
-    // Nothing was redacted, so the stored bytes are the escaped literal form: replay must
-    // never read a user-typed mark as generated provenance (#142821 review).
+    // Nothing was redacted, so the stored bytes are the escaped literal form, marked as
+    // encoded: decoding restores exactly what was typed and never reads a user-typed mark as
+    // generated provenance (#142821, #143937 review).
     expect(hasRedactionProvenance(persistedNote)).toBe(false);
+    expect(isEncodedRedactionProvenance(persistedNote)).toBe(true);
     expect(persistedNote).not.toBe(note);
-    expect(persistedNote.split(REDACTION_PROVENANCE_ESCAPE).join("")).toBe(
-      note.split(REDACTION_PROVENANCE_ESCAPE).join(""),
-    );
+    expect(replaceRedactionProvenance(persistedNote, REPLAY_PLACEHOLDER)).toBe(note);
+  });
+
+  it("keeps producer provenance across the repeated detail pass", () => {
+    // The guard sanitizes details before and after its persistence hooks, so the second pass
+    // reads this encoder's own prepared bytes. A registered value under a non-sensitive key
+    // becomes a marked hint on the first pass; the second must reuse those bytes instead of
+    // escaping the mark into literal text, or replay would keep the mask rather than replace
+    // it (#143937 review).
+    const registeredValue = "registeredopaquedetailvalue123456";
+    registerSecretValueForRedaction(registeredValue);
+    try {
+      const sm = guardSessionManager(SessionManager.inMemory(), {
+        agentId: "main",
+        sessionKey: "main",
+      });
+      const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
+      appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      } as AgentMessage);
+      appendMessage({
+        role: "toolResult",
+        toolCallId: "call_1",
+        isError: false,
+        content: [{ type: "text", text: "visible output stays small" }],
+        details: { status: "completed", diagnostic: registeredValue },
+      } as ToolResultMessage);
+
+      const stored = requirePersistedToolResult(sm).details.diagnostic as string;
+      expect(isEncodedRedactionProvenance(stored)).toBe(true);
+      expect(hasRedactionProvenance(stored)).toBe(true);
+      expect(stored).not.toContain(registeredValue);
+      // Replay still rewrites the span: the mask never reaches the model as literal bytes.
+      expect(replaceRedactionProvenance(stored, REPLAY_PLACEHOLDER)).toBe(REPLAY_PLACEHOLDER);
+      expect(replaceRedactionProvenance(stored, REPLAY_PLACEHOLDER)).not.toContain(
+        "registeredopaquedetailvalue",
+      );
+    } finally {
+      resetSecretRedactionRegistryForTest();
+    }
   });
 
   it("redacts retained structured fields in fallback oversized details summaries", () => {
@@ -618,8 +664,10 @@ describe("tool_result_persist hook", () => {
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.finalDetailsTruncated).toBe(true);
     const persistedToken = (details.status as { token: string }).token;
-    expect(persistedToken.startsWith(REDACTION_PROVENANCE_START)).toBe(true);
-    expect(persistedToken.endsWith(REDACTION_PROVENANCE_END)).toBe(true);
+    expect(isEncodedRedactionProvenance(persistedToken)).toBe(true);
+    const markedToken = stripEncodedRedactionProvenance(persistedToken);
+    expect(markedToken.startsWith(REDACTION_PROVENANCE_START)).toBe(true);
+    expect(markedToken.endsWith(REDACTION_PROVENANCE_END)).toBe(true);
     expect(details.spilledChars).toBe(2_000_000);
     expect(details.spillTruncated).toBe(true);
     expect(details.spill).toEqual({
@@ -1061,3 +1109,4 @@ describe("before_message_write hook", () => {
     expectPersistedToolResultTextCapped(sm);
   });
 });
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
