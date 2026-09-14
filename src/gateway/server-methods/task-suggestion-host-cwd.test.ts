@@ -70,11 +70,12 @@ function useSandbox(info: {
   workspaceDir: string;
   containerWorkdir?: string;
   dockerBinds?: string[];
+  workspaceAccess?: "rw" | "ro" | "none";
 }) {
   sandboxState.info = {
     workspaceDir: info.workspaceDir,
     agentWorkspaceDir: info.workspaceDir,
-    workspaceAccess: "rw",
+    workspaceAccess: info.workspaceAccess ?? "rw",
     ...(info.containerWorkdir ? { containerWorkdir: info.containerWorkdir } : {}),
     ...(info.dockerBinds ? { dockerBinds: info.dockerBinds } : {}),
   };
@@ -193,6 +194,65 @@ describe("task suggestion host cwd lifecycle", () => {
       cwdAlreadyHostResolved: true,
     });
     expect(present).toEqual({ ok: true, cwd: path.join(root, "real") });
+  });
+
+  it("hands over a writable bind root and withholds a read-only one", async () => {
+    const workspace = makeTempRoot();
+    const readonlyRoot = makeTempRoot();
+    const checkoutRoot = makeTempRoot();
+    fs.mkdirSync(path.join(checkoutRoot, "project"), { recursive: true });
+    useSandbox({
+      workspaceDir: path.join(workspace, "sandbox-copy"),
+      containerWorkdir: "/workspace",
+      dockerBinds: [`${readonlyRoot}:/reference:ro`, `${checkoutRoot}:/project`],
+    });
+    const cfg = testConfig({ workspace });
+
+    // The follow-up runtime mounts the handed root as its own workspace, so a
+    // `:ro` bind must not come back as a writable alias: creation keeps its
+    // containment error instead of the marker.
+    await expect(
+      resolveTaskSuggestionHostCwd({
+        cfg,
+        sessionKey: "bind-source",
+        agentId: "main",
+        cwd: "/reference",
+      }),
+    ).resolves.toEqual({ ok: true, cwd: readonlyRoot });
+
+    await expect(
+      resolveTaskSuggestionHostCwd({
+        cfg,
+        sessionKey: "bind-source",
+        agentId: "main",
+        cwd: "/project",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      cwd: checkoutRoot,
+      mountRootHandoff: { kind: "sandbox-mount-root", agentId: "main", hostRoot: checkoutRoot },
+    });
+  });
+
+  it("withholds the handoff when the source workspace itself is read-only", async () => {
+    const root = makeTempRoot();
+    const sandboxCopy = makeTempRoot();
+    fs.mkdirSync(path.join(sandboxCopy, "project"), { recursive: true });
+    useSandbox({
+      workspaceDir: sandboxCopy,
+      containerWorkdir: "/workspace",
+      workspaceAccess: "ro",
+    });
+    const cfg = testConfig({ workspace: root });
+
+    await expect(
+      resolveTaskSuggestionHostCwd({
+        cfg,
+        sessionKey: "ro-source",
+        agentId: "main",
+        cwd: "/workspace/project",
+      }),
+    ).resolves.toEqual({ ok: true, cwd: path.join(sandboxCopy, "project") });
   });
 
   it("carries the source session skill snapshot into sandbox workspace resolution", async () => {

@@ -105,18 +105,18 @@ function buildSourceSandboxMounts(params: {
   });
 }
 
-/** Longest mount host root covering a host path, matching the table's own precedence. */
-function findOwningMountHostRoot(
+/** Owning mount with the longest host root covering a host path, matching the table's precedence. */
+function findOwningMount(
   mounts: readonly SandboxFsMount[],
   hostPath: string,
-): string | undefined {
-  let owner: string | undefined;
+): SandboxFsMount | undefined {
+  let owner: SandboxFsMount | undefined;
   for (const mount of mounts) {
     if (!isPathInside(mount.hostRoot, hostPath)) {
       continue;
     }
-    if (owner === undefined || mount.hostRoot.length > owner.length) {
-      owner = mount.hostRoot;
+    if (owner === undefined || mount.hostRoot.length > owner.hostRoot.length) {
+      owner = mount;
     }
   }
   return owner;
@@ -129,6 +129,12 @@ function findOwningMountHostRoot(
  * bind target) are exactly the ones the sandbox layer mounts, so the marker
  * names that root for the roots the guard would refuse; creation re-derives it
  * before admitting the cwd.
+ *
+ * The child runtime mounts the admitted root as its own workspace, so only a
+ * mount the sandbox layer itself serves writable may continue: a read-only bind
+ * (`:ro`), a protected skill mount, or a read-only workspace copy would come
+ * back as a writable alias the operator never authorized. Withholding the
+ * marker keeps creation's containment error instead.
  */
 function resolveMountRootHandoff(params: {
   mounts: readonly SandboxFsMount[] | undefined;
@@ -139,8 +145,11 @@ function resolveMountRootHandoff(params: {
   if (!params.mounts || isInsideAgentWorkspace(params.agentWorkspaceDir, params.hostPath)) {
     return undefined;
   }
-  const hostRoot = findOwningMountHostRoot(params.mounts, params.hostPath);
-  return hostRoot ? { kind: "sandbox-mount-root", agentId: params.agentId, hostRoot } : undefined;
+  const owner = findOwningMount(params.mounts, params.hostPath);
+  if (!owner?.writable) {
+    return undefined;
+  }
+  return { kind: "sandbox-mount-root", agentId: params.agentId, hostRoot: owner.hostRoot };
 }
 
 /**
