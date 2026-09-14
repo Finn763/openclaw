@@ -18,7 +18,7 @@ import { normalizeAgentId } from "../../routing/session-key.js";
 import { resolveUserPath } from "../../utils.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
 import { SANDBOX_STATE_DIR } from "./constants.js";
-import { resolveSandboxBindHostRoots } from "./fs-paths.js";
+import { resolveWritableSandboxBindHostRoots } from "./fs-paths.js";
 
 export type SandboxMountRootHandoff = {
   kind: "sandbox-mount-root";
@@ -39,8 +39,14 @@ function realpathIfPresent(candidate: string): string | undefined {
 /**
  * Host roots the sandbox layer may mount into a container for this agent: every
  * isolated workspace copy under the configured sandbox workspace root, the
- * materialized skills workspaces, and each declared bind host directory. The
- * agent workspace itself stays out of this list; the caller checks it first.
+ * materialized skills workspaces, and each declared bind host directory the
+ * mount table serves writable. The agent workspace itself stays out of this
+ * list; the caller checks it first.
+ *
+ * A root admitted here becomes the child session's workspace, which the child
+ * runtime mounts writable under `workspaceAccess: "rw"`, so a read-only bind
+ * (`:ro`) must never appear: admitting it would hand the follow-up a writable
+ * alias of a directory the operator restricted to reads.
  */
 export function resolveSandboxOwnedHostRoots(params: {
   cfg: OpenClawConfig;
@@ -50,7 +56,7 @@ export function resolveSandboxOwnedHostRoots(params: {
   return [
     resolveUserPath(sandbox.workspaceRoot),
     path.join(SANDBOX_STATE_DIR, "skills-workspaces"),
-    ...resolveSandboxBindHostRoots(sandbox.docker.binds),
+    ...resolveWritableSandboxBindHostRoots(sandbox.docker.binds),
   ];
 }
 

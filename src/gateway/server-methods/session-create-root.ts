@@ -56,16 +56,17 @@ export function prepareSessionCreateFilesystemRoot(params: {
         agentId: params.targetAgentId,
         sessionKey: params.sessionKey ?? `agent:${params.targetAgentId}:dashboard:pending`,
       });
-      const workspaceRoot = fs.realpathSync(workspaceDir);
       // Canonical paths admit workspace aliases while rejecting links that
-      // resolve outside the selected agent's workspace. Only the sandbox cwd
-      // mapping layer may hand over a root the sandbox itself mounts (an isolated
-      // workspace copy or a bind target): its marker names that root, and the
-      // sandbox layer re-derives it for this agent here, so unmarked callers keep
-      // the original containment check.
+      // resolve outside the selected agent's workspace; the workspace is only
+      // canonicalized once containment applies, so a creation that does not run
+      // in it never fails on it. Only the sandbox cwd mapping layer may hand
+      // over a root the sandbox itself mounts writable (an isolated workspace
+      // copy or a writable bind target): its marker names that root, and the
+      // sandbox layer re-derives it for this agent here, so unmarked callers
+      // keep the original containment check.
       if (
         (params.sandboxRequired || targetRuntime.sandboxed) &&
-        !isPathInside(workspaceRoot, sessionRoot) &&
+        !isPathInside(fs.realpathSync(workspaceDir), sessionRoot) &&
         !isVerifiedSandboxMountRootHandoff({
           cfg: params.cfg,
           agentId: params.targetAgentId,
