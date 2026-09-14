@@ -39,7 +39,6 @@ describe("channel lifecycle status patches", () => {
         lastConnectedAt: 1234,
         lastError: null,
         terminalDisconnect: undefined,
-        retryableCollision: undefined,
         mode: "polling",
       });
     } finally {

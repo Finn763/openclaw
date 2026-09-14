@@ -192,18 +192,6 @@ export type ChannelAccountSnapshot = {
    */
   ingressUnavailable?: true;
   terminalDisconnect?: boolean;
-  /**
-   * Transport-authored classification of this account's own `terminalDisconnect`.
-   * The channel that observed the failure sets it when the terminal verdict was a
-   * retryable session collision — its replacement handshake lost against its own
-   * not-yet-released predecessor session — rather than a terminal credential or
-   * configuration failure. Only the transport owner sets it; the Gateway never
-   * infers it from timing, connection age, or predecessor state. A classified
-   * report from a replacement the Gateway admitted for an account that was still
-   * running when it was stopped is re-driven by the bounded crash supervisor;
-   * every other terminal report keeps its operator-actionable diagnosis.
-   */
-  retryableCollision?: true;
   lastStartAt?: number | null;
   lastStopAt?: number | null;
   lastInboundAt?: number | null;

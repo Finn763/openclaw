@@ -20,16 +20,13 @@ during adoption, and core-derived policy writes remain supported. There is no
 removal date; removal waits for external channel-plugin adoption.
 
 A terminal report (`lifecycle: "blocked"` with `terminalDisconnect: true`) stops
-the account and keeps its diagnosis for operator action. Only the channel that
-observed the failure can tell a retryable session collision — a replacement
-handshake losing against its own not-yet-released predecessor session — apart
-from rejected credentials or invalid configuration, so that classification stays
-transport-authored: `ChannelAccountSnapshot.retryableCollision` marks the
-terminal report the channel itself classified as retryable. The Gateway never
-infers that classification, and a classified report reaches the bounded crash
-supervisor only for a replacement it admitted after stopping an account that was
-still running. A start that fails without a terminal report is already a
-recoverable failure and keeps its existing backoff retry.
+the account and keeps its diagnosis for operator action. Reserve it for verdicts
+only an operator can clear, such as rejected credentials or invalid configuration.
+A start that fails without publishing a terminal verdict is a recoverable failure:
+the Gateway re-drives it through the bounded restart supervisor with backoff. Report
+a retryable session collision — a replacement handshake losing against its own
+not-yet-released predecessor session — that way, by failing the start instead of
+publishing a terminal verdict.
 
 ## Typing indicators
 

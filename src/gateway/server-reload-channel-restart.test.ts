@@ -510,11 +510,12 @@ type StartAccount = NonNullable<NonNullable<ChannelPlugin["gateway"]>["startAcco
 
 /**
  * A config write (`openclaw doctor`) stops and re-admits every channel account the
- * changed config owns. A plugin channel whose plugin owns `gateway.startAccount` can
- * lose that handshake against its own still-live predecessor session and report a
- * terminal verdict before it ever connects. When the transport owner classifies its
- * own verdict as a retryable session collision, that account must not wedge behind a
- * manual `channels.start` RPC; every other terminal report stays operator-actionable.
+ * changed config owns. A plugin channel that owns `gateway.startAccount` can lose that
+ * handshake against its own still-live predecessor session and fail the replacement
+ * start. A start that fails without publishing a terminal verdict is a recoverable
+ * failure, so the existing bounded restart supervisor must re-drive it instead of
+ * leaving the account wedged behind a manual `channels.start` RPC; a transport that
+ * reports a terminal verdict keeps its operator-actionable diagnosis.
  */
 describe("hot-reload replacement recovery", () => {
   beforeEach(() => {
@@ -594,21 +595,16 @@ describe("hot-reload replacement recovery", () => {
     return target.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
   }
 
-  it("re-drives a reload replacement whose transport classifies the collision before ready", async () => {
+  it("re-drives a reload replacement whose start fails recoverably before ready", async () => {
     let starts = 0;
     installPlugin(async ({ setStatus, abortSignal }) => {
       starts += 1;
       if (starts === 2) {
-        // The replacement collided with its own still-live predecessor session.
-        // The transport that observed it classifies the verdict as retryable;
-        // its credentials never changed.
-        setStatus(
-          channelBlockedPatch("session collision with the previous connection", {
-            accountId: DEFAULT_ACCOUNT_ID,
-            retryableCollision: true,
-          }),
-        );
-        return;
+        // The replacement lost the handshake against its own still-live predecessor
+        // session. Its transport reports that as a recoverable start failure — no
+        // terminal verdict — so the existing supervisor owns the re-drive and its
+        // credentials never changed.
+        throw new Error("session collision with the previous connection");
       }
       setStatus(channelReadyPatch({ accountId: DEFAULT_ACCOUNT_ID }));
       await new Promise<void>((resolve) => {
@@ -621,27 +617,20 @@ describe("hot-reload replacement recovery", () => {
 
     await advanceTimersUntil(
       () => starts >= 3,
-      "reload replacement was not re-driven after a classified session collision",
+      "reload replacement was not re-driven after a recoverable start failure",
       { stepMs: 10, maxMs: 1_000 },
     );
     await flushMicrotasks();
     expect(accountRuntime(manager)?.lifecycle).toBe("ready");
     expect(accountRuntime(manager)?.terminalDisconnect).toBeUndefined();
-    expect(accountRuntime(manager)?.retryableCollision).toBeUndefined();
   });
 
-  it("re-drives a classified collision after a predecessor that outlived the reload's stop", async () => {
+  it("re-drives a recoverable start failure after a long-running predecessor", async () => {
     let starts = 0;
     installPlugin(async ({ setStatus, abortSignal }) => {
       starts += 1;
       if (starts === 2) {
-        setStatus(
-          channelBlockedPatch("session collision with the previous connection", {
-            accountId: DEFAULT_ACCOUNT_ID,
-            retryableCollision: true,
-          }),
-        );
-        return;
+        throw new Error("session collision with the previous connection");
       }
       setStatus(channelReadyPatch({ accountId: DEFAULT_ACCOUNT_ID }));
       await new Promise<void>((resolve) => {
@@ -654,13 +643,13 @@ describe("hot-reload replacement recovery", () => {
     expect(accountRuntime(manager)?.lifecycle).toBe("ready");
     // The predecessor connected, then stayed up far beyond any connection-age
     // window a recovery rule could have read after the reload had already
-    // cleared `running`. Only the pre-stop fact can still see it was healthy.
+    // cleared `running`. Recoverable replacement starts do not depend on that.
     await vi.advanceTimersByTimeAsync(10 * 60_000);
 
     await reloadAccount(manager);
     await advanceTimersUntil(
       () => starts >= 3,
-      "a long-running healthy predecessor left its classified replacement wedged",
+      "a long-running predecessor left its recoverable replacement wedged",
       { stepMs: 10, maxMs: 1_000 },
     );
     await flushMicrotasks();
@@ -673,8 +662,7 @@ describe("hot-reload replacement recovery", () => {
     installPlugin(async ({ setStatus, abortSignal }) => {
       starts += 1;
       if (starts === 2) {
-        // Revoked credentials are terminal for the transport that reported
-        // them, and nothing classified this verdict as a collision.
+        // Revoked credentials are terminal for the transport that reported them.
         setStatus(
           channelBlockedPatch("401 unauthorized: bot token rejected", {
             accountId: DEFAULT_ACCOUNT_ID,
@@ -700,29 +688,7 @@ describe("hot-reload replacement recovery", () => {
     expect(accountRuntime(manager)?.lastError).toBe("401 unauthorized: bot token rejected");
   });
 
-  it("does not re-drive a classified collision with no stopped healthy predecessor", async () => {
-    let starts = 0;
-    installPlugin(async ({ setStatus }) => {
-      starts += 1;
-      setStatus(
-        channelBlockedPatch("session collision with the previous connection", {
-          accountId: DEFAULT_ACCOUNT_ID,
-          retryableCollision: true,
-        }),
-      );
-    });
-    manager = createManager();
-    await manager.startChannels();
-    await flushMicrotasks(30);
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    expect(starts).toBe(1);
-    expect(accountRuntime(manager)?.lifecycle).toBe("blocked");
-    expect(accountRuntime(manager)?.terminalDisconnect).toBe(true);
-    expect(accountRuntime(manager)?.retryableCollision).toBe(true);
-  });
-
-  it("still wedges a terminal disconnect with no healthy predecessor", async () => {
+  it("still wedges a terminal disconnect without a reload", async () => {
     let starts = 0;
     installPlugin(async ({ setStatus }) => {
       starts += 1;

@@ -21,9 +21,6 @@ type ReadyChannelStatusPatch = {
   lastConnectedAt: number;
   lastError: null;
   terminalDisconnect: undefined;
-  // A collision classification belongs to the terminal verdict it described; a
-  // channel-reported ready clears it with the rest of that verdict.
-  retryableCollision: undefined;
 };
 
 type BlockedChannelStatusPatch = {
@@ -86,7 +83,6 @@ export function channelReadyPatch(
       lastConnectedAt: Date.now(),
       lastError: null,
       terminalDisconnect: undefined,
-      retryableCollision: undefined,
     },
     extras,
   );
