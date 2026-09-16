@@ -47,6 +47,10 @@ function realpathIfPresent(candidate: string): string | undefined {
  * runtime mounts writable under `workspaceAccess: "rw"`, so a read-only bind
  * (`:ro`) must never appear: admitting it would hand the follow-up a writable
  * alias of a directory the operator restricted to reads.
+ *
+ * @public Exported for the focused containment assertions in
+ * `mount-root-handoff.test.ts`; production reaches this list only through
+ * `isVerifiedSandboxMountRootHandoff`, so the export is a test seam, not an API.
  */
 export function resolveSandboxOwnedHostRoots(params: {
   cfg: OpenClawConfig;
