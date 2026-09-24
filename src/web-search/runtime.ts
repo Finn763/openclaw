@@ -394,15 +394,57 @@ function hasExplicitWebSearchSelection(params: {
   return false;
 }
 
+/**
+ * Names the configured search provider when sandboxing emptied the candidate set, so the failure
+ * explains the trust restriction instead of reading as "nothing is enabled at all".
+ */
+function resolveSandboxedRejectedProviderId(params: {
+  search?: WebSearchConfig;
+  runtimeWebSearch?: RuntimeWebSearchMetadata;
+  providerId?: string;
+}): string | undefined {
+  if (params.search?.enabled === false) {
+    return undefined;
+  }
+  const configuredProviderId =
+    params.providerId?.trim() ||
+    (params.search && "provider" in params.search && typeof params.search.provider === "string"
+      ? params.search.provider.trim()
+      : "");
+  if (configuredProviderId) {
+    return configuredProviderId;
+  }
+  return params.runtimeWebSearch?.providerSource === "configured"
+    ? normalizeOptionalLowercaseString(
+        params.runtimeWebSearch.selectedProvider ?? params.runtimeWebSearch.providerConfigured,
+      )
+    : undefined;
+}
+
 /** Executes web_search with fallback when selection was not explicit. */
 export async function runWebSearch(params: RunWebSearchParams): Promise<RunWebSearchResult> {
   const context = resolveWebSearchRequestContext(params);
-  const { config, search, runtimeWebSearch } = context;
+  const { config, search, runtimeWebSearch, sandboxed } = context;
   const candidates = resolveWebSearchCandidates(
     { ...params, preferRuntimeProviders: params.preferRuntimeProviders ?? true },
     context,
   );
   if (candidates.length === 0) {
+    const rejectedProviderId = sandboxed
+      ? resolveSandboxedRejectedProviderId({
+          search,
+          runtimeWebSearch,
+          providerId: params.providerId,
+        })
+      : undefined;
+    if (rejectedProviderId) {
+      throw new Error(
+        "web_search is disabled or no provider is available. " +
+          `The configured search provider "${rejectedProviderId}" is not available to sandboxed ` +
+          "web_search: sandboxed agents only run bundled or verified-official providers. " +
+          "Select a bundled or verified-official search provider to restore web_search.",
+      );
+    }
     throw new Error("web_search is disabled or no provider is available.");
   }
   const allowFallback = !hasExplicitWebSearchSelection({

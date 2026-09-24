@@ -143,7 +143,32 @@ describe("sandboxed web_search execution", () => {
     );
 
     expect(failure?.message ?? "").toMatch(/disabled|no provider/i);
+    // The rejection explains the trust restriction and names the configured provider.
+    expect(failure?.message ?? "").toContain('"untrusted"');
+    expect(failure?.message ?? "").toContain("bundled or verified-official");
     // The provider tool never executed: rejection happened before provider I/O.
+    expect(readSentinel(fixture.sentinelPath)).toEqual([]);
+  });
+
+  it("keeps the plain no-provider message when a sandboxed run has nothing configured", async () => {
+    const fixture = createExecutionFixture();
+    const unconfigured = { plugins: fixture.config.plugins } as OpenClawConfig;
+
+    const failure = await withEnvAsync(fixture.env, () =>
+      runWebSearch({
+        config: unconfigured,
+        preferInputConfig: true,
+        preferRuntimeProviders: true,
+        sandboxed: true,
+        args: { query: "sandbox proof" },
+      }).then(
+        () => null,
+        (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+      ),
+    );
+
+    // Nothing configured to blame: the trust wording must not appear.
+    expect(failure?.message).toBe("web_search is disabled or no provider is available.");
     expect(readSentinel(fixture.sentinelPath)).toEqual([]);
   });
 
