@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OutboundDeliveryError } from "../../../infra/outbound/deliver-types.js";
 import { setActivePluginRegistry } from "../../../plugins/runtime.js";
+import { createDeferredCore } from "../../../shared/deferred.js";
 import { createTestRegistry } from "../../../test-utils/channel-plugins.js";
 import type { AgentInternalEvent } from "../../internal-events.js";
 import {
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
 } from "../../internal-runtime-context.js";
-import { taskCompletionEvents } from "../../subagent-test-fixtures.test-helpers.js";
+import { mockCallArg, taskCompletionEvents } from "../../subagent-test-fixtures.test-helpers.js";
 import { deliverSubagentAnnouncement, testing } from "./subagent-announce-delivery.test-support.js";
 import type { SubagentAnnounceDeliveryTestDeps } from "./subagent-announce-overrides.test-support.js";
 
@@ -37,6 +38,7 @@ async function deliver(params: {
   const queue = vi.fn((sessionId: string) => ({
     queued: false as const,
     reason: "no_active_run" as const,
+    gatewayHealth: "live" as const,
     sessionId,
   }));
   testing.setDepsForTest({
@@ -93,8 +95,18 @@ describe("subagent completion media after requester wake failure", () => {
     media?: string[];
     asVoice?: boolean;
   }>([
-    { name: "structured media", event: { mediaUrls: [image] }, content: "Image ready", media: [image] },
-    { name: "captionless media", event: { result: "", mediaUrls: [image] }, content: "", media: [image] },
+    {
+      name: "structured media",
+      event: { mediaUrls: [image] },
+      content: "Image ready",
+      media: [image],
+    },
+    {
+      name: "captionless media",
+      event: { result: "", mediaUrls: [image] },
+      content: "",
+      media: [image],
+    },
     {
       name: "attachment metadata",
       event: { attachments: [{ type: "image" as const, path: image }] },
@@ -130,7 +142,7 @@ describe("subagent completion media after requester wake failure", () => {
     const { result, sendMessage } = await deliver({ event });
     expect(result).toMatchObject({ delivered: true, path: "direct" });
     expect(sendMessage).toHaveBeenCalledOnce();
-    const payload = sendMessage.mock.calls[0][0];
+    const payload = mockCallArg(sendMessage);
     expect(payload.content).toBe(content);
     expect(payload.mediaUrls).toEqual(media);
     expect(payload.asVoice).toBe(asVoice);
@@ -148,7 +160,7 @@ describe("subagent completion media after requester wake failure", () => {
     });
     expect(result).toMatchObject({ delivered: true, path: "direct" });
     expect(sendMessage).toHaveBeenCalledOnce();
-    expect(sendMessage.mock.calls[0][0]).toMatchObject({
+    expect(mockCallArg(sendMessage)).toMatchObject({
       content: "Voice ready",
       mediaUrls: ["/tmp/voice.ogg"],
       asVoice: true,
@@ -156,7 +168,9 @@ describe("subagent completion media after requester wake failure", () => {
   });
 
   it("does not deliver a result recorded as absent", async () => {
-    const { sendMessage } = await deliver({ event: { result: "(no output)", noVisibleResult: true } });
+    const { sendMessage } = await deliver({
+      event: { result: "(no output)", noVisibleResult: true },
+    });
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -166,7 +180,7 @@ describe("subagent completion media after requester wake failure", () => {
     });
     expect(result).toMatchObject({ delivered: true, path: "direct" });
     expect(sendMessage).toHaveBeenCalledOnce();
-    expect(sendMessage.mock.calls[0][0].mediaUrls).toBeUndefined();
+    expect(mockCallArg(sendMessage).mediaUrls).toBeUndefined();
   });
 
   it("does not settle or retry a partially sent media batch", async () => {
@@ -178,7 +192,11 @@ describe("subagent completion media after requester wake failure", () => {
         results: [{ channel: "discord", messageId: "msg-1" }],
       });
     });
-    const { result } = await deliver({ event: { mediaUrls: [image] }, sendMessage, onDeliveryResult });
+    const { result } = await deliver({
+      event: { mediaUrls: [image] },
+      sendMessage,
+      onDeliveryResult,
+    });
     expect(result).toMatchObject({
       delivered: false,
       terminal: true,
@@ -190,8 +208,8 @@ describe("subagent completion media after requester wake failure", () => {
   });
 
   it("settles the full batch before mirroring, retaining delivery if bookkeeping fails", async () => {
-    const mirror = Promise.withResolvers<void>();
-    const settled = Promise.withResolvers<void>();
+    const mirror = createDeferredCore();
+    const settled = createDeferredCore();
     const onDeliveryResult = vi.fn(() => settled.resolve());
     const sendMessage = vi.fn<SendMessage>(async (params) => {
       await params.onDeliveryResult?.({ channel: "discord", messageId: "msg-1" });
@@ -204,7 +222,11 @@ describe("subagent completion media after requester wake failure", () => {
     try {
       await settled.promise;
       expect(onDeliveryResult).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ delivered: true, path: "direct", deliveredAt: expect.any(Number) }),
+        expect.objectContaining({
+          delivered: true,
+          path: "direct",
+          deliveredAt: expect.any(Number),
+        }),
       );
     } finally {
       mirror.resolve();
