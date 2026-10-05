@@ -29,7 +29,7 @@ export function meetAudioCaptureScript(params: MeetingBrowserAudioCaptureRequest
  * DOM nodes are dropped; revisited objects are elided instead of recursed.
  * Self-contained so the in-page script embeds exactly this source.
  */
-export function stringifyMeetStatusResult(value: unknown): string {
+function stringifyMeetStatusResult(value: unknown): string {
   const seen = new WeakSet<object>();
   return JSON.stringify(value, (_key: string, current: unknown) => {
     if (current !== null && typeof current === "object") {

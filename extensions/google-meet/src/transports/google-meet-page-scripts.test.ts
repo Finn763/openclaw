@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
-import { meetStatusScript, stringifyMeetStatusResult } from "./google-meet-page-scripts.js";
+import { meetStatusScript } from "./google-meet-page-scripts.js";
 
 const MEETING_URL = "https://meet.google.com/abc-defg-hij";
 
@@ -75,42 +75,6 @@ async function runStatusWithCircularCaptionNode() {
   );
   return JSON.parse(result) as Record<string, unknown>;
 }
-
-describe("stringifyMeetStatusResult", () => {
-  it("drops DOM nodes and survives circular page state", () => {
-    const captionNode: Record<string, unknown> = { nodeType: 1, textContent: "Hello there" };
-    captionNode["__soy"] = { element: captionNode };
-    const circular: Record<string, unknown> = { text: "loop" };
-    circular.self = circular;
-
-    const json = stringifyMeetStatusResult({
-      inCall: true,
-      recentTranscript: [
-        {
-          at: "2026-09-12T00:00:00.000Z",
-          speaker: "Alex",
-          text: "Hello there",
-          node: captionNode,
-          seenAt: 7,
-        },
-      ],
-      noise: circular,
-    });
-
-    expect(JSON.parse(json)).toEqual({
-      inCall: true,
-      recentTranscript: [
-        { at: "2026-09-12T00:00:00.000Z", speaker: "Alex", text: "Hello there", seenAt: 7 },
-      ],
-      noise: { text: "loop", self: "[Circular]" },
-    });
-  });
-
-  it("serializes plain payloads exactly like JSON.stringify", () => {
-    const payload = { inCall: false, micMuted: undefined, notes: ["a"], nested: { b: [1, 2] } };
-    expect(stringifyMeetStatusResult(payload)).toBe(JSON.stringify(payload));
-  });
-});
 
 describe("meetStatusScript caption serialization", () => {
   it("reports in-call health when caption nodes are circular", async () => {
