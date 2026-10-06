@@ -272,7 +272,7 @@ describe("heartbeat cadence cron migration", () => {
       env: skippedEnv,
     });
     expect(skipped.warnings).toEqual([]);
-    expect(skipped.changes).toEqual(['Update heartbeat monitor for agent "main" at 15m.']);
+    expect(skipped.changes).toEqual(['Update heartbeat monitor for agent "main" as disabled.']);
     expect(await loadMainMonitor(fixture.storePath)).toEqual(
       expect.objectContaining({ enabled: false }),
     );

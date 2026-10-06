@@ -1,6 +1,7 @@
 // Boundary proof: real CronService store + scheduler; no provider or channel send is claimed.
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import { reconcileHeartbeatMonitorJobs, resolveHeartbeatMonitorPlan } from "./heartbeat-monitor.js";
 import { CronService } from "./service.js";
 import {
@@ -20,6 +21,7 @@ const HEARTBEAT_EVERY_MS = 30 * 60_000;
 function createService(storePath: string, cronEnabled: boolean) {
   const requestHeartbeatAndWait = vi.fn(async () => ({ status: "ran", durationMs: 1 }) as const);
   const cron = new CronService({
+    scheduler: createTestGatewayScheduler("fake-timers"),
     storePath,
     cronEnabled,
     defaultAgentId: "main",
@@ -124,6 +126,7 @@ describe("heartbeat monitors are inert while the cron scheduler is off", () => {
     const store = await makeStorePath();
     try {
       const seeded = createStartedCronServiceWithFinishedBarrier({
+        scheduler: createTestGatewayScheduler("fake-timers"),
         storePath: store.storePath,
         logger: noopLogger,
       });
@@ -131,6 +134,7 @@ describe("heartbeat monitors are inert while the cron scheduler is off", () => {
       seeded.cron.stop();
 
       const enabled = createStartedCronServiceWithFinishedBarrier({
+        scheduler: createTestGatewayScheduler("fake-timers"),
         storePath: store.storePath,
         logger: noopLogger,
       });
